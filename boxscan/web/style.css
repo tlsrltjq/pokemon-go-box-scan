@@ -1,0 +1,34 @@
+:root {
+  font-family: Inter, system-ui, sans-serif;
+  color: #172b28;
+  background: #f1f4f0;
+  line-height: 1.55;
+}
+body { margin: 0; }
+main { max-width: 64rem; margin: auto; padding: clamp(1rem, 4vw, 3rem); }
+header { padding: 1.5rem 0; }
+.eyebrow { color: #34685d; font-size: .85rem; font-weight: 700; letter-spacing: .07em; }
+h1 { margin: .15em 0; font-size: clamp(2.25rem, 7vw, 4rem); line-height: 1.12; }
+h2 { margin-bottom: .3rem; }
+p { margin: .4rem 0 1rem; }
+form { background: white; border: 1px solid #c9d5d0; border-radius: 1rem; padding: 1.25rem; }
+label { font-weight: 700; font-size: 1.15rem; }
+input { display: block; width: 100%; margin-bottom: 1rem; font: inherit; }
+button {
+  font: inherit;
+  font-weight: 700;
+  color: white;
+  background: #236154;
+  border: 0;
+  border-radius: .55rem;
+  min-height: 2.75rem;
+  padding: .55rem 1rem;
+  cursor: pointer;
+}
+button:disabled { opacity: .6; cursor: wait; }
+:focus-visible { outline: 3px solid #be592b; outline-offset: 3px; }
+section { margin-top: 2rem; }
+#frames { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: 1rem; }
+figure { margin: 0; }
+figure img { display: block; width: 100%; border-radius: .55rem; }
+figcaption { margin-top: .3rem; color: #3f5953; font-size: .9rem; }

@@ -1,0 +1,7 @@
+* text=auto
+*.md text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+uv.lock text eol=lf
+# Preserve the original Markdown hard breaks and whitespace in the archived spec.
+docs/archive/spec-v1.1.md whitespace=-blank-at-eol
