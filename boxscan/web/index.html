@@ -16,7 +16,7 @@
     </header>
     <form id="upload">
       <label for="video">화면 녹화 선택</label>
-      <p id="constraints">MOV 또는 MP4 · 최대 200 MiB · 앞부분 72초 분석</p>
+      <p id="constraints">MOV 또는 MP4 · 최대 200 MiB · 처음 72초에서 1초마다 추출</p>
       <input id="video" type="file" accept=".mp4,.mov,video/mp4,video/quicktime"
              aria-describedby="constraints" required>
       <button>프레임 추출</button>

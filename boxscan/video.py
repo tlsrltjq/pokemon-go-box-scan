@@ -3,8 +3,9 @@ from pathlib import Path
 
 from .store import JobStore
 
-MAX_FRAMES = 24
-SAMPLE_SECONDS = 3
+MAX_VIDEO_SECONDS = 72
+SAMPLE_SECONDS = 1
+MAX_FRAMES = MAX_VIDEO_SECONDS // SAMPLE_SECONDS
 
 
 def run_next(store: JobStore, ffmpeg: str) -> bool:
@@ -20,7 +21,7 @@ def run_next(store: JobStore, ffmpeg: str) -> bool:
                 "-protocol_whitelist", "file", "-threads", "2",
                 "-f", "mov", "-i", str(folder / "source"),
                 "-map", "0:v:0", "-an", "-sn", "-dn", "-filter_threads", "1",
-                "-t", str(MAX_FRAMES * SAMPLE_SECONDS),
+                "-t", str(MAX_VIDEO_SECONDS),
                 "-vf", (
                     f"fps=1/{SAMPLE_SECONDS}:start_time=0:round=up,"
                     "scale=720:720:force_original_aspect_ratio=decrease:force_divisible_by=2"
