@@ -16,13 +16,23 @@ MOVE_COUNT = 110
 def master(count: int, whole=WHOLE) -> list[dict]:
     items = [{"templateId": "PLAYER_LEVEL_SETTINGS",
               "data": {"playerLevel": {"cpMultiplier": whole}}},
-             {"templateId": "ITEM_POTION", "data": {"itemSettings": {}}}]
+             {"templateId": "ITEM_POTION", "data": {"itemSettings": {}}},
+             {"templateId": "BATTLE_SETTINGS", "data": {"battleSettings": {
+                 "sameTypeAttackBonusMultiplier": 1.2, "maximumEnergy": 100, "energyDeltaPerHealthLost": 0.5,
+                 "swapDurationMs": 1000, "enemyAttackInterval": 1.5, "bossEnergyRegenerationPerHealthLost": 0.5}}},
+             {"templateId": "WEATHER_AFFINITY_CLEAR", "data": {"weatherAffinities": {
+                 "weatherCondition": "CLEAR", "pokemonType": ["POKEMON_TYPE_FIRE"]}}}]
+    for attack in reference.TYPE_ORDER:  # synthetic type chart: everything neutral
+        items.append({"templateId": f"POKEMON_TYPE_{attack}", "data": {"typeEffective": {
+            "attackType": f"POKEMON_TYPE_{attack}", "attackScalar": [1.0] * 18}}})
 
     # 110 synthetic moves: MOVE_1_FAST..MOVE_10_FAST and MOVE_11..MOVE_110, plus numeric id 406.
     for n in range(1, MOVE_COUNT + 1):
         name = f"MOVE_{n}_FAST" if n <= 10 else f"MOVE_{n}"
         items.append({"templateId": f"V{n:04d}_MOVE_{name}",
-                      "data": {"moveSettings": {"movementId": n, "power": float(n)}}})
+                      "data": {"moveSettings": {"movementId": n, "power": float(n), "pokemonType": "POKEMON_TYPE_NORMAL",
+                                                "durationMs": 1000, "damageWindowStartMs": 500,
+                                                "energyDelta": 5 if n <= 10 else -50}}})
     items.append({"templateId": "V0406_MOVE_SPECIAL_BEAM_FIRE",
                   "data": {"moveSettings": {"movementId": 406, "power": 77.0}}})
 
@@ -118,6 +128,14 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(data.mega_moves[5]["MEGA"], {
             "move_id": "VM_MOVE_TEMP_EVOLUTION_MEGA_V0005_POKEMON_MON5", "base_move": "MOVE_12",
             "name": "기술12번+", "power": 140.0})
+
+    def test_battle_data_is_read(self):
+        data = synthetic_reference()
+        self.assertEqual(len(data.type_chart), 18)
+        self.assertEqual(data.weather["CLEAR"], ["FIRE"])
+        self.assertEqual(data.battle["swapDurationMs"], 1000)
+        self.assertEqual(data.move_stats["MOVE_11"], {"type": "NORMAL", "power": 11.0, "energy": -50,
+                                                      "duration_ms": 1000, "damage_start_ms": 500})
 
     def test_half_levels_follow_the_game_rules(self):
         low, high = WHOLE[0], WHOLE[1]

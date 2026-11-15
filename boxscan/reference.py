@@ -81,6 +81,12 @@ class Reference:
     form_changes: dict[int, list[dict]] | None = None
     # pokemon id -> {"MEGA" | "MEGA_X" | ...: {"move_id", "base_move", "name", "power"}}
     mega_moves: dict[int, dict[str, dict]] | None = None
+    # Battle data for the raid engine (PvE values from the game master)
+    types: dict[str, list[str]] | None = None  # "id|form" or "id|MEGA" -> ["GROUND", "FIRE"]
+    move_stats: dict[str, dict] | None = None  # move id -> type, power, energy, duration, damage window
+    type_chart: dict[str, dict[str, float]] | None = None  # attacking type -> defending type -> scalar
+    weather: dict[str, list[str]] | None = None  # weather -> boosted types
+    battle: dict | None = None  # BATTLE_SETTINGS subset
 
     def forms(self, korean_name: str) -> list[BaseStats]:
         pokemon_id = self.korean_names.get(korean_name.strip())
@@ -142,8 +148,62 @@ def parse(files: dict[str, bytes], version: str = "", fetched_at: str = "") -> R
                 change[key] = sorted({numbers.get(m, m) for m in change[key]})
     mega_moves = _mega_moves(master, move_names)
     notes["mega_moves"] = sum(len(v) for v in mega_moves.values())
+    types, move_stats, type_chart, weather, battle = _battle_data(master)
+    if len(type_chart) != 18 or not move_stats or "energyDeltaPerHealthLost" not in battle:
+        raise ValueError("전투 계산용 데이터(상성·기술·전투 설정)를 읽지 못했습니다.")
     return Reference(version, fetched_at, stats, cpm, names, notes, move_names, move_power, learnsets,
-                     temp_stats, form_changes, mega_moves)
+                     temp_stats, form_changes, mega_moves, types, move_stats, type_chart, weather, battle)
+
+
+# Order of POKEMON_TYPE_* in the game data; typeEffective.attackScalar follows it.
+TYPE_ORDER = ["NORMAL", "FIGHTING", "FLYING", "POISON", "GROUND", "ROCK", "BUG", "GHOST", "STEEL",
+              "FIRE", "WATER", "GRASS", "ELECTRIC", "PSYCHIC", "ICE", "DRAGON", "DARK", "FAIRY"]
+BATTLE_KEYS = ("sameTypeAttackBonusMultiplier", "maximumEnergy", "energyDeltaPerHealthLost",
+               "swapDurationMs", "enemyAttackInterval", "bossEnergyRegenerationPerHealthLost",
+               "shadowPokemonAttackBonusMultiplier", "shadowPokemonDefenseBonusMultiplier")
+
+
+def _type(value) -> str | None:
+    return str(value).removeprefix("POKEMON_TYPE_") if value else None
+
+
+def _battle_data(master: list[dict]):
+    types, move_stats, chart, weather, battle = {}, {}, {}, {}, {}
+    for item in master:
+        template, data = item["templateId"], item.get("data", {})
+        match = TEMPLATE.match(template)
+        settings = data.get("pokemonSettings")
+        if match and settings:
+            form = _form_code(settings["pokemonId"], settings.get("form"))
+            key = f"{int(match[1])}|{form}"
+            if key not in types:
+                types[key] = [t for t in (_type(settings.get("type")), _type(settings.get("type2"))) if t]
+            if form == "Normal":
+                for override in settings.get("tempEvoOverrides") or []:
+                    kind = str(override.get("tempEvoId", "")).removeprefix("TEMP_EVOLUTION_")
+                    found = [t for t in (_type(override.get("typeOverride1")), _type(override.get("typeOverride2"))) if t]
+                    if kind and found:
+                        types[f"{int(match[1])}|{kind}"] = found
+        move = data.get("moveSettings")
+        name = MOVE_TEMPLATE.match(template) or MEGA_MOVE_TEMPLATE.match(template)
+        if move and name:
+            move_id = template if template.startswith("VM_") else name[2]
+            move_stats[move_id] = {
+                "type": _type(move.get("pokemonType")),
+                "power": float(move.get("power", 0.0)),
+                "energy": int(move.get("energyDelta", 0)),
+                "duration_ms": int(move.get("durationMs", 0)),
+                "damage_start_ms": int(move.get("damageWindowStartMs", 0)),
+            }
+        effective = data.get("typeEffective")
+        if effective:
+            chart[_type(effective["attackType"])] = dict(zip(TYPE_ORDER, map(float, effective["attackScalar"])))
+        affinity = data.get("weatherAffinities")
+        if affinity:
+            weather[affinity["weatherCondition"]] = [_type(t) for t in affinity.get("pokemonType", [])]
+        if "battleSettings" in data:
+            battle = {k: data["battleSettings"][k] for k in BATTLE_KEYS if k in data["battleSettings"]}
+    return types, move_stats, chart, weather, battle
 
 
 def _mega_moves(master: list[dict], move_names: dict[str, str]) -> dict[int, dict[str, dict]]:
@@ -348,6 +408,11 @@ def to_json(reference: Reference) -> dict:
                        for forms in (reference.temp_stats or {}).values() for kind, stats in forms.items()],
         "form_changes": {str(k): v for k, v in (reference.form_changes or {}).items()},
         "mega_moves": {str(k): v for k, v in (reference.mega_moves or {}).items()},
+        "types": reference.types,
+        "move_stats": reference.move_stats,
+        "type_chart": reference.type_chart,
+        "weather": reference.weather,
+        "battle": reference.battle,
     }
 
 
@@ -364,7 +429,9 @@ def from_json(data: dict) -> Reference:
                      data["korean_names"], data.get("notes"), data.get("move_names"),
                      data.get("move_power"), data.get("learnsets"), temp_stats,
                      {int(k): v for k, v in (data.get("form_changes") or {}).items()},
-                     {int(k): v for k, v in (data.get("mega_moves") or {}).items()})
+                     {int(k): v for k, v in (data.get("mega_moves") or {}).items()},
+                     data.get("types"), data.get("move_stats"), data.get("type_chart"),
+                     data.get("weather"), data.get("battle"))
 
 
 def rebuild(data_dir: Path) -> dict:

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>레이드 추천 · 포켓몬 GO 박스 스캔</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/common.js" defer></script>
+  <script src="/assets/raid.js" defer></script>
+</head>
+<body>
+  <main>
+    <nav aria-label="주요 화면"><a href="/">스캔</a><a href="/box">내 박스</a><a href="/raid" aria-current="page">레이드 추천</a></nav>
+    <header>
+      <p class="eyebrow">POKÉMON GO · 일반 레이드</p>
+      <h1>레이드 추천</h1>
+      <p>내 박스의 개체 중에서 제한 시간 안에 보스에게 가장 많은 피해를 줄 6마리와 출전 순서를 계산합니다.</p>
+    </header>
+    <form id="raid-form" class="raid-form">
+      <div class="fields">
+        <label class="field"><span>보스</span>
+          <input name="species" list="species-list" required autocomplete="off" placeholder="예: 그란돈"></label>
+        <label class="field"><span>레이드 등급</span><select name="tier"></select></label>
+        <label class="field"><span>날씨</span><select name="weather"></select></label>
+        <label class="field" id="form-field" hidden><span>보스 모습</span><select name="form"></select></label>
+        <label class="field" id="temp-field" hidden><span>메가진화·원시회귀</span><select name="temp"></select></label>
+        <label class="field"><span>제한 시간(초)</span><input name="time_limit_s" inputmode="numeric"></label>
+        <label class="field"><span>보스 노말어택</span><select name="boss_fast"><option value="">모두 계산</option></select></label>
+        <label class="field"><span>보스 스페셜어택</span><select name="boss_charged"><option value="">모두 계산</option></select></label>
+      </div>
+      <div class="checks">
+        <label class="check"><input type="checkbox" name="rejoin"><span>모두 기절하면 같은 파티로 재입장</span></label>
+        <label class="field inline"><span>재입장 지연(초)</span><input name="rejoin_delay_s" inputmode="numeric" value="10"></label>
+      </div>
+      <p class="muted">제한 시간과 재입장 지연은 계산용 시나리오 값입니다. 메가진화 포함 추천은 아직 지원하지 않습니다.</p>
+      <datalist id="species-list"></datalist>
+      <button>추천 계산</button>
+    </form>
+    <p id="status" role="status"></p>
+    <section id="result" hidden aria-labelledby="result-title">
+      <h2 id="result-title">추천 결과</h2>
+      <div id="summary" class="card summary"></div>
+      <div id="party" class="grid"></div>
+      <h3>보스 기술별 결과</h3>
+      <table id="scenarios" class="compare"></table>
+      <div id="excluded"></div>
+      <h3>계산 가정</h3>
+      <ul id="assumptions" class="assumptions"></ul>
+      <p id="versions" class="muted"></p>
+    </section>
+  </main>
+</body>
+</html>

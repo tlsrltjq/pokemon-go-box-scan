@@ -10,7 +10,9 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from . import backup, export, reference, review
+from . import backup, export, raid, reference, review
+from .forms import display_name
+from .species import TEMP_NAMES
 from .analysis import RESULT
 from .box import BoxStore, Conflict
 from .store import JobStore
@@ -82,6 +84,75 @@ def create_app(
     @app.get("/box")
     def box_page():
         return FileResponse(WEB / "box.html")
+
+    @app.get("/raid")
+    def raid_page():
+        return FileResponse(WEB / "raid.html")
+
+    def load_reference():
+        try:
+            data = reference.load(store.root)
+        except (OSError, ValueError, KeyError):
+            data = None
+        if data is None or not data.move_stats:
+            raise HTTPException(409, "전투 계산용 기준 데이터가 없습니다. Mac에서 reference update를 실행하세요.")
+        return data
+
+    @app.get("/api/raid/options")
+    def raid_options(species: str | None = None):
+        data = load_reference()
+        options = {
+            "species": sorted(name for name, pokemon_id in data.korean_names.items() if pokemon_id in data.stats),
+            "tiers": [{"id": key, **{k: v for k, v in rule.items() if k != "cpm"}}
+                      for key, rule in raid.RULESET["tiers"].items()],
+            "weather": [{"id": key, "name": name} for key, name in raid.WEATHER_NAMES.items()],
+            "ruleset": raid.RULESET["version"],
+        }
+        if species:
+            forms = data.forms(species)
+            if not forms:
+                raise HTTPException(404, "기준 데이터에서 그 종을 찾지 못했습니다.")
+            pokemon_id = forms[0].pokemon_id
+            learnset = (data.learnsets or {}).get(f"{pokemon_id}|Normal") or {}
+            options["boss"] = {
+                "forms": [{"id": f.form, "name": display_name(pokemon_id, f.form) or "기본 모습"} for f in forms],
+                "temp": [{"id": k, "name": TEMP_NAMES.get(k, k)} for k in (data.temp_stats or {}).get(pokemon_id, {})],
+                "fast": [{"id": m, "name": data.move_names.get(m, m)} for m in learnset.get("fast", [])],
+                "charged": [{"id": m, "name": data.move_names.get(m, m)} for m in learnset.get("charged", [])],
+            }
+        return options
+
+    @app.post("/api/raid/recommend")
+    async def raid_recommend(request: Request):
+        payload = await _json_body(request)
+        data = load_reference()
+
+        def text(key):
+            value = payload.get(key)
+            return value.strip() or None if isinstance(value, str) else None
+
+        def number(key):
+            value = payload.get(key)
+            if value in (None, ""):
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                raise HTTPException(422, "숫자 입력을 확인하세요.") from None
+
+        species = text("species")
+        if not species:
+            raise HTTPException(422, "보스 이름을 입력하세요.")
+        try:
+            result = raid.recommend(
+                data, box.list(), species, text("tier") or "5", form=text("form"), temp=text("temp"),
+                weather=text("weather") or "", time_limit_s=number("time_limit_s"),
+                rejoin_delay_s=number("rejoin_delay_s"), boss_fast=text("boss_fast"),
+                boss_charged=text("boss_charged"), include_mega=payload.get("include_mega") is True)
+        except raid.RaidError as error:
+            raise HTTPException(422, str(error)) from None
+        result["boss"]["temp_name"] = TEMP_NAMES.get(result["boss"]["temp"])
+        return result
 
     @app.get("/api/health")
     def health():

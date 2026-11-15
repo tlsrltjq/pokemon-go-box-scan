@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }
 :root {
   font-family: Inter, system-ui, sans-serif;
   color: #172b28;
@@ -118,3 +119,11 @@ a.button { display: inline-flex; align-items: center; min-height: 2.75rem; paddi
 .backup h3 { font-size: 1rem; margin: 1rem 0 .3rem; }
 .backup-list { margin: 0; padding-left: 1.2rem; font-size: .9rem; }
 .edit-form { margin-top: .6rem; border-top: 1px solid #e3eae6; padding-top: .7rem; }
+.raid-form { margin-top: .5rem; }
+.field.inline { flex-direction: row; align-items: center; gap: .4rem; }
+.field.inline input { width: 5rem; }
+.summary { margin-bottom: 1rem; }
+.summary dd span { color: #3f5953; font-size: .8rem; }
+.warn-text { color: #8a3b12; font-weight: 600; }
+.assumptions { padding-left: 1.2rem; font-size: .9rem; color: #3f5953; }
+#scenarios { background: white; border-radius: .6rem; }

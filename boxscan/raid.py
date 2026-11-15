@@ -1,0 +1,434 @@
+"""Normal raid recommendation (spec v1.2 sections 7 and 8.1).
+
+The goal is the most expected damage my party deals to the boss before the time limit ends, the
+boss falls, or (without re-entry) everyone faints. The engine is a deterministic event simulation:
+
+- Damage: floor(0.5 * power * attack / defense * STAB * weather * type) + 1, values from the game
+  master. Attack and defense are (base + IV) * CPM for my Pokémon and (base + 15) * tier CPM for
+  the boss; boss HP comes from the tier table below.
+- My Pokémon start at full HP with 0 energy, never dodge, use the fast attack until the chosen
+  charged attack is affordable, then use it. Damage lands at the move's damage window. Energy comes
+  from my fast attacks and from damage taken (0.5 per HP). A fainted Pokémon's pending hit is lost.
+  The next one enters after the swap time.
+- The boss uses a move, then waits enemyAttackInterval + 0.5 s (the midpoint of the 1.5–2.5 s
+  spread). It uses its charged attack on every second chance once it has the energy (about 50 %).
+  It gains energy from its moves and from damage taken.
+- Boss movesets that are not chosen are all simulated and reported as an even average with the
+  lowest and highest result. That is a scenario average, not the game's real probabilities.
+
+Party search: every eligible Pokémon picks the charged attack that deals more damage in a solo run;
+the strongest candidates (by damage per second) are kept, every party of up to six from them is
+estimated from the solo runs, and the best few are simulated in full. The search is exhaustive over
+the kept candidates, not over every possible action, and the result says so.
+"""
+import heapq
+import itertools
+import math
+from dataclasses import dataclass, field
+
+from . import level as level_rules
+from .forms import display_name
+from .reference import Reference
+
+ENGINE_VERSION = "raid-sim/1"
+PARTY_SIZE = 6
+CANDIDATE_LIMIT = 12
+FULL_SIM_PARTIES = 5
+BOSS_EXTRA_DELAY_MS = 500
+
+# Raid tiers. HP and CPM as listed on Bulbapedia's "Raid Battle (GO)" page (checked 2026-11-16);
+# the 22,500 HP tier as listed by GamePress. Time limits are the app's scenario defaults, not
+# confirmed game data, and can be changed per request.
+RULESET = {
+    "version": "raid-ruleset/2026-11-16",
+    "tiers": {
+        "1": {"name": "1성", "hp": 600, "cpm": 0.5974, "time_limit": 180},
+        "3": {"name": "3성", "hp": 3600, "cpm": 0.73, "time_limit": 180},
+        "mega": {"name": "메가", "hp": 9000, "cpm": 0.79, "time_limit": 300},
+        "5": {"name": "5성 (전설)", "hp": 15000, "cpm": 0.79, "time_limit": 300},
+        "mega_legendary": {"name": "메가 전설·원시회귀", "hp": 22500, "cpm": 0.79, "time_limit": 300},
+    },
+    "sources": [
+        "https://bulbapedia.bulbagarden.net/wiki/Raid_Battle_(GO)",
+        "https://gamepress.gg/pokemongo/q-a/raid-boss-cp-multiplier",
+    ],
+}
+WEATHER_NAMES = {"": "날씨 보너스 없음", "CLEAR": "맑음", "RAINY": "비", "PARTLY_CLOUDY": "구름 조금",
+                 "OVERCAST": "흐림", "WINDY": "바람", "SNOW": "눈", "FOG": "안개"}
+TYPE_NAMES = {"NORMAL": "노말", "FIGHTING": "격투", "FLYING": "비행", "POISON": "독", "GROUND": "땅",
+              "ROCK": "바위", "BUG": "벌레", "GHOST": "고스트", "STEEL": "강철", "FIRE": "불꽃", "WATER": "물",
+              "GRASS": "풀", "ELECTRIC": "전기", "PSYCHIC": "에스퍼", "ICE": "얼음", "DRAGON": "드래곤",
+              "DARK": "악", "FAIRY": "페어리"}
+
+
+class RaidError(ValueError):
+    """The request cannot be calculated. The message is shown to the user."""
+
+
+@dataclass
+class Move:
+    move_id: str
+    name: str
+    type: str
+    power: float
+    energy: int
+    duration_ms: int
+    damage_ms: int
+
+
+@dataclass
+class Fighter:
+    key: str
+    name: str
+    attack: float
+    defense: float
+    hp: int
+    types: list[str]
+    fast: Move
+    charged: list[Move]
+    info: dict = field(default_factory=dict)
+
+
+def _move(reference: Reference, move_id: str | None) -> Move | None:
+    stats = (reference.move_stats or {}).get(move_id or "")
+    if not stats or not stats.get("duration_ms"):
+        return None
+    return Move(move_id, reference.move_names.get(move_id, move_id), stats["type"], stats["power"],
+                stats["energy"], stats["duration_ms"], stats["damage_start_ms"])
+
+
+def _types(reference: Reference, pokemon_id: int, form: str | None, temp: str | None = None) -> list[str]:
+    types = reference.types or {}
+    return (types.get(f"{pokemon_id}|{temp}") if temp else None) or types.get(f"{pokemon_id}|{form or 'Normal'}") \
+        or types.get(f"{pokemon_id}|Normal") or []
+
+
+def boss(reference: Reference, species: str, tier: str, form: str | None = None,
+         temp: str | None = None) -> dict:
+    """Boss stats and its possible movesets for a tier."""
+    if tier not in RULESET["tiers"]:
+        raise RaidError("레이드 등급을 다시 선택하세요.")
+    options = level_rules._stat_options(reference, species, temp, form)
+    if not options:
+        raise RaidError("기준 데이터에서 보스를 찾지 못했습니다. 종·모습·메가진화를 확인하세요.")
+    stats = options[0]
+    rule = RULESET["tiers"][tier]
+    pokemon_id = stats.pokemon_id
+    learnset = (reference.learnsets or {}).get(f"{pokemon_id}|{form or 'Normal'}") \
+        or (reference.learnsets or {}).get(f"{pokemon_id}|Normal") or {}
+    fast = [m for m in (_move(reference, i) for i in learnset.get("fast", [])) if m]
+    charged = [m for m in (_move(reference, i) for i in learnset.get("charged", [])) if m]
+    if not fast or not charged:
+        raise RaidError("보스의 기술 데이터를 찾지 못했습니다.")
+    return {
+        "species": species, "form": form, "form_name": display_name(pokemon_id, form), "temp": temp,
+        "tier": tier, "tier_name": rule["name"], "hp": rule["hp"],
+        "attack": (stats.attack + 15) * rule["cpm"], "defense": (stats.defense + 15) * rule["cpm"],
+        "types": _types(reference, pokemon_id, form, temp), "fast": fast, "charged": charged,
+    }
+
+
+def attacker(reference: Reference, entry: dict) -> tuple[Fighter | None, str | None]:
+    """A box entry as a fighter, or the reason it cannot be used."""
+    species, iv, lvl = entry.get("species"), entry.get("iv"), (entry.get("level") or {}).get("value")
+    if not species or not reference.forms(species):
+        return None, "종을 기준 데이터에서 찾지 못함"
+    if not iv:
+        return None, "IV 없음"
+    if lvl is None:
+        return None, "레벨이 하나로 정해지지 않음"
+    form = entry.get("form") or "Normal"
+    options = level_rules._stat_options(reference, species, None, form)
+    if not options:
+        return None, "모습의 종족값을 찾지 못함"
+    stats = options[0]
+    moves = entry.get("moves") or {}
+    fast = _move(reference, (moves.get("fast") or {}).get("move_id"))
+    charged = [m for m in (_move(reference, (c or {}).get("move_id")) for c in moves.get("charged") or []) if m]
+    if fast is None:
+        return None, "노말어택을 기술 사전과 연결하지 못함"
+    if not charged:
+        return None, "스페셜어택을 기술 사전과 연결하지 못함"
+    cpm = reference.cpm.get(float(lvl))
+    if cpm is None:
+        return None, "레벨의 CP 배율이 없음"
+    hp = entry.get("max_hp") or max(10, math.floor((stats.stamina + iv["stamina"]) * cpm))
+    name = species + "".join(mark for key, mark in (("shiny", "*"), ("lucky", "♣"), ("background", "◆"))
+                             if entry.get(key) is True)
+    return Fighter(entry["id"], name, (stats.attack + iv["attack"]) * cpm, (stats.defense + iv["defense"]) * cpm,
+                   int(hp), _types(reference, stats.pokemon_id, form), fast, charged,
+                   {"code": entry.get("code"), "revision": entry.get("revision"), "level": lvl, "iv": iv}), None
+
+
+def damage(reference: Reference, move: Move, attack: float, defense: float, attacker_types: list[str],
+           defender_types: list[str], weather_types: list[str]) -> int:
+    stab = reference.battle["sameTypeAttackBonusMultiplier"] if move.type in attacker_types else 1.0
+    boost = 1.2 if move.type in weather_types else 1.0
+    effective = math.prod(reference.type_chart[move.type][t] for t in defender_types)
+    return math.floor(0.5 * move.power * attack / defense * stab * boost * effective) + 1
+
+
+def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, boss_fast: Move,
+             boss_charged: Move, time_limit_s: float, weather: str = "", rejoin_delay_s: float | None = None) -> dict:
+    """Run one battle. party = [(fighter, index of the charged attack to use)], in order."""
+    weather_types = (reference.weather or {}).get(weather, []) if weather else []
+    settings = reference.battle
+    limit = int(time_limit_s * 1000)
+    max_energy = settings["maximumEnergy"]
+    swap = settings["swapDurationMs"]
+    boss_delay = int(settings["enemyAttackInterval"] * 1000) + BOSS_EXTRA_DELAY_MS
+    hits = [damage(reference, f.fast, f.attack, foe["defense"], f.types, foe["types"], weather_types) for f, _ in party]
+    charges = [damage(reference, f.charged[c], f.attack, foe["defense"], f.types, foe["types"], weather_types)
+               for f, c in party]
+    taken = [(damage(reference, boss_fast, foe["attack"], f.defense, foe["types"], f.types, weather_types),
+              damage(reference, boss_charged, foe["attack"], f.defense, foe["types"], f.types, weather_types))
+             for f, _ in party]
+    stats = [{"damage": 0, "time_ms": 0, "faints": 0, "charged_uses": 0} for _ in party]
+    boss_hp, boss_energy, boss_charge_turn = foe["hp"], 0, False
+    current, hp, energy, entered = 0, party[0][0].hp, 0, 0
+    alive_hp = [f.hp for f, _ in party]
+    rejoins, generation = 0, 0
+    events: list = []
+    order = itertools.count()
+
+    def push(time, kind, data=None):
+        heapq.heappush(events, (time, 0 if kind.endswith("hit") else 1, next(order), kind, data))
+
+    push(0, "attacker_move", generation)
+    push(boss_delay, "boss_move")
+    end_time, defeated, active = limit, False, True
+    while events:
+        time, _, _, kind, data = heapq.heappop(events)
+        if time >= limit or boss_hp <= 0:
+            break
+        if kind == "attacker_move":
+            if data != generation or not active:
+                continue
+            fighter, choice = party[current]
+            move = fighter.charged[choice]
+            if energy >= -move.energy:
+                energy += move.energy
+                stats[current]["charged_uses"] += 1
+                push(time + move.damage_ms, "attacker_hit", (generation, charges[current], 0))
+            else:
+                move = fighter.fast
+                push(time + move.damage_ms, "attacker_hit", (generation, hits[current], move.energy))
+            push(time + move.duration_ms, "attacker_move", generation)
+        elif kind == "attacker_hit":
+            hit_generation, dealt, gained = data
+            if hit_generation != generation or not active:
+                continue
+            dealt = min(dealt, boss_hp)
+            boss_hp -= dealt
+            stats[current]["damage"] += dealt
+            energy = min(max_energy, energy + gained)
+            boss_energy = min(max_energy, boss_energy + math.ceil(dealt * settings["bossEnergyRegenerationPerHealthLost"]))
+            if boss_hp <= 0:
+                defeated, end_time = True, time
+        elif kind == "boss_move":
+            use_charged = boss_energy >= -boss_charged.energy and boss_charge_turn
+            if boss_energy >= -boss_charged.energy:
+                boss_charge_turn = not boss_charge_turn
+            move = boss_charged if use_charged else boss_fast
+            if use_charged:
+                boss_energy += move.energy
+            push(time + move.damage_ms, "boss_hit", (use_charged, move.energy))
+            push(time + move.duration_ms + boss_delay, "boss_move")
+        elif kind == "boss_hit":
+            charged, gained = data
+            if not charged:
+                boss_energy = min(max_energy, boss_energy + gained)
+            if not active or time < entered:
+                continue  # nobody on the field during a swap or a re-entry
+            dealt = taken[current][1 if charged else 0]
+            hp -= dealt
+            energy = min(max_energy, energy + math.ceil(dealt * settings["energyDeltaPerHealthLost"]))
+            if hp <= 0:
+                stats[current]["time_ms"] += time - entered
+                stats[current]["faints"] += 1
+                alive_hp[current] = 0
+                generation += 1
+                following = next((i for i in range(current + 1, len(party)) if alive_hp[i] > 0), None)
+                if following is None and rejoin_delay_s is not None:
+                    rejoins += 1
+                    alive_hp = [f.hp for f, _ in party]
+                    following, start = 0, time + int(rejoin_delay_s * 1000)
+                else:
+                    start = time + swap
+                if following is None:
+                    active, end_time = False, time
+                    continue
+                current, hp, energy, entered = following, party[following][0].hp, 0, start
+                push(start, "attacker_move", generation)
+    if active:
+        stats[current]["time_ms"] += min(end_time, limit) - entered
+    total = sum(s["damage"] for s in stats)
+    return {"damage": total, "defeated": defeated, "end_ms": min(end_time, limit),
+            "faints": sum(s["faints"] for s in stats), "rejoins": rejoins, "members": stats}
+
+
+def _scenarios(foe: dict, boss_fast: str | None, boss_charged: str | None) -> list[tuple[Move, Move]]:
+    fast = [m for m in foe["fast"] if not boss_fast or m.move_id == boss_fast]
+    charged = [m for m in foe["charged"] if not boss_charged or m.move_id == boss_charged]
+    if not fast or not charged:
+        raise RaidError("선택한 보스 기술이 보스의 기술 목록에 없습니다.")
+    return [(f, c) for f in fast for c in charged]
+
+
+def _estimate(members: list[list[tuple[int, int]]], limit_ms: int, swap_ms: int, rejoin_ms: int | None) -> float:
+    """Party damage from solo runs (damage, alive ms) per member, ordered strongest first."""
+    remaining, total = limit_ms, 0.0
+    while remaining > 0:
+        for dealt, alive in members:
+            if remaining <= 0:
+                break
+            if alive >= remaining:
+                total += dealt * remaining / max(alive, 1)
+                remaining = 0
+                break
+            total += dealt
+            remaining -= alive + swap_ms
+        if rejoin_ms is None:
+            break
+        remaining -= rejoin_ms - swap_ms
+    return total
+
+
+def recommend(reference: Reference, entries: list[dict], species: str, tier: str, form: str | None = None,
+              temp: str | None = None, weather: str = "", time_limit_s: float | None = None,
+              rejoin_delay_s: float | None = None, boss_fast: str | None = None,
+              boss_charged: str | None = None, include_mega: bool = False) -> dict:
+    if include_mega:
+        raise RaidError("UNSUPPORTED_RULESET: 메가진화 포함 추천은 아직 지원하지 않습니다.")
+    if weather not in WEATHER_NAMES:
+        raise RaidError("날씨를 다시 선택하세요.")
+    foe = boss(reference, species, tier, form, temp)
+    limit_s = time_limit_s or RULESET["tiers"][tier]["time_limit"]
+    if not 30 <= limit_s <= 600:
+        raise RaidError("제한 시간은 30~600초 사이로 입력하세요.")
+    if rejoin_delay_s is not None and not 0 <= rejoin_delay_s <= 120:
+        raise RaidError("재입장 지연은 0~120초 사이로 입력하세요.")
+    scenarios = _scenarios(foe, boss_fast, boss_charged)
+
+    excluded, candidates = [], []
+    for entry in entries:
+        fighter, reason = attacker(reference, entry)
+        if fighter is None:
+            excluded.append({"code": entry.get("code"), "name": entry.get("species") or "종 미확인", "reason": reason})
+            continue
+        options = []
+        for index, _ in enumerate(fighter.charged):
+            runs = [simulate(reference, [(fighter, index)], foe, f, c, limit_s, weather) for f, c in scenarios]
+            solo = [(r["damage"], max(r["members"][0]["time_ms"], 1)) for r in runs]
+            options.append((sum(d for d, _ in solo) / len(solo), index, solo))
+        options.sort(key=lambda option: option[0], reverse=True)
+        best_damage, choice, solo = options[0]
+        dps = sum(d / t for d, t in solo) / len(solo) * 1000
+        candidates.append({"fighter": fighter, "choice": choice, "solo": solo, "dps": dps,
+                           "options": [(o[1], o[0]) for o in options]})
+    if not candidates:
+        return _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, [], [], excluded,
+                       {"candidates": 0, "considered": 0, "combinations": 0, "approximate": False})
+
+    candidates.sort(key=lambda c: c["dps"], reverse=True)
+    considered = candidates[:CANDIDATE_LIMIT]
+    size = min(PARTY_SIZE, len(considered))
+    swap = reference.battle["swapDurationMs"]
+    rejoin_ms = None if rejoin_delay_s is None else int(rejoin_delay_s * 1000)
+
+    def ordered(team):
+        return sorted(team, key=lambda c: c["dps"], reverse=True)
+
+    estimates = []
+    combos = list(itertools.combinations(considered, size))
+    for team in combos:
+        team = ordered(team)
+        score = sum(_estimate([c["solo"][s] for c in team], int(limit_s * 1000), swap, rejoin_ms)
+                    for s in range(len(scenarios))) / len(scenarios)
+        estimates.append((score, team))
+    estimates.sort(key=lambda item: item[0], reverse=True)
+
+    best = None
+    for _, team in estimates[:FULL_SIM_PARTIES]:
+        runs = [simulate(reference, [(c["fighter"], c["choice"]) for c in team], foe, f, ch, limit_s, weather,
+                         rejoin_delay_s) for f, ch in scenarios]
+        average = sum(r["damage"] for r in runs) / len(runs)
+        if best is None or average > best[0]:
+            best = (average, team, runs)
+    _, team, runs = best
+    search = {"candidates": len(candidates), "considered": len(considered), "combinations": len(combos),
+              "fully_simulated": min(FULL_SIM_PARTIES, len(estimates)),
+              "approximate": len(candidates) > len(considered)}
+    return _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
+                   shortfall=len(candidates) < PARTY_SIZE)
+
+
+def _theoretical_dps(reference: Reference, fighter: Fighter, choice: int, foe: dict, weather: str) -> float:
+    """Damage per second of one fast/charged cycle against the boss, ignoring the boss's attacks."""
+    weather_types = (reference.weather or {}).get(weather, []) if weather else []
+    fast, charged = fighter.fast, fighter.charged[choice]
+    fast_damage = damage(reference, fast, fighter.attack, foe["defense"], fighter.types, foe["types"], weather_types)
+    charged_damage = damage(reference, charged, fighter.attack, foe["defense"], fighter.types, foe["types"], weather_types)
+    count = math.ceil(-charged.energy / max(fast.energy, 1))
+    return (count * fast_damage + charged_damage) / ((count * fast.duration_ms + charged.duration_ms) / 1000)
+
+
+def _summary(values: list[float]) -> dict:
+    return {"avg": round(sum(values) / len(values), 1), "min": round(min(values), 1), "max": round(max(values), 1)}
+
+
+def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
+            shortfall=False) -> dict:
+    party = []
+    for position, candidate in enumerate(team):
+        fighter, choice = candidate["fighter"], candidate["choice"]
+        member_runs = [r["members"][position] for r in runs]
+        options = candidate["options"]
+        note = None
+        if len(options) > 1:
+            (_, best_damage), (other_index, other_damage) = options[0], options[1]
+            note = (f"{fighter.charged[other_index].name}보다 혼자 싸울 때 평균 피해가 "
+                    f"{best_damage - other_damage:.0f} 많아 선택")
+        party.append({
+            "order": position + 1, "id": fighter.key, **fighter.info, "name": fighter.name,
+            "types": [TYPE_NAMES.get(t, t) for t in fighter.types],
+            "fast": fighter.fast.name, "charged": fighter.charged[choice].name,
+            "charged_type": TYPE_NAMES.get(fighter.charged[choice].type), "charged_note": note,
+            "damage": _summary([m["damage"] for m in member_runs]),
+            "alive_s": _summary([m["time_ms"] / 1000 for m in member_runs]),
+            "theoretical_dps": round(_theoretical_dps(reference, fighter, choice, foe, weather), 1),
+        })
+    result = None
+    if runs:
+        result = {
+            "damage": _summary([r["damage"] for r in runs]),
+            "boss_hp": foe["hp"],
+            "defeated_scenarios": sum(1 for r in runs if r["defeated"]),
+            "battle_s": _summary([r["end_ms"] / 1000 for r in runs]),
+            "faints": _summary([r["faints"] for r in runs]),
+            "rejoins": _summary([r["rejoins"] for r in runs]),
+            "dps": _summary([r["damage"] / max(r["end_ms"] / 1000, 1) for r in runs]),
+        }
+    return {
+        "engine": ENGINE_VERSION, "ruleset": RULESET["version"], "reference": reference.version,
+        "boss": {k: foe[k] for k in ("species", "form_name", "temp", "tier", "tier_name", "hp")}
+        | {"types": [TYPE_NAMES.get(t, t) for t in foe["types"]],
+           "attack": round(foe["attack"], 1), "defense": round(foe["defense"], 1)},
+        "weather": weather, "weather_name": WEATHER_NAMES[weather],
+        "time_limit_s": limit_s, "rejoin_delay_s": rejoin_delay_s,
+        "scenarios": [{"fast": f.name, "charged": c.name} for f, c in scenarios],
+        "by_scenario": [{"fast": f.name, "charged": c.name, "damage": r["damage"], "defeated": r["defeated"],
+                         "battle_s": r["end_ms"] / 1000} for (f, c), r in zip(scenarios, runs)],
+        "party": party, "result": result, "excluded": excluded, "search": search,
+        "shortfall": (f"추천에 쓸 수 있는 개체가 {len(team)}마리라 6마리를 채우지 못했습니다." if shortfall else None),
+        "assumptions": [
+            "전원 체력 가득·에너지 0으로 시작하고 회피하지 않습니다.",
+            "스페셜어택은 에너지가 모이면 바로 씁니다. 두 스페셜어택 중 한 가지만 계속 씁니다.",
+            "보스는 기술 사이에 평균 2초를 쉬고, 스페셜어택은 쓸 수 있을 때 약 절반만 씁니다(번갈아 사용으로 근사).",
+            "보스 기술을 정하지 않으면 가능한 조합을 모두 계산해 같은 비중으로 평균합니다. 실제 확률이 아닙니다.",
+            ("재입장 없음: 6마리가 모두 기절하면 내 피해는 거기서 끝납니다." if rejoin_delay_s is None
+             else f"재입장: 모두 기절하면 {rejoin_delay_s:g}초 뒤 같은 파티로 다시 들어갑니다(사용자가 정한 값)."),
+            "친구·파티 파워·다른 트레이너의 메가 보너스는 넣지 않았습니다. 그림자 개체 여부는 박스에 없어 일반 개체로 계산합니다.",
+            f"보스 HP·CP 배율은 {RULESET['version']} 표를 쓰고, 제한 시간 기본값은 앱이 정한 시나리오 값입니다.",
+        ],
+    }
