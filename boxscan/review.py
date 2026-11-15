@@ -49,11 +49,11 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
     if any(v is None for v in iv_values.values()) and any(v is not None for v in iv_values.values()):
         raise ValueError("IV는 공격·방어·HP 세 값을 모두 입력하거나 모두 비워 두세요.")
     iv = iv_values if all(v is not None for v in iv_values.values()) else None
-    fast = _text(raw.get("fast_move"), "노말 기술")
+    fast = _text(raw.get("fast_move"), "노말어택")
     charged_raw = raw.get("charged_moves") or []
     if not isinstance(charged_raw, list) or len(charged_raw) > 2:
-        raise ValueError("스페셜 기술은 최대 2개입니다.")
-    charged = [name for value in charged_raw if (name := _text(value, "스페셜 기술"))]
+        raise ValueError("스페셜어택은 최대 2개입니다.")
+    charged = [name for value in charged_raw if (name := _text(value, "스페셜어택"))]
     if not any([species, cp, max_hp, iv, fast, charged]):
         raise ValueError("저장할 값이 없습니다.")
 
@@ -74,6 +74,7 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
         "species": species,
         "dex": pokemon_id,
         "form": estimated.get("form"),
+        "form_name": estimated.get("form_name"),
         "cp": cp,
         "max_hp": max_hp,
         "iv": iv,

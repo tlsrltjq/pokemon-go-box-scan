@@ -19,10 +19,16 @@ class MoveDictionaryTests(unittest.TestCase):
         self.assertEqual(moves["dictionary"], "species")
         self.assertEqual((moves["fast"]["move_id"], moves["fast"]["marker"]), ("MOVE_1_FAST", ""))
         elite, shadow = moves["charged"]
-        self.assertEqual((elite["move_id"], elite["marker"]), ("MOVE_13", "*"))
-        self.assertIn("엘리트", elite["reason"])
-        self.assertEqual(shadow["marker"], "*")
-        self.assertIn("그림자", shadow["reason"])
+        self.assertEqual((elite["move_id"], elite["marker"], elite["marker_kind"]),
+                         ("MOVE_13", "*", "elite_charged"))
+        self.assertIn("대단한 기술머신 스페셜어택", elite["reason"])
+        self.assertEqual((shadow["marker"], shadow["reason"]), ("*", "그림자 포켓몬 전용 기술"))
+
+    def test_elite_fast_and_purified_moves_use_game_terms(self):
+        moves = {"fast": voted("기술2번", 2), "charged": [voted("기술14번", 14)]}
+        annotate(moves, self.data, "테스트몬2")
+        self.assertIn("대단한 기술머신 노말어택", moves["fast"]["reason"])
+        self.assertEqual(moves["charged"][0]["reason"], "정화된 포켓몬 전용 기술")
 
     def test_close_ocr_text_is_corrected_within_the_learnset(self):
         moves = {"fast": None, "charged": [voted("기술12빈", 12)]}

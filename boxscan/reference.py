@@ -206,8 +206,10 @@ def _master_stats(master: list[dict]) -> tuple[dict[int, list[BaseStats]], dict]
         for key, role in LEARNSET_KEYS.items():
             learnset.setdefault(role, set()).update(str(m) for m in settings.get(key) or [])
         shadow = settings.get("shadow") or {}
-        learnset.setdefault("shadow", set()).update(
-            str(m) for m in (shadow.get("purifiedChargeMove"), shadow.get("shadowChargeMove")) if m)
+        if shadow.get("shadowChargeMove"):
+            learnset.setdefault("shadow", set()).add(str(shadow["shadowChargeMove"]))
+        if shadow.get("purifiedChargeMove"):
+            learnset.setdefault("purified", set()).add(str(shadow["purifiedChargeMove"]))
     return stats, learnsets
 
 
@@ -247,6 +249,24 @@ def from_json(data: dict) -> Reference:
                      {float(level): value for level, value in data["cpm"].items()},
                      data["korean_names"], data.get("notes"), data.get("move_names"),
                      data.get("move_power"), data.get("learnsets"))
+
+
+def rebuild(data_dir: Path) -> dict:
+    """Re-derive reference.json from the raw files of the current version, without downloading."""
+    pointer = root(data_dir) / "current"
+    if not pointer.is_file():
+        raise ValueError("기준 데이터가 없습니다. `reference update`를 실행하세요.")
+    folder = root(data_dir) / pointer.read_text(encoding="utf-8").strip()
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    missing = [name for name in SOURCES if not (folder / name).is_file()]
+    if missing:
+        raise ValueError(f"원본 파일이 없어 다시 만들 수 없습니다: {', '.join(missing)}. `reference update`를 실행하세요.")
+    parsed = parse({name: (folder / name).read_bytes() for name in SOURCES},
+                   manifest["version"], manifest["fetched_at"])
+    partial = folder / f"{DERIVED}.partial"
+    partial.write_text(json.dumps(to_json(parsed), ensure_ascii=False), encoding="utf-8")
+    partial.replace(folder / DERIVED)
+    return manifest
 
 
 def load(data_dir: Path) -> Reference | None:

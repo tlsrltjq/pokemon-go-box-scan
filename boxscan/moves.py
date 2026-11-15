@@ -1,9 +1,10 @@
 """Match OCR move names to the species' learnset and mark special moves with `*`.
 
-A move gets `*` when the species can only have it through an Elite TM or an event (game master
-"elite" lists), when it is the shadow/purified-only move, or when it is a known move that is not
-in the species' current learnset at all. The game data does not say whether an elite move came
-from a Community Day, a raid event or a legacy period, so all of them share one marker.
+A move gets `*` when the species can only learn it with a 대단한 기술머신 (Elite TM, the game
+master's "elite" lists), when it is the shadow-only or purified-only move, or when it is a known
+move that is not in the species' current learnset at all. The game data does not say whether a
+대단한 기술머신-only move came from a Community Day, an event or an older learnset, so all of
+them share one marker. User-facing words follow the Korean Pokémon GO client.
 """
 import difflib
 
@@ -11,9 +12,11 @@ from .reference import Reference
 
 MIN_SIMILARITY = 0.7
 REASONS = {
-    "elite": "레거시·이벤트 기술 (지금은 엘리트 기술머신으로만 배울 수 있음)",
-    "shadow": "그림자·정화 포켓몬 전용 기술",
-    "not_in_learnset": "이 포켓몬의 현재 기술 목록에 없는 기술 (레거시일 수 있음)",
+    "elite_fast": "대단한 기술머신 노말어택으로만 배울 수 있는 기술 (커뮤니티 데이·이벤트·예전 기술)",
+    "elite_charged": "대단한 기술머신 스페셜어택으로만 배울 수 있는 기술 (커뮤니티 데이·이벤트·예전 기술)",
+    "shadow": "그림자 포켓몬 전용 기술",
+    "purified": "정화된 포켓몬 전용 기술",
+    "not_in_learnset": "이 포켓몬이 지금 배울 수 있는 기술 목록에 없는 기술 (예전에만 배울 수 있던 기술일 수 있음)",
 }
 
 
@@ -65,11 +68,15 @@ def _match(item: dict, reference: Reference, learnset: dict[str, list[str]]) -> 
 
     kind = None
     if learnset:
+        regular = learnset.get("fast", []) + learnset.get("charged", [])
         if move_id in learnset.get("shadow", []):
             kind = "shadow"
-        elif move_id in learnset.get("elite_fast", []) + learnset.get("elite_charged", []) and \
-                move_id not in learnset.get("fast", []) + learnset.get("charged", []):
-            kind = "elite"
+        elif move_id in learnset.get("purified", []):
+            kind = "purified"
+        elif move_id in learnset.get("elite_fast", []) and move_id not in regular:
+            kind = "elite_fast"
+        elif move_id in learnset.get("elite_charged", []) and move_id not in regular:
+            kind = "elite_charged"
         elif move_id not in candidates:
             kind = "not_in_learnset"
     result = {
@@ -77,6 +84,7 @@ def _match(item: dict, reference: Reference, learnset: dict[str, list[str]]) -> 
         "name": reference.move_names[move_id],
         "match": how,
         "marker": "*" if kind else "",
+        "marker_kind": kind,
         "reason": REASONS.get(kind),
         "reference_power": reference.move_power.get(move_id),
     }

@@ -6,6 +6,7 @@ best buddy boosts and mega forms are not used yet.
 """
 import math
 
+from .forms import display_name
 from .reference import BaseStats, Reference
 
 MAX_LEVEL = 50.0  # highest level a Pokémon can be powered up to; best buddy boost is separate
@@ -63,10 +64,14 @@ def estimate(reference: Reference | None, species: str | None, iv: dict | None,
     # Prefer the regular form when it explains the reading; other forms stay visible for review.
     form = "Normal" if "Normal" in matches else sorted(matches)[0]
     levels = matches[form]
+    pokemon_id = forms[0].pokemon_id
     return {
         **result,
         "status": RESOLVED if len(levels) == 1 and len(matches) == 1 else AMBIGUOUS,
         "levels": levels,
         "form": form,
-        "other_forms": {name: found for name, found in matches.items() if name != form},
+        "form_name": display_name(pokemon_id, form),
+        # Keyed by the Korean display name ("기본 모습" for the regular form).
+        "other_forms": {display_name(pokemon_id, name) or "기본 모습": found
+                        for name, found in matches.items() if name != form},
     }

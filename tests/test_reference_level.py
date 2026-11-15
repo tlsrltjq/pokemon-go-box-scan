@@ -94,7 +94,7 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(data.move_power["MOVE_12"], 12.0)
         learnset = data.learnsets["2|Normal"]
         self.assertEqual(learnset["elite_charged"], ["MOVE_13", "SPECIAL_BEAM_FIRE"])  # numeric id
-        self.assertEqual(learnset["shadow"], ["MOVE_14", "MOVE_15"])
+        self.assertEqual((learnset["shadow"], learnset["purified"]), (["MOVE_15"], ["MOVE_14"]))
 
     def test_half_levels_follow_the_game_rules(self):
         low, high = WHOLE[0], WHOLE[1]
@@ -171,6 +171,14 @@ class LevelTests(unittest.TestCase):
         result = level.estimate(data, "작은몬", zero, 10, 10)
         self.assertEqual(result["status"], level.AMBIGUOUS)
         self.assertGreater(len(result["levels"]), 1)
+
+    def test_form_display_names_follow_the_korean_client(self):
+        from boxscan.forms import display_name
+        self.assertIsNone(display_name(1, "Normal"))
+        self.assertEqual(display_name(103, "Alola"), "알로라의 모습")
+        self.assertEqual(display_name(128, "Paldea_Combat"), "팔데아의 모습 (Combat)")
+        self.assertEqual(display_name(150, "A"), "아머드")
+        self.assertEqual(display_name(1, "Fall_2019"), "Fall_2019")  # unknown codes stay as data
 
     def test_other_form_is_shown_when_only_it_matches(self):
         other = self.data.forms("테스트몬2")[1]

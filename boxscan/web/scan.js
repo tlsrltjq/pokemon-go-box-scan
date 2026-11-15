@@ -68,7 +68,7 @@ function levelBlock(level) {
       "같은 값이 나오는 레벨이 여러 개입니다. 다음 강화 비용으로 좁힐 예정입니다."],
     CONFLICT: ["맞는 레벨 없음",
       `레벨 ${max} 이하에서 이 CP·HP·IV 조합이 나오지 않습니다. 판독 값을 원본과 비교하세요. ` +
-      `메가진화·베스트 파트너·특수 폼이거나 레벨 ${max}보다 높을 수도 있습니다.`],
+      `메가진화·베스트 파트너·다른 모습이거나 레벨 ${max}보다 높을 수도 있습니다.`],
     MISSING_INPUT: ["레벨 계산 안 함",
       `${(level.missing ?? []).map(key => MISSING[key] ?? key).join(", ")} 값이 없습니다.`],
     NO_REFERENCE: ["레벨 계산 안 함",
@@ -77,10 +77,10 @@ function levelBlock(level) {
   };
   const [title, detail] = views[level.status] ?? ["레벨", level.status];
   const notes = [detail];
-  if (level.form && level.form !== "Normal") notes.push(`${level.form} 폼 종족값 기준입니다.`);
+  if (level.form && level.form !== "Normal") notes.push(`${level.form_name ?? level.form} 종족값 기준입니다.`);
   const others = Object.entries(level.other_forms ?? {});
   if (others.length) {
-    notes.push("다른 폼으로도 맞습니다: " +
+    notes.push("다른 모습으로도 맞습니다: " +
       others.map(([form, found]) => `${form} 레벨 ${found.join("/")}`).join(", "));
   }
   const warn = ["CONFLICT", "AMBIGUOUS"].includes(level.status);
@@ -117,9 +117,9 @@ function movesBlock(moves) {
       element("p", {}, "기술 화면을 찾지 못했습니다. 기술 목록이 보이게 1초 정도 멈춰 주세요."));
   }
   const rows = [];
-  if (moves.fast) rows.push(moveRow("노말", moves.fast));
-  else rows.push(element("p", { class: "muted" }, "노말 기술을 읽지 못했습니다."));
-  moves.charged.forEach((move, i) => rows.push(moveRow(moves.charged.length > 1 ? `스페셜 ${i + 1}` : "스페셜", move)));
+  if (moves.fast) rows.push(moveRow("노말어택", moves.fast));
+  else rows.push(element("p", { class: "muted" }, "노말어택을 읽지 못했습니다."));
+  moves.charged.forEach((move, i) => rows.push(moveRow(moves.charged.length > 1 ? `스페셜어택 ${i + 1}` : "스페셜어택", move)));
   const boosted = [moves.fast, ...moves.charged].some(move => move?.weather_boost);
   return element("div", { class: "moves" },
     element("h4", {}, "기술"),
@@ -213,9 +213,9 @@ function saveBlock(individual, index) {
       field("IV 공격", "iv_attack", iv.attack, numeric),
       field("IV 방어", "iv_defense", iv.defense, numeric),
       field("IV HP", "iv_stamina", iv.stamina, numeric),
-      field("노말 기술", "fast_move", values.fast_move, { maxlength: "30" }),
-      field("스페셜 1", "charged_1", values.charged_moves[0], { maxlength: "30" }),
-      field("스페셜 2", "charged_2", values.charged_moves[1], { maxlength: "30" }),
+      field("노말어택", "fast_move", values.fast_move, { maxlength: "30" }),
+      field("스페셜어택 1", "charged_1", values.charged_moves[0], { maxlength: "30" }),
+      field("스페셜어택 2", "charged_2", values.charged_moves[1], { maxlength: "30" }),
     ),
     element("label", { class: "field wide" }, element("span", {}, "저장 방식"), target),
     compare, message, submit);

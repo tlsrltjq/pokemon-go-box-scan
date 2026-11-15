@@ -31,7 +31,7 @@ def main() -> None:
     export_cmd = commands.add_parser("export", help="박스를 Excel 파일로 내보내기")
     export_cmd.add_argument("--output", type=Path, help="저장할 .xlsx 경로 (기본: 현재 폴더)")
     ref = commands.add_parser("reference", help="레벨 계산용 기준 데이터 관리")
-    ref.add_argument("action", choices=["update", "show"])
+    ref.add_argument("action", choices=["update", "rebuild", "show"])
     args = parser.parse_args()
     if args.command == "serve":
         host = "127.0.0.1"
@@ -73,6 +73,12 @@ def main() -> None:
             except (OSError, ValueError) as error:
                 raise SystemExit(f"갱신하지 못했습니다. 기존 데이터를 유지합니다: {error}")
             print(f"버전 {manifest['version']} ({manifest['fetched_at']})")
+        if args.action == "rebuild":
+            try:
+                manifest = reference.rebuild(args.data_dir)
+            except (OSError, ValueError) as error:
+                raise SystemExit(str(error))
+            print(f"버전 {manifest['version']}의 정리 파일을 내려받기 없이 다시 만들었습니다.")
         data = reference.load(args.data_dir)
         if data is None:
             raise SystemExit("기준 데이터가 없습니다. `reference update`를 실행하세요.")
