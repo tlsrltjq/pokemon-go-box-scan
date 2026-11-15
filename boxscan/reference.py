@@ -6,7 +6,7 @@ compact `reference.json` that analysis reads. The previous version stays in plac
 download or validation fails. The data is not committed to Git.
 
 Sources and precedence:
-- Base stats and CPM: PokeMiners game master, which lists whole levels only. Half levels below
+- Base stats and CPM: game master (alexelgt/game_masters mirror), which lists whole levels only. Half levels below
   40 use sqrt((cpm(l)^2 + cpm(l+1)^2) / 2); from 40 they use the midpoint, as PoGo API's table
   does. Both rules are cross-checked against PoGo API up to level 45; 45.5–49.5 follow the
   midpoint rule without an outside check.
@@ -27,7 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SOURCES = {
-    "game_master.json": "https://raw.githubusercontent.com/PokeMiners/game_masters/master/latest/latest.json",
+    # alexelgt/game_masters is updated with the game; PokeMiners stopped after 2026-08-29.
+    "game_master.json": "https://raw.githubusercontent.com/alexelgt/game_masters/master/GAME_MASTER.json",
     "pokemon_stats.json": "https://pogoapi.net/api/v1/pokemon_stats.json",
     "cp_multiplier.json": "https://pogoapi.net/api/v1/cp_multiplier.json",
     "pokemon_species_names.csv":
@@ -41,6 +42,7 @@ MOVE_TEMPLATE = re.compile(r"^V(\d{4})_MOVE_(.+)$")
 # Additional charged attacks of mega evolutions ("마지막일침+"), one template per species and state.
 MEGA_MOVE_TEMPLATE = re.compile(r"^VM_MOVE_TEMP_EVOLUTION_(MEGA(?:_X|_Y)?|PRIMAL)_V(\d{4})_POKEMON_")
 MOVE_ALIASES = {"VICEGRIP": "VISEGRIP"}  # renamed in the main series
+VFX_ALIASES = {"MYST_FIRE": "MYSTICAL_FIRE"}  # mega move animation names that differ from move ids
 LEARNSET_KEYS = {"quickMoves": "fast", "cinematicMoves": "charged",
                  "eliteQuickMove": "elite_fast", "eliteCinematicMove": "elite_charged"}
 MAX_BYTES = 64 * 1024 * 1024
@@ -154,6 +156,7 @@ def _mega_moves(master: list[dict], move_names: dict[str, str]) -> dict[int, dic
         if not match or settings is None:
             continue
         base = str(settings.get("vfxName") or "").upper()
+        base = VFX_ALIASES.get(base, base)
         name = move_names.get(base) or move_names.get(f"{base}_FAST")
         found.setdefault(int(match[2]), {})[match[1]] = {
             "move_id": item["templateId"], "base_move": base or None,
