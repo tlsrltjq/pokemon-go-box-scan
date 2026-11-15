@@ -21,6 +21,24 @@
         <input id="search" type="search" autocomplete="off" placeholder="예: 마기라스"></label>
       <a class="button" href="/api/exports/box.xlsx" download>Excel로 내보내기</a>
     </div>
+    <details class="backup">
+      <summary>백업과 복원</summary>
+      <form id="backup-form">
+        <p>박스(개체·이력·관리 번호)와 기준 데이터를 zip 파일 하나로 저장합니다. Excel과 달리 그대로 복원할 수 있습니다.</p>
+        <div class="checks">
+          <label class="check"><input type="checkbox" name="with_scans"><span>판독 프레임·분석 결과 포함</span></label>
+          <label class="check"><input type="checkbox" name="with_videos"><span>원본 영상도 포함 (용량이 큼)</span></label>
+        </div>
+        <button>백업 만들기</button>
+        <p id="backup-status" role="status"></p>
+      </form>
+      <h3>최근 백업</h3>
+      <ul id="backup-list" class="backup-list"></ul>
+      <h3>백업에서 복원</h3>
+      <label class="field" for="restore-file"><span>백업 zip 선택 (먼저 검사하고, 확인한 뒤에 복원합니다)</span>
+        <input id="restore-file" type="file" accept=".zip,application/zip"></label>
+      <div id="restore-preview" role="status"></div>
+    </details>
     <p id="status" role="status">불러오는 중입니다.</p>
     <div id="pokemon" class="grid"></div>
   </main>

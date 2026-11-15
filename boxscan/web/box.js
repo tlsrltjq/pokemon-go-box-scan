@@ -16,18 +16,103 @@ function moveLine(label, move) {
 
 function revisionItem(revision) {
   const source = revision.source;
-  const origin = source ? ` · ${source.filename} 프레임 ${source.frames[0]}–${source.frames.at(-1)}` : "";
+  const manual = source?.kind === "manual_edit";
+  const origin = manual ? (source.note ? ` · 메모: ${source.note}` : "")
+    : source?.filename ? ` · ${source.filename} 프레임 ${source.frames[0]}–${source.frames.at(-1)}` : "";
+  const label = manual ? "직접 수정" : CHANGES[revision.change];
   const item = element("li", {},
-    element("p", {}, element("strong", {}, `rev ${revision.revision} · ${CHANGES[revision.change]}`),
+    element("p", {}, element("strong", {}, `rev ${revision.revision} · ${label}`),
       ` · ${new Date(revision.created_at).toLocaleString("ko-KR")}${origin}`));
   if (revision.change !== "deleted") item.append(comparisonTable(revision.before, revision.after));
   return item;
+}
+
+function editForm(entry, onDone) {
+  const iv = entry.iv ?? {};
+  const moves = entry.moves ?? {};
+  const charged = moves.charged ?? [];
+  const numeric = { inputmode: "numeric" };
+  const message = element("div", { class: "save-message", role: "status" });
+  const submit = element("button", { type: "submit" }, "수정 저장");
+  const cancel = element("button", { type: "button", class: "secondary" }, "취소");
+  const form = element("form", { class: "save-form edit-form" },
+    element("div", { class: "fields" },
+      field("종", "species", entry.species, { maxlength: "30" }),
+      field("CP", "cp", entry.cp, numeric),
+      field("최대 HP", "max_hp", entry.max_hp, numeric),
+      field("IV 공격", "iv_attack", iv.attack, numeric),
+      field("IV 방어", "iv_defense", iv.defense, numeric),
+      field("IV HP", "iv_stamina", iv.stamina, numeric),
+      field("노말어택", "fast_move", moves.fast?.name, { maxlength: "30" }),
+      field("스페셜어택 1", "charged_1", charged[0]?.name, { maxlength: "30" }),
+      field("스페셜어택 2", "charged_2", charged[1]?.name, { maxlength: "30" })),
+    element("div", { class: "checks" },
+      checkbox("이로치 *", "shiny", entry.shiny === true),
+      checkbox("반짝반짝 포켓몬 ♣", "lucky", entry.lucky === true),
+      checkbox("배경 ◆", "background", entry.background === true)),
+    maxStateSelect(entry.max_state ?? ""),
+    field("수정 메모 (선택)", "note", "", { maxlength: "200" }),
+    element("p", { class: "muted" }, "비운 칸은 값을 지웁니다. 레벨과 기술 * 표시는 저장할 때 다시 계산합니다. 이전 값은 이력에 남습니다."),
+    message,
+    element("div", { class: "actions" }, submit, cancel));
+  cancel.addEventListener("click", () => onDone(false));
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const get = name => form.elements[name].value.trim();
+    const ivValues = ["attack", "defense", "stamina"].map(key => get(`iv_${key}`));
+    submit.disabled = true;
+    message.replaceChildren();
+    try {
+      await jsonResponse(await fetch(`/api/pokemon/${entry.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_revision: entry.revision,
+          note: get("note") || null,
+          values: {
+            species: get("species") || null,
+            cp: get("cp") || null,
+            max_hp: get("max_hp") || null,
+            iv: ivValues.every(v => v === "") ? null : { attack: ivValues[0], defense: ivValues[1], stamina: ivValues[2] },
+            fast_move: get("fast_move") || null,
+            charged_moves: [get("charged_1"), get("charged_2")].filter(Boolean),
+            shiny: form.elements.shiny.checked,
+            lucky: form.elements.lucky.checked,
+            background: form.elements.background.checked,
+            max_state: form.elements.max_state.value || null,
+          },
+        }),
+      }));
+      onDone(true);
+    } catch (error) {
+      message.textContent = error.status === 409 ? `${error.message} 목록을 새로 불러옵니다.` : error.message;
+      if (error.status === 409) setTimeout(() => load(), 1500);
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  return form;
 }
 
 function entryCard(entry) {
   const history = element("ol", { class: "history", hidden: "" });
   const toggle = element("button", { type: "button", class: "secondary" }, "이력 보기");
   const remove = element("button", { type: "button", class: "danger" }, "박스에서 제거");
+  const editButton = element("button", { type: "button", class: "secondary" }, "수정");
+  const editArea = element("div", {});
+  editButton.addEventListener("click", () => {
+    if (editArea.childElementCount) {
+      editArea.replaceChildren();
+      return;
+    }
+    editArea.replaceChildren(editForm(entry, async saved => {
+      editArea.replaceChildren();
+      if (saved) {
+        location.hash = entry.id;
+        await load();
+      }
+    }));
+  });
   toggle.addEventListener("click", async () => {
     if (!history.hidden) {
       history.hidden = true;
@@ -77,7 +162,8 @@ function entryCard(entry) {
     entry.max_moves?.length ? element("p", {}, element("span", { class: "muted" }, "맥스기술 "),
       entry.max_moves.map(m => `${m.name} ${m.level ? `레벨 ${m.level}` : m.locked ? "잠김" : ""}`.trim()).join(", ")) : null,
     element("p", { class: "muted" }, `마지막 갱신 ${new Date(entry.updated_at).toLocaleString("ko-KR")}`),
-    element("div", { class: "actions" }, toggle, remove),
+    element("div", { class: "actions" }, editButton, toggle, remove),
+    editArea,
     history,
   );
 }
@@ -101,5 +187,82 @@ async function load() {
   }
 }
 
+// Backups
+const backupList = document.querySelector("#backup-list");
+const backupStatus = document.querySelector("#backup-status");
+const restoreInput = document.querySelector("#restore-file");
+const restorePreview = document.querySelector("#restore-preview");
+
+function summaryText(summary) {
+  const box = summary.box;
+  return `${new Date(summary.created_at).toLocaleString("ko-KR")}에 만든 백업 · 박스 ${box.pokemon}개체` +
+    (box.removed ? `(제거 ${box.removed})` : "") + ` · 이력 ${box.revisions}개` +
+    (summary.with_scans ? ` · 스캔 ${summary.scans}개${summary.with_videos ? "(원본 영상 포함)" : ""}` : "");
+}
+
+async function loadBackups() {
+  const { backups } = await jsonResponse(await fetch("/api/backups"));
+  backupList.replaceChildren(...backups.slice(0, 10).map(item => element("li", {},
+    element("a", { href: `/api/backups/${encodeURIComponent(item.name)}`, download: item.name }, item.name),
+    ` · ${formatBytes(item.bytes)}${item.kind === "restore_safety" ? " · 복원 전 자동 백업" : ""}`)));
+  if (!backups.length) backupList.replaceChildren(element("li", { class: "muted" }, "아직 만든 백업이 없습니다."));
+}
+
+document.querySelector("#backup-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.target;
+  const button = form.querySelector("button");
+  button.disabled = true;
+  backupStatus.textContent = "백업을 만들고 있습니다.";
+  try {
+    const result = await jsonResponse(await fetch("/api/backups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ with_scans: form.elements.with_scans.checked, with_videos: form.elements.with_videos.checked }),
+    }));
+    backupStatus.replaceChildren(`백업을 만들었습니다 (박스 ${result.box.pokemon}개체, ${formatBytes(result.bytes)}). `,
+      element("a", { href: `/api/backups/${encodeURIComponent(result.name)}`, download: result.name }, "내려받기"));
+    await loadBackups();
+  } catch (error) {
+    backupStatus.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+restoreInput.addEventListener("change", async () => {
+  const file = restoreInput.files[0];
+  restorePreview.replaceChildren();
+  if (!file) return;
+  restorePreview.textContent = "백업 파일을 검사하고 있습니다.";
+  try {
+    const { token, summary } = await jsonResponse(await fetch("/api/backups/preview", {
+      method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    }));
+    const confirmButton = element("button", { type: "button", class: "danger" }, "이 백업으로 복원");
+    restorePreview.replaceChildren(
+      element("p", {}, `검사 통과: ${summaryText(summary)}`),
+      element("p", { class: "muted" }, "복원하면 현재 박스를 이 백업으로 바꿉니다. 현재 박스는 먼저 자동으로 백업합니다. 스캔은 없는 것만 추가합니다."),
+      confirmButton);
+    confirmButton.addEventListener("click", async () => {
+      confirmButton.disabled = true;
+      try {
+        const result = await jsonResponse(await fetch("/api/backups/restore", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }),
+        }));
+        restorePreview.replaceChildren(element("p", {},
+          `복원했습니다. 복원 전 박스는 ${result.safety_backup}로 저장했습니다. 추가한 스캔 ${result.scans_added}개.`));
+        restoreInput.value = "";
+        await Promise.all([load(), loadBackups()]);
+      } catch (error) {
+        restorePreview.textContent = error.message;
+      }
+    });
+  } catch (error) {
+    restorePreview.textContent = `사용할 수 없는 백업입니다: ${error.message}`;
+  }
+});
+
+loadBackups().catch(error => { backupStatus.textContent = error.message; });
 search.addEventListener("input", render);
 load().catch(error => { status.textContent = error.message; });

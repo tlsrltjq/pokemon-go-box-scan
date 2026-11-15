@@ -156,11 +156,6 @@ function movesBlock(moves) {
   );
 }
 
-function field(label, name, value, attributes = {}) {
-  return element("label", { class: "field" }, element("span", {}, label),
-    element("input", { name, value: value ?? "", autocomplete: "off", ...attributes }));
-}
-
 function candidateValues(individual) {
   const moves = individual.moves ?? {};
   const name = move => (move ? move.name ?? move.value : "");
@@ -213,11 +208,6 @@ function maxMovesBlock(moves) {
       element("strong", {}, move.name),
       element("span", { class: "move-power" }, move.level ? `레벨 ${move.level}` : move.locked ? "잠김" : "-"))),
   );
-}
-
-function checkbox(label, name, checked) {
-  return element("label", { class: "check" },
-    element("input", { type: "checkbox", name, checked: checked ? "" : null }), element("span", {}, label));
 }
 
 function readForm(formNode) {

@@ -50,6 +50,28 @@ function element(tag, attributes = {}, ...children) {
   return node;
 }
 
+function field(label, name, value, attributes = {}) {
+  return element("label", { class: "field" }, element("span", {}, label),
+    element("input", { name, value: value ?? "", autocomplete: "off", ...attributes }));
+}
+
+function checkbox(label, name, checked) {
+  return element("label", { class: "check" },
+    element("input", { type: "checkbox", name, checked: checked ? "" : null }), element("span", {}, label));
+}
+
+function maxStateSelect(value) {
+  return element("label", { class: "field wide" }, element("span", {}, "다이맥스"),
+    element("select", { name: "max_state" },
+      element("option", { value: "" }, "해당 없음"),
+      element("option", { value: "dynamax", selected: value === "dynamax" ? "" : null }, "다이맥스"),
+      element("option", { value: "gigantamax", selected: value === "gigantamax" ? "" : null }, "거다이맥스")));
+}
+
+function formatBytes(bytes) {
+  return bytes >= 1024 ** 2 ? `${(bytes / 1024 ** 2).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
+
 function formatIv(iv) {
   if (!iv) return "-";
   const total = iv.attack + iv.defense + iv.stamina;

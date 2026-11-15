@@ -112,3 +112,9 @@ a.button { display: inline-flex; align-items: center; min-height: 2.75rem; paddi
 .badge.state.max { color: #6a1b4d; background: #f7dcec; }
 .badge.state.mega { color: #1f4f7a; background: #dcebf7; }
 .move-reason.neutral { color: #3f5953; }
+.backup { background: white; border: 1px solid #c9d5d0; border-radius: 1rem; padding: .9rem 1.1rem; margin-top: 1rem; }
+.backup summary { font-weight: 700; cursor: pointer; }
+.backup form { border: 0; padding: .4rem 0 0; }
+.backup h3 { font-size: 1rem; margin: 1rem 0 .3rem; }
+.backup-list { margin: 0; padding-left: 1.2rem; font-size: .9rem; }
+.edit-form { margin-top: .6rem; border-top: 1px solid #e3eae6; padding-top: .7rem; }

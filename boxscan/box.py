@@ -44,6 +44,12 @@ CREATE TABLE IF NOT EXISTS approvals (
 """
 
 
+# Fields the box page edits directly. They are replaced as a whole, so the user can clear a wrong
+# value; other fields (mega record, max moves, approval history) stay as they are.
+EDITABLE = ("species", "dex", "form", "form_name", "shiny", "lucky", "background", "max_state",
+            "cp", "max_hp", "cp_source", "iv", "level", "moves", "fusion")
+
+
 class Conflict(Exception):
     """The entry changed or was removed since the client read it."""
 
@@ -192,6 +198,29 @@ class BoxStore:
             for r in revisions
         ]
         return entry
+
+    def edit(self, pokemon_id: str, values: dict, expected_revision: int, note: str | None = None) -> dict:
+        """Replace the editable fields after checking the revision; history keeps the old values."""
+        stamp = now()
+        with self._write() as db:
+            row = db.execute("SELECT * FROM pokemon WHERE id = ?", (pokemon_id,)).fetchone()
+            if row is None or row["deleted_at"] is not None:
+                raise Conflict("박스에 없는 개체입니다.")
+            if row["revision"] != expected_revision:
+                raise Conflict("다른 곳에서 먼저 갱신된 개체입니다. 최신 값을 다시 확인하세요.")
+            before = json.loads(row["data"])
+            after = {**before, **{key: values.get(key) for key in EDITABLE}}
+            revision = row["revision"] + 1
+            db.execute("UPDATE pokemon SET revision = ?, data = ?, updated_at = ? WHERE id = ?",
+                       (revision, json.dumps(after, ensure_ascii=False), stamp, pokemon_id))
+            db.execute(
+                "INSERT INTO revisions VALUES (?, ?, 'updated', ?, ?, ?, ?)",
+                (pokemon_id, revision, json.dumps(before, ensure_ascii=False),
+                 json.dumps(after, ensure_ascii=False),
+                 json.dumps({"kind": "manual_edit", "note": note}, ensure_ascii=False), stamp),
+            )
+            row = db.execute("SELECT * FROM pokemon WHERE id = ?", (pokemon_id,)).fetchone()
+            return self._entry(row)
 
     def delete(self, pokemon_id: str, expected_revision: int) -> None:
         """Remove from the box but keep the row, history and code reservation."""

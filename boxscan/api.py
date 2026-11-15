@@ -10,13 +10,26 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from . import export, reference, review
+from . import backup, export, reference, review
 from .analysis import RESULT
 from .box import BoxStore, Conflict
 from .store import JobStore
 from .video import MAX_FRAMES
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+MAX_BACKUP_UPLOAD_BYTES = 8 * 1024 ** 3
+
+
+async def _json_body(request: Request) -> dict:
+    if request.headers.get("content-type", "").split(";")[0] != "application/json":
+        raise HTTPException(415, "JSON 요청만 지원합니다.")
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(400, "요청 형식이 올바르지 않습니다.") from None
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "요청 형식이 올바르지 않습니다.")
+    return payload
 WEB = Path(__file__).with_name("web")
 
 
@@ -199,6 +212,102 @@ def create_app(
         content = export.workbook_bytes(box.list(), data, export.app_version())
         return Response(content, media_type=export.MEDIA_TYPE, headers={
             "Content-Disposition": f'attachment; filename="{export.filename()}"'})
+
+    @app.patch("/api/pokemon/{pokemon_id}")
+    async def pokemon_edit(pokemon_id: UUID, request: Request):
+        payload = await _json_body(request)
+        existing = box.get(str(pokemon_id))
+        if existing is None:
+            raise HTTPException(404, "박스에서 개체를 찾을 수 없습니다.")
+        revision = payload.get("expected_revision")
+        if not isinstance(revision, int) or isinstance(revision, bool):
+            raise HTTPException(422, "현재 revision을 함께 보내야 합니다.")
+        try:
+            data = reference.load(store.root)
+        except (OSError, ValueError, KeyError):
+            data = None
+        try:
+            values = review.normalize(payload.get("values"), data)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+        # A CP the user typed is a manual value; an unchanged CP keeps where it came from.
+        changed = (values["cp"], values["max_hp"]) != (existing.get("cp"), existing.get("max_hp"))
+        values["cp_source"] = "manual" if changed else existing.get("cp_source")
+        note = payload.get("note")
+        if note is not None and (not isinstance(note, str) or len(note) > 200):
+            raise HTTPException(422, "수정 메모는 200자 이하로 적어 주세요.")
+        try:
+            return box.edit(str(pokemon_id), values, revision, note or None)
+        except Conflict as error:
+            raise HTTPException(409, str(error)) from None
+
+    @app.get("/api/backups")
+    def backups_list():
+        return {"backups": backup.listing(store.root)}
+
+    @app.post("/api/backups")
+    async def backups_create(request: Request):
+        payload = await _json_body(request)
+        with_scans = payload.get("with_scans") is True
+        manifest = backup.create(store.root, with_scans=with_scans,
+                                 with_videos=with_scans and payload.get("with_videos") is True,
+                                 app_version=export.app_version())
+        return {"name": Path(manifest["path"]).name, "bytes": manifest["bytes"], "box": manifest["box"],
+                "with_scans": manifest["with_scans"], "with_videos": manifest["with_videos"]}
+
+    @app.get("/api/backups/{name}")
+    def backups_download(name: str):
+        path = backup.folder(store.root) / name
+        if not backup.NAME.match(name) or not path.is_file():
+            raise HTTPException(404, "백업 파일을 찾을 수 없습니다.")
+        return FileResponse(path, media_type="application/zip", filename=name)
+
+    @app.post("/api/backups/preview")
+    async def backups_preview(request: Request):
+        """Receive a backup zip, check it, and keep it until the user confirms the restore."""
+        if request.headers.get("content-type") != "application/octet-stream":
+            raise HTTPException(415, "백업 파일을 그대로 보내 주세요.")
+        uploads = backup.folder(store.root) / "uploads"
+        uploads.mkdir(exist_ok=True)
+        token = uuid4().hex
+        path = uploads / f"{token}.zip"
+        size = 0
+        try:
+            with path.open("xb") as output:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > MAX_BACKUP_UPLOAD_BYTES:
+                        raise HTTPException(413, "백업 파일이 너무 큽니다.")
+                    output.write(chunk)
+            summary = backup.inspect(path)
+        except backup.BackupError as error:
+            path.unlink(missing_ok=True)
+            raise HTTPException(422, str(error)) from None
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        return {"token": token, "summary": summary}
+
+    @app.post("/api/backups/restore")
+    async def backups_restore(request: Request):
+        payload = await _json_body(request)
+        token, name = payload.get("token"), payload.get("name")
+        if isinstance(token, str) and len(token) == 32 and all(c in "0123456789abcdef" for c in token):
+            path = backup.folder(store.root) / "uploads" / f"{token}.zip"
+        elif isinstance(name, str) and backup.NAME.match(name):
+            path = backup.folder(store.root) / name
+        else:
+            raise HTTPException(422, "복원할 백업을 다시 선택하세요.")
+        if not path.is_file():
+            raise HTTPException(404, "백업 파일을 찾을 수 없습니다. 다시 올려 주세요.")
+        try:
+            result = backup.restore(store.root, path, export.app_version())
+        except backup.BackupError as error:
+            raise HTTPException(422, str(error)) from None
+        if token:
+            path.unlink(missing_ok=True)
+        result["safety_backup"] = Path(result["safety_backup"]).name
+        return result
 
     @app.delete("/api/pokemon/{pokemon_id}", status_code=204)
     def pokemon_delete(pokemon_id: UUID, revision: int):

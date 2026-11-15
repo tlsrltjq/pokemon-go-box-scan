@@ -116,7 +116,7 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
             entry.get("form_name") or (entry.get("form") if entry.get("form") != "Normal" else None),
             MAX_NAMES.get(entry.get("max_state")),
             entry.get("cp"), entry.get("max_hp"),
-            "계산값" if entry.get("cp_source") == "calculated" else None,
+            {"calculated": "계산값", "manual": "직접 입력"}.get(entry.get("cp_source")),
             level.get("value"), LEVEL_STATUS.get(level.get("status"), level.get("status")),
             ", ".join(f"{value:g}" for value in candidates) if len(candidates) > 1 else None,
             iv["attack"] if iv else None, iv["defense"] if iv else None, iv["stamina"] if iv else None,
@@ -167,7 +167,8 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
                    "그림자 포켓몬·정화된 포켓몬 전용 기술, 지금 배울 수 있는 기술 목록에 없는 기술"],
         ["모습", "기본 모습은 빈칸입니다. 알로라의 모습 등 다른 모습만 적습니다."],
         ["종", "이름 뒤 기호: * 이로치, ♣ 반짝반짝 포켓몬, ◆ 배경 (예: 마기라스*♣◆)"],
-        ["CP 출처", "계산값: 메가진화 중에 찍은 개체라 화면 CP 대신 레벨로 계산한 기본 모습 CP입니다."],
+        ["CP 출처", "계산값: 메가진화 중에 찍은 개체라 화면 CP 대신 레벨로 계산한 기본 모습 CP입니다. "
+                    "직접 입력: 내 박스에서 직접 고친 CP입니다. 빈칸은 화면에서 읽은 값입니다."],
         ["빈칸", "읽지 못했거나 확인하지 않은 값입니다. 0으로 채우지 않습니다."],
         ["포함하지 않은 정보", "영상, 프레임, 파일 이름, 촬영 시각 등 촬영 정보"],
         ["주의", "이 파일은 보기용입니다. 박스 복원에는 별도 백업을 사용하세요."],

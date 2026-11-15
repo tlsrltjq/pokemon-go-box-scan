@@ -30,6 +30,17 @@ def main() -> None:
     analyze.add_argument("scan_id")
     export_cmd = commands.add_parser("export", help="박스를 Excel 파일로 내보내기")
     export_cmd.add_argument("--output", type=Path, help="저장할 .xlsx 경로 (기본: 현재 폴더)")
+    backup_cmd = commands.add_parser("backup", help="박스 백업 만들기·검사·복원")
+    backup_actions = backup_cmd.add_subparsers(dest="backup_action", required=True)
+    backup_create = backup_actions.add_parser("create", help="백업 zip 만들기 (기본: data/backups/)")
+    backup_create.add_argument("--output", type=Path)
+    backup_create.add_argument("--with-scans", action="store_true", help="판독 프레임·분석 결과 포함")
+    backup_create.add_argument("--with-videos", action="store_true", help="원본 영상도 포함 (--with-scans 필요)")
+    backup_inspect = backup_actions.add_parser("inspect", help="백업을 바꾸지 않고 검사")
+    backup_inspect.add_argument("path", type=Path)
+    backup_restore = backup_actions.add_parser("restore", help="검사 후 현재 박스를 백업하고 복원")
+    backup_restore.add_argument("path", type=Path)
+    backup_restore.add_argument("--yes", action="store_true", help="확인 질문 없이 복원")
     ref = commands.add_parser("reference", help="레벨 계산용 기준 데이터 관리")
     ref.add_argument("action", choices=["update", "rebuild", "show"])
     args = parser.parse_args()
@@ -46,6 +57,38 @@ def main() -> None:
                 serve.error("접속 암호는 12자 이상이어야 합니다.")
         uvicorn.run(create_app(args.data_dir, host, password), host=host, port=args.port,
                     proxy_headers=False)
+        return
+
+    if args.command == "backup":
+        from . import backup, export
+
+        def show(summary):
+            box = summary["box"]
+            print(f"만든 시각 {summary['created_at']} · 앱 {summary['app_version']} · "
+                  f"박스 {box['pokemon']}개체(제거 {box['removed']}) · 이력 {box['revisions']}개 · "
+                  f"기준 데이터 {summary['reference_version'] or '-'} · "
+                  f"스캔 {summary['scans'] if summary['with_scans'] else '미포함'}"
+                  f"{' · 원본 영상 포함' if summary['with_videos'] else ''}")
+
+        if args.backup_action == "create":
+            if args.with_videos and not args.with_scans:
+                backup_create.error("--with-videos는 --with-scans와 함께 쓰세요.")
+            manifest = backup.create(args.data_dir, args.output, args.with_scans, args.with_videos,
+                                     export.app_version())
+            print(f"백업을 만들었습니다: {manifest['path']} ({manifest['bytes']:,} bytes)")
+            return
+        try:
+            summary = backup.inspect(args.path)
+        except backup.BackupError as error:
+            raise SystemExit(f"사용할 수 없는 백업입니다: {error}")
+        show(summary)
+        if args.backup_action == "inspect":
+            print("검사를 통과했습니다. 아무것도 바꾸지 않았습니다.")
+            return
+        if not args.yes and input("현재 박스를 이 백업으로 바꿀까요? 현재 박스는 먼저 백업합니다. [y/N] ").strip().lower() != "y":
+            raise SystemExit("복원하지 않았습니다.")
+        result = backup.restore(args.data_dir, args.path, export.app_version())
+        print(f"복원했습니다. 복원 전 박스 백업: {result['safety_backup']} · 추가한 스캔 {result['scans_added']}개")
         return
 
     if args.command == "export":
