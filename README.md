@@ -69,16 +69,19 @@ uv run --locked python -m boxscan analyze <스캔 ID>
 | 후보 여러 개 (`AMBIGUOUS`) | 낮은 CP 등에서 이웃 레벨이 같은 값을 냅니다. 다음 강화 비용으로 좁히는 것은 후속 단계입니다. |
 | 맞는 레벨 없음 (`CONFLICT`) | CP·HP·IV·종 중 하나를 잘못 읽었거나, 메가진화·베스트 파트너·특수 폼처럼 아직 반영하지 않은 상태일 수 있습니다. |
 
-기준 데이터는 다음 세 파일입니다. 받은 시각, 원본 주소, SHA-256을 버전 폴더의 `manifest.json`에 남기며, 새로 받은 데이터가 형식 검사를 통과하지 못하면 이전 버전을 유지합니다. 재배포 조건을 확인하지 않았으므로 Git에는 넣지 않습니다.
+기준 데이터는 다음 네 파일(합계 약 20MB)입니다. 받은 시각, 원본 주소, SHA-256을 버전 폴더의 `manifest.json`에 남기고, 분석에는 정리한 `reference.json`만 읽습니다. 새로 받은 데이터가 형식·교차 검사를 통과하지 못하면 이전 버전을 유지합니다. 재배포 조건을 확인하지 않았으므로 Git에는 넣지 않습니다.
 
-- 종족값: [PoGo API `pokemon_stats.json`](https://pogoapi.net/documentation/)
-- 레벨별 CP 배율(CPM): PoGo API `cp_multiplier.json`
+- 종족값과 레벨별 CP 배율(CPM): [PokeMiners 게임 마스터](https://github.com/PokeMiners/game_masters) `latest/latest.json`. 게임 파일에서 추출한 비공식 자료입니다.
+- 교차 검사와 보조 종족값: [PoGo API](https://pogoapi.net/documentation/) `cp_multiplier.json`, `pokemon_stats.json`. 게임 마스터에 없는 종만 PoGo API 종족값으로 채웁니다.
 - 한국어 종 이름 → 도감 번호: [PokeAPI `pokemon_species_names.csv`](https://github.com/PokeAPI/pokeapi/tree/master/data/v2/csv)
+
+게임 마스터에는 정수 레벨의 CPM만 있습니다. 반 레벨은 레벨 40 미만에서 `√((CPM(l)² + CPM(l+1)²) / 2)`, 40 이상에서 두 값의 평균으로 계산합니다. 이 규칙은 PoGo API 표와 레벨 45까지 89개 레벨에서 최대 3×10⁻⁸ 차이로 일치했습니다(2026-11-15). 45.5~49.5는 같은 규칙을 적용했으며 외부 표와 대조하지 않았습니다.
 
 현재 한계는 다음과 같습니다.
 
-- PoGo API의 CPM 표는 레벨 45까지입니다(2026-11-15 확인). 레벨 45.5~50 개체는 `CONFLICT`로 나오며, 화면에도 이 범위를 확인하지 못했다고 표시합니다.
-- PoGo API 종족값 파일의 서버 갱신일은 2025-11-11입니다. 이후 추가된 포켓몬이나 조정된 수치는 없을 수 있습니다.
+- 레벨은 강화 가능한 최대치인 50까지 확인합니다. 베스트 파트너 보정(+1)이 적용된 CP는 `CONFLICT`로 나올 수 있습니다.
+- 확인 시점의 게임 마스터 커밋은 2026-08-29입니다. 이후 추가·조정된 포켓몬은 다음 `reference update`까지 반영되지 않습니다. 게임 마스터와 PoGo API 모두에 없는 종(확인 시점 1종)은 `UNKNOWN_SPECIES`로 표시합니다.
+- 메가·원시회귀 폼의 종족값은 아직 읽지 않습니다.
 - 같은 종에 여러 폼이 있으면 기본 폼(`Normal`)을 우선하고, 다른 폼으로도 맞으면 함께 표시합니다. 폼을 화면에서 판별하지는 않습니다.
 - 다음 1회 강화 비용, 반짝반짝·그림자·정화 보정, 베스트 파트너 레벨은 아직 사용하지 않습니다.
 
