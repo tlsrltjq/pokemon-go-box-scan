@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import ivbars, level, ocr, reference
+from . import moves as move_dictionary
 from .fields import group_frames, parse_frame
 from .store import JobStore
 from .video import MAX_VIDEO_SECONDS, SAMPLE_SECONDS
@@ -56,6 +57,9 @@ def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None =
             (individual["cp"] or {}).get("value"),
             (individual["max_hp"] or {}).get("value"),
         )
+        move_dictionary.annotate(individual["moves"], data,
+                                 (individual["species"] or {}).get("value"),
+                                 individual["level"].get("form"))
     result = {
         "scan_id": scan_id,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

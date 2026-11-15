@@ -74,3 +74,5 @@ dd span { color: #3f5953; font-size: .75rem; }
 .move-power { font-size: .85rem; text-align: right; }
 .move-votes { grid-column: 2 / 4; font-size: .75rem; color: #3f5953; }
 .moves.empty p { color: #7a3d14; margin: 0; font-size: .9rem; }
+.marker { color: #b0452a; margin-left: .1rem; }
+.move-reason { grid-column: 2 / 4; font-size: .78rem; color: #8a3b12; }

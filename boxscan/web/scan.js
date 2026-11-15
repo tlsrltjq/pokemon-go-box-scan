@@ -109,11 +109,22 @@ function levelBlock(level) {
 
 function moveRow(label, move) {
   const boost = move.weather_boost ? ` +${move.weather_boost}` : "";
+  const notes = [`${move.observations}장 중 ${move.votes}장`];
+  if (move.ocr_text) notes.push(`화면 글자 "${move.ocr_text}"를 기술 목록에서 가장 비슷한 이름으로 고침`);
+  if (move.match === "none") notes.push("기술 사전에서 찾지 못해 화면 글자 그대로입니다");
+  if (move.reference_power != null && move.power != null && move.reference_power !== move.power) {
+    notes.push(`기준 데이터 위력 ${move.reference_power}와 다름`);
+  }
+  const name = element("strong", {}, move.name ?? move.value);
+  if (move.marker) {
+    name.append(element("span", { class: "marker", title: move.reason }, move.marker));
+  }
   return element("div", { class: "move" },
     element("span", { class: "move-role" }, label),
-    element("strong", {}, move.value),
+    name,
     element("span", { class: "move-power" }, move.power === null ? "" : `위력 ${move.power}${boost}`),
-    element("span", { class: "move-votes" }, `${move.observations}장 중 ${move.votes}장`),
+    move.marker ? element("span", { class: "move-reason" }, `* ${move.reason}`) : null,
+    element("span", { class: "move-votes" }, notes.join(" · ")),
   );
 }
 
@@ -131,7 +142,11 @@ function movesBlock(moves) {
     element("h4", {}, "기술"),
     ...rows,
     element("p", { class: "muted" },
-      "화면 글자 그대로입니다. 기술 사전 대조와 레거시·이벤트 기술 * 표시는 다음 단계입니다." +
+      (({
+        species: "이 포켓몬의 기술 목록과 대조했습니다.",
+        all: "종을 몰라 전체 기술 사전과만 대조했습니다. * 표시는 종을 알아야 판단할 수 있습니다.",
+        unavailable: "기술 사전이 없어 화면 글자 그대로입니다. reference update를 실행하세요.",
+      })[moves.dictionary] ?? "") +
       (boosted ? " +숫자는 녹화 당시 날씨 보너스입니다." : "")),
   );
 }

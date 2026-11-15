@@ -10,6 +10,7 @@ from boxscan.reference import BaseStats, Reference
 # Synthetic values only. Real game data is downloaded locally and never used in tests.
 WHOLE = [round(0.1 + 0.014 * (level - 1), 6) for level in range(1, 81)]  # game master lists 80
 IV = {"attack": 10, "defense": 5, "stamina": 12}
+MOVE_COUNT = 110
 
 
 def master(count: int, whole=WHOLE) -> list[dict]:
@@ -17,10 +18,21 @@ def master(count: int, whole=WHOLE) -> list[dict]:
               "data": {"playerLevel": {"cpMultiplier": whole}}},
              {"templateId": "ITEM_POTION", "data": {"itemSettings": {}}}]
 
+    # 110 synthetic moves: MOVE_1_FAST..MOVE_10_FAST and MOVE_11..MOVE_110, plus numeric id 406.
+    for n in range(1, MOVE_COUNT + 1):
+        name = f"MOVE_{n}_FAST" if n <= 10 else f"MOVE_{n}"
+        items.append({"templateId": f"V{n:04d}_MOVE_{name}",
+                      "data": {"moveSettings": {"movementId": n, "power": float(n)}}})
+    items.append({"templateId": "V0406_MOVE_SPECIAL_BEAM_FIRE",
+                  "data": {"moveSettings": {"movementId": 406, "power": 77.0}}})
+
     def pokemon(number, suffix, form, attack, defense, stamina):
         template = f"V{number:04d}_POKEMON_MON{number}{suffix}"
         settings = {"pokemonId": f"MON{number}",
-                    "stats": {"baseAttack": attack, "baseDefense": defense, "baseStamina": stamina}}
+                    "stats": {"baseAttack": attack, "baseDefense": defense, "baseStamina": stamina},
+                    "quickMoves": ["MOVE_1_FAST"], "cinematicMoves": ["MOVE_11", "MOVE_12"],
+                    "eliteQuickMove": ["MOVE_2_FAST"], "eliteCinematicMove": ["MOVE_13", 406],
+                    "shadow": {"purifiedChargeMove": "MOVE_14", "shadowChargeMove": "MOVE_15"}}
         if form:
             settings["form"] = form
         return {"templateId": template, "data": {"pokemonSettings": settings}}
@@ -45,11 +57,16 @@ def synthetic_files(count=120, whole=WHOLE, check=None) -> dict[str, bytes]:
     names = ["pokemon_species_id,local_language_id,name,genus"]
     names += [f"{n},3,테스트몬{n},종류" for n in range(1, count + 2)]
     names += [f"{n},9,Mon{n},Kind" for n in range(1, count + 2)]
+    moves = ["move_id,local_language_id,name"]
+    moves += [f"{n},9,Move {n}" for n in range(1, MOVE_COUNT + 1)]
+    moves += [f"{n},3,기술{n}번" for n in range(1, MOVE_COUNT + 1)]
+    moves += ["999,9,Special Beam", "999,3,특수광선"]
     return {
         "game_master.json": json.dumps(game_master).encode(),
         "pokemon_stats.json": json.dumps(fallback).encode(),
         "cp_multiplier.json": json.dumps([{"level": k, "multiplier": v} for k, v in check.items()]).encode(),
         "pokemon_species_names.csv": "\n".join(names).encode(),
+        "move_names.csv": "\n".join(moves).encode(),
     }
 
 
@@ -69,6 +86,15 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(data.notes["stats_from_pogoapi"], 1)
         self.assertEqual(data.forms("Mon2"), [])
         self.assertEqual(data.forms("없는몬"), [])
+
+    def test_moves_join_korean_names_learnsets_and_power(self):
+        data = synthetic_reference()
+        self.assertEqual(data.move_names["MOVE_1_FAST"], "기술1번")
+        self.assertEqual(data.move_names["SPECIAL_BEAM_FIRE"], "특수광선")  # typed variant
+        self.assertEqual(data.move_power["MOVE_12"], 12.0)
+        learnset = data.learnsets["2|Normal"]
+        self.assertEqual(learnset["elite_charged"], ["MOVE_13", "SPECIAL_BEAM_FIRE"])  # numeric id
+        self.assertEqual(learnset["shadow"], ["MOVE_14", "MOVE_15"])
 
     def test_half_levels_follow_the_game_rules(self):
         low, high = WHOLE[0], WHOLE[1]

@@ -12,6 +12,8 @@ Sources and precedence:
   midpoint rule without an outside check.
 - PoGo API stats fill species the game master lacks. Its CPM table (to level 45) is only a check.
 - Korean species names: PokeAPI CSV.
+- Moves: per-species learnsets (regular, elite, shadow-only) and PvE power come from the game
+  master. Game master move IDs are joined to PokeAPI's English move names, then to Korean.
 """
 import csv
 import hashlib
@@ -30,13 +32,19 @@ SOURCES = {
     "cp_multiplier.json": "https://pogoapi.net/api/v1/cp_multiplier.json",
     "pokemon_species_names.csv":
         "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/pokemon_species_names.csv",
+    "move_names.csv": "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/move_names.csv",
 }
 DERIVED = "reference.json"
 KOREAN = "3"  # PokeAPI local_language_id for Korean
+ENGLISH = "9"
+MOVE_TEMPLATE = re.compile(r"^V(\d{4})_MOVE_(.+)$")
+MOVE_ALIASES = {"VICEGRIP": "VISEGRIP"}  # renamed in the main series
+LEARNSET_KEYS = {"quickMoves": "fast", "cinematicMoves": "charged",
+                 "eliteQuickMove": "elite_fast", "eliteCinematicMove": "elite_charged"}
 MAX_BYTES = 64 * 1024 * 1024
 MAX_LEVEL = 55.0
 CPM_TOLERANCE = 1e-6
-USER_AGENT = "boxscan-reference/0.2"
+USER_AGENT = "boxscan-reference/0.3"
 TEMPLATE = re.compile(r"^V(\d{4})_POKEMON_")
 
 
@@ -58,6 +66,9 @@ class Reference:
     cpm: dict[float, float]  # level -> CP multiplier
     korean_names: dict[str, int]  # Korean species name -> pokemon id
     notes: dict | None = None
+    move_names: dict[str, str] | None = None  # game master move id -> Korean name
+    move_power: dict[str, float] | None = None  # game master move id -> PvE power
+    learnsets: dict[str, dict[str, list[str]]] | None = None  # "id|form" -> role -> move ids
 
     def forms(self, korean_name: str) -> list[BaseStats]:
         pokemon_id = self.korean_names.get(korean_name.strip())
@@ -72,7 +83,10 @@ def parse(files: dict[str, bytes], version: str = "", fetched_at: str = "") -> R
     """Validate and combine the raw files. Raises ValueError when the data looks wrong."""
     try:
         master = json.loads(files["game_master.json"])
-        stats = _master_stats(master)
+        stats, learnsets = _master_stats(master)
+        numbers, move_power = _master_moves(master)
+        move_names, unmatched = _korean_moves(
+            files["move_names.csv"], numbers, learnsets, move_power)
         cpm = _master_cpm(master)
         fallback = 0
         for item in json.loads(files["pokemon_stats.json"]):
@@ -100,9 +114,63 @@ def parse(files: dict[str, bytes], version: str = "", fetched_at: str = "") -> R
         raise ValueError(f"게임 마스터 CPM이 PoGo API 값과 맞지 않습니다 (최대 차이 {worst}).")
     for forms in stats.values():
         forms.sort(key=lambda form: form.form != "Normal")
+    if len(move_names) < 100:
+        raise ValueError("기술 이름을 거의 연결하지 못했습니다.")
+    kept = {f"{form.pokemon_id}|{form.form}" for forms in stats.values() for form in forms}
+    learnsets = {key: _resolve(value, numbers) for key, value in learnsets.items() if key in kept}
     notes = {"cpm_checked_levels": len(shared), "cpm_max_difference": worst,
-             "stats_from_pogoapi": fallback}
-    return Reference(version, fetched_at, stats, cpm, names, notes)
+             "stats_from_pogoapi": fallback, "moves_without_korean_name": unmatched}
+    return Reference(version, fetched_at, stats, cpm, names, notes, move_names, move_power, learnsets)
+
+
+def _resolve(learnset: dict[str, list[str]], numbers: dict[str, str]) -> dict[str, list[str]]:
+    return {role: sorted({numbers.get(move, move) for move in moves}) for role, moves in learnset.items()}
+
+
+def _master_moves(master: list[dict]) -> tuple[dict[str, str], dict[str, float]]:
+    """Map numeric move ids to names and read PvE power from V####_MOVE_* templates."""
+    numbers, power = {}, {}
+    for item in master:
+        match = MOVE_TEMPLATE.match(item["templateId"])
+        settings = item.get("data", {}).get("moveSettings")
+        if match and settings is not None:
+            numbers[str(int(match[1]))] = match[2]
+            power[match[2]] = float(settings.get("power", 0.0))
+    return numbers, power
+
+
+def _move_key(text: str) -> str:
+    key = re.sub(r"[^A-Z0-9]", "", text.upper())
+    return MOVE_ALIASES.get(key, key)
+
+
+def _korean_moves(raw: bytes, numbers: dict[str, str], learnsets: dict, power: dict) -> tuple[dict, list]:
+    """Join game master move ids to Korean names through PokeAPI's English names."""
+    by_move: dict[str, dict[str, str]] = {}
+    for row in csv.DictReader(io.StringIO(raw.decode("utf-8"))):
+        by_move.setdefault(row["move_id"], {})[row["local_language_id"]] = row["name"].strip()
+    english = {_move_key(names[ENGLISH]): names.get(KOREAN)
+               for names in by_move.values() if ENGLISH in names}
+    moves = set(power)
+    for learnset in learnsets.values():
+        moves.update(numbers.get(m, m) for ms in learnset.values() for m in ms)
+    korean, unmatched = {}, []
+    for move in sorted(moves):
+        base = move.removesuffix("_FAST")
+        parts = base.split("_")
+        plus = ""
+        while parts and parts[-1] == "PLUS":  # Aeroblast+ / Sacred Fire++
+            plus += "+"
+            parts.pop()
+        # Typed variants such as WEATHER_BALL_FIRE or TECHNO_BLAST_BURN share the base name.
+        while parts and _move_key("_".join(parts)) not in english:
+            parts.pop()
+        name = english.get(_move_key("_".join(parts))) if parts else None
+        if name:
+            korean[move] = name + plus
+        else:
+            unmatched.append(move)
+    return korean, unmatched
 
 
 def _add(stats: dict[int, list[BaseStats]], entry: BaseStats) -> None:
@@ -117,8 +185,9 @@ def _add(stats: dict[int, list[BaseStats]], entry: BaseStats) -> None:
     forms.append(entry)
 
 
-def _master_stats(master: list[dict]) -> dict[int, list[BaseStats]]:
+def _master_stats(master: list[dict]) -> tuple[dict[int, list[BaseStats]], dict]:
     stats: dict[int, list[BaseStats]] = {}
+    learnsets: dict[str, dict[str, set[str]]] = {}
     for item in master:
         match = TEMPLATE.match(item["templateId"])
         settings = item.get("data", {}).get("pokemonSettings")
@@ -133,7 +202,13 @@ def _master_stats(master: list[dict]) -> dict[int, list[BaseStats]]:
         form = "Normal" if form.upper() == "NORMAL" else form.title()
         _add(stats, BaseStats(int(match[1]), name.title(), form, int(base["baseAttack"]),
                               int(base["baseDefense"]), int(base["baseStamina"])))
-    return stats
+        learnset = learnsets.setdefault(f"{int(match[1])}|{form}", {})
+        for key, role in LEARNSET_KEYS.items():
+            learnset.setdefault(role, set()).update(str(m) for m in settings.get(key) or [])
+        shadow = settings.get("shadow") or {}
+        learnset.setdefault("shadow", set()).update(
+            str(m) for m in (shadow.get("purifiedChargeMove"), shadow.get("shadowChargeMove")) if m)
+    return stats, learnsets
 
 
 def _master_cpm(master: list[dict]) -> dict[float, float]:
@@ -158,6 +233,9 @@ def to_json(reference: Reference) -> dict:
         "cpm": {str(level): value for level, value in reference.cpm.items()},
         "korean_names": reference.korean_names,
         "stats": [asdict(form) for forms in reference.stats.values() for form in forms],
+        "move_names": reference.move_names,
+        "move_power": reference.move_power,
+        "learnsets": reference.learnsets,
     }
 
 
@@ -167,7 +245,8 @@ def from_json(data: dict) -> Reference:
         stats.setdefault(item["pokemon_id"], []).append(BaseStats(**item))
     return Reference(data["version"], data["fetched_at"], stats,
                      {float(level): value for level, value in data["cpm"].items()},
-                     data["korean_names"], data.get("notes"))
+                     data["korean_names"], data.get("notes"), data.get("move_names"),
+                     data.get("move_power"), data.get("learnsets"))
 
 
 def load(data_dir: Path) -> Reference | None:
