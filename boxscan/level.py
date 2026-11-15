@@ -38,9 +38,34 @@ def candidates(base: BaseStats, iv: dict, observed_cp: int, observed_max_hp: int
     ]
 
 
+def _stat_options(reference: Reference, species: str, temp_evolution: str | None,
+                  form: str | None) -> list[BaseStats]:
+    """Stats to try: mega/primal stats while temporarily evolved, a forced form, or all forms."""
+    forms = reference.forms(species)
+    if not forms:
+        return []
+    pokemon_id = forms[0].pokemon_id
+    if temp_evolution:
+        stats = (reference.temp_stats or {}).get(pokemon_id, {}).get(temp_evolution)
+        return [stats] if stats else []
+    if form and form != "Normal":
+        for change in (reference.form_changes or {}).get(pokemon_id, []):
+            if change["target"] == form and change.get("stats"):
+                attack, defense, stamina = change["stats"]
+                return [BaseStats(pokemon_id, forms[0].name, form, attack, defense, stamina)]
+        return [f for f in forms if f.form == form]
+    return forms
+
+
 def estimate(reference: Reference | None, species: str | None, iv: dict | None,
-             observed_cp: int | None, observed_max_hp: int | None) -> dict:
-    """Return a level result with status, candidate levels and the form used."""
+             observed_cp: int | None, observed_max_hp: int | None,
+             temp_evolution: str | None = None, form: str | None = None) -> dict:
+    """Return a level result with status, candidate levels and the form used.
+
+    While mega evolved or in primal reversion the screen shows that state's CP and HP, so the
+    level is found with those stats; the regular-form CP and HP at that level are added as
+    calculated values.
+    """
     result: dict = {"status": MISSING_INPUT, "levels": [], "form": None}
     if reference is None:
         return {**result, "status": NO_REFERENCE}
@@ -50,7 +75,11 @@ def estimate(reference: Reference | None, species: str | None, iv: dict | None,
                if value is None]
     if missing:
         return {**result, "missing": missing}
-    forms = reference.forms(species)
+    if not reference.forms(species):
+        return {**result, "status": UNKNOWN_SPECIES}
+    forms = _stat_options(reference, species, temp_evolution, form)
+    if temp_evolution:
+        result["temp_evolution"] = temp_evolution
     if not forms:
         return {**result, "status": UNKNOWN_SPECIES}
     matches = {}
@@ -65,6 +94,13 @@ def estimate(reference: Reference | None, species: str | None, iv: dict | None,
     form = "Normal" if "Normal" in matches else sorted(matches)[0]
     levels = matches[form]
     pokemon_id = forms[0].pokemon_id
+    if temp_evolution:
+        regular = reference.forms(species)[0]
+        result["regular"] = [
+            {"level": value, "cp": cp(regular, iv, reference.cpm[value]),
+             "max_hp": hp(regular, iv, reference.cpm[value])} for value in levels]
+        form = "Normal"
+        matches = {form: levels}
     return {
         **result,
         "status": RESOLVED if len(levels) == 1 and len(matches) == 1 else AMBIGUOUS,

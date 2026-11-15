@@ -6,7 +6,7 @@ from test_reference_level import synthetic_reference
 
 
 def voted(name, power=None, votes=3):
-    return {"value": name, "votes": votes, "observations": 3, "power": power, "weather_boost": None}
+    return {"value": name, "votes": votes, "observations": 3, "power": power, "boost": None}
 
 
 class MoveDictionaryTests(unittest.TestCase):

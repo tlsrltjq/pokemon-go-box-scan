@@ -84,8 +84,8 @@ class MoveParserTests(unittest.TestCase):
         found = parse_frame(MOVE_SCREEN, 332)
         self.assertEqual(found["screen"], "DETAIL_MOVES")
         self.assertEqual(found["moves"], [
-            {"name": "테스트펀치", "power": 12, "weather_boost": None, "role": "fast"},
-            {"name": "합성빔", "power": 90, "weather_boost": 18, "role": "charged"},
+            {"name": "테스트펀치", "power": 12, "boost": None, "boost_kind": None, "role": "fast"},
+            {"name": "합성빔", "power": 90, "boost": 18, "boost_kind": "weather", "role": "charged"},
         ])
 
     def test_missing_fast_row_does_not_promote_the_charged_move(self):
@@ -101,12 +101,56 @@ class MoveParserTests(unittest.TestCase):
         partial = [line for line in MOVE_SCREEN if line["text"] not in ("테스트펀치", "12")]
         frames = [full, {**full, "frame": 2, **parse_frame(partial, 332)},
                   {**full, "frame": 3, "moves": [{"name": "합성빔", "power": 90,
-                                                  "weather_boost": 18, "role": "unknown"}]}]
+                                                  "boost": 18, "boost_kind": "weather", "role": "unknown"}]}]
         (group,) = group_frames(frames)
         moves = group["moves"]
         self.assertEqual((moves["fast"]["value"], moves["fast"]["votes"]), ("테스트펀치", 1))
-        self.assertEqual([(m["value"], m["votes"], m["observations"], m["power"], m["weather_boost"])
+        self.assertEqual([(m["value"], m["votes"], m["observations"], m["power"], m["boost"])
                           for m in moves["charged"]], [("합성빔", 3, 3, 90, 18)])
+
+
+class SpecialStateParserTests(unittest.TestCase):
+    def test_kyurem_fusion_buttons_are_not_moves(self):
+        lines = list(MOVE_SCREEN) + boxed(("합체", 63, 300, 24, 12), ("30", 290, 300, 16, 12))
+        self.assertNotIn("합체", [m["name"] for m in parse_frame(lines, 332)["moves"]])
+
+    def test_mega_bonus_is_told_apart_from_weather(self):
+        lines = boxed(("체육관 배틀 & 레이드배틀", 63, 270, 94, 11),
+                      ("벌레먹기", 45, 305, 52, 19), ("5", 297, 305, 9, 14),
+                      ("시저크로스", 47, 335, 62, 15), ("45", 287, 335, 19, 14),
+                      ("마지막일침+", 43, 363, 76, 18), ("140+14", 255, 365, 52, 12),
+                      ("메가진화 보너스", 72, 389, 59, 10))
+        moves = parse_frame(lines, 332)["moves"]
+        self.assertEqual([(m["name"], m["role"], m["boost"], m["boost_kind"]) for m in moves], [
+            ("벌레먹기", "fast", None, None), ("시저크로스", "charged", None, None),
+            ("마지막일침", "charged", 14, "mega")])
+
+    def test_max_state_moves_background_and_mega_timer(self):
+        lines = boxed(("CP1714", 120, 10, 60, 20), ("드래곤 / 강철", 140, 200, 60, 12),
+                      ("거다이맥스", 150, 225, 50, 12), ("남은 시간:", 150, 245, 40, 10),
+                      ("맥스기술", 143, 303, 44, 12),
+                      ("LOCKED", 145, 391, 40, 10), ("LOCKED", 234, 391, 39, 9), ("레벨 1", 63, 392, 27, 9),
+                      ("거다이감쇠", 47, 419, 58, 16), ("다이월", 150, 419, 34, 14), ("다이리커버리", 217, 419, 70, 16),
+                      ("이 포켓몬에 있는 배경은 이 포켓몬을 파트너 포켓몬으로", 40, 500, 250, 12))
+        found = parse_frame(lines, 332)
+        self.assertEqual((found["max_state"], found["background"], found["mega_timer"]), ("gigantamax", True, True))
+        self.assertEqual(found["max_moves"], [
+            {"name": "거다이감쇠", "level": 1, "locked": False},
+            {"name": "다이월", "level": None, "locked": True},
+            {"name": "다이리커버리", "level": None, "locked": True}])
+        dynamax = parse_frame(boxed(("CP1000", 120, 10, 60, 20), ("다이맥스", 150, 225, 50, 12)), 332)
+        self.assertEqual(dynamax["max_state"], "dynamax")
+
+    def test_second_charged_move_seen_once_is_kept_when_on_screen_with_the_first(self):
+        first = {"frame": 1, "seconds": 0, "duration": 1, "cp": 100, "moves": [
+            {"name": "가", "power": 5, "boost": None, "boost_kind": None, "role": "fast"},
+            {"name": "나", "power": 45, "boost": None, "boost_kind": None, "role": "charged"}]}
+        both = {**first, "frame": 2, "moves": first["moves"] + [
+            {"name": "다", "power": 140, "boost": 14, "boost_kind": "mega", "role": "charged"}]}
+        frames = [first, {**first, "frame": 3}, {**first, "frame": 4}, both]
+        (group,) = group_frames(frames)
+        self.assertEqual([m["value"] for m in group["moves"]["charged"]], ["나", "다"])
+        self.assertEqual(group["moves"]["charged"][1]["boost_kind"], "mega")
 
 
 @unittest.skipUnless(ocr.swiftc() and FFMPEG, "Apple Vision OCR needs macOS with swiftc and FFmpeg")

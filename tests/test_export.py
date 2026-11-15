@@ -15,7 +15,10 @@ from test_reference_level import synthetic_reference
 
 FULL = {
     "species": "하나몬", "dex": 1, "form": "Normal", "cp": 1500, "max_hp": 120,
-    "shiny": True, "lucky": False, "background": True,
+    "shiny": True, "lucky": False, "background": True, "max_state": "gigantamax",
+    "max_moves": [{"name": "거다이감쇠", "level": 1, "locked": False}, {"name": "다이월", "level": None, "locked": True}],
+    "fusion": [{"type": "FUSE", "component": "두나몬", "target": "Fused", "target_name": "합체몬"}],
+    "cp_source": "calculated", "temp_observation": {"temp_evolution": "MEGA", "cp": 2100},
     "iv": {"attack": 15, "defense": 12, "stamina": 15},
     "level": {"value": 30.5, "status": "RESOLVED_BY_CONSTRAINTS", "candidates": [30.5]},
     "moves": {"fast": {"name": "기술1번", "move_id": "MOVE_1_FAST", "marker": "", "reason": None},
@@ -52,6 +55,9 @@ class ExportTests(unittest.TestCase):
         self.assertIsNone(row["모습"])  # the regular form stays empty
         self.assertEqual((row["이름 표시"], row["이로치"], row["반짝반짝"], row["배경"]),
                          ("하나몬*◆", "예", "아니요", "예"))
+        self.assertEqual((row["다이맥스"], row["맥스기술"], row["합체·모습 변화"]),
+                         ("거다이맥스", "거다이감쇠 레벨 1, 다이월 잠김", "두나몬 → 합체몬"))
+        self.assertEqual((row["CP 출처"], row["메가진화 중 CP"]), ("계산값", 2100))
         self.assertIsInstance(row["마지막 갱신"], datetime)
         partial = dict(zip(headers, [cell.value for cell in sheet[3]]))
         self.assertIsNone(partial["IV 공격"])  # unknown stays empty, never 0
@@ -71,7 +77,8 @@ class ExportTests(unittest.TestCase):
         moves = [[cell.value for cell in row] for row in book["기술"].iter_rows(min_row=2)]
         self.assertEqual(moves[0][2], "노말어택")
         self.assertEqual(moves[1], ["PK0001", "하나몬", "스페셜어택 1", "기술13번", "MOVE_13", "*", "레거시"])
-        self.assertEqual(len(moves), 3)
+        self.assertEqual(len(moves), 5)
+        self.assertEqual(moves[3][2:4] + [moves[3][6]], ["맥스기술", "거다이감쇠", "레벨 1"])
         meta = {row[0].value: row[1].value for row in book["메타데이터"].iter_rows(min_row=2)}
         self.assertEqual((meta["개체 수"], meta["앱 버전"], meta["기준 데이터 버전"]), (2, "9.9.9", "test"))
         self.assertEqual(book["메타데이터"]["B3"].number_format, "General")

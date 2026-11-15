@@ -17,7 +17,27 @@ REASONS = {
     "shadow": "그림자 포켓몬 전용 기술",
     "purified": "정화된 포켓몬 전용 기술",
     "not_in_learnset": "이 포켓몬이 지금 배울 수 있는 기술 목록에 없는 기술 (예전에만 배울 수 있던 기술일 수 있음)",
+    "form_change": "모습을 바꿔야 쓸 수 있는 기술 (원래 모습으로 돌아가면 다른 기술로 바뀜)",
 }
+
+
+def _with_particle(name: str) -> str:
+    """제크로무와 / 솔가레오와 / …과: pick 와 or 과 by the final consonant."""
+    last = name[-1]
+    if last.isdigit():  # read as 영 일 이 삼 사 오 육 칠 팔 구
+        has_final = last in "013678"
+    else:
+        has_final = "가" <= last <= "힣" and (ord(last) - ord("가")) % 28 != 0
+    return f"{name}{'과' if has_final else '와'}"
+
+
+def _form_change_reason(reference: Reference, pokemon_id: int | None, move_id: str) -> str | None:
+    for change in (reference.form_changes or {}).get(pokemon_id, []):
+        if move_id in change.get("replacement_moves", []):
+            if change["type"] == "FUSE" and change.get("component"):
+                return f"{_with_particle(change['component'])} 합체해야 쓸 수 있는 기술 (분리하면 다른 기술로 바뀜)"
+            return REASONS["form_change"]
+    return None
 
 
 def annotate(moves: dict, reference: Reference | None, species: str | None,
@@ -30,7 +50,7 @@ def annotate(moves: dict, reference: Reference | None, species: str | None,
     learnset = _learnset(reference, species, form)
     moves["dictionary"] = "species" if learnset else "all"
     for item in items:
-        item.update(_match(item, reference, learnset))
+        item.update(_match(item, reference, learnset, species))
     return moves
 
 
@@ -42,7 +62,7 @@ def _learnset(reference: Reference, species: str | None, form: str | None) -> di
             or reference.learnsets.get(f"{pokemon_id}|Normal") or {})
 
 
-def _match(item: dict, reference: Reference, learnset: dict[str, list[str]]) -> dict:
+def _match(item: dict, reference: Reference, learnset: dict[str, list[str]], species: str | None) -> dict:
     text = item["value"]
     by_korean: dict[str, list[str]] = {}
     for move_id, korean in reference.move_names.items():
@@ -67,7 +87,11 @@ def _match(item: dict, reference: Reference, learnset: dict[str, list[str]]) -> 
         return {"move_id": None, "match": "none", "marker": "", "reason": "기술 사전에서 찾지 못했습니다."}
 
     kind = None
-    if learnset:
+    pokemon_id = reference.korean_names.get(species.strip()) if species else None
+    change_reason = _form_change_reason(reference, pokemon_id, move_id) if pokemon_id else None
+    if change_reason:
+        kind = "form_change"
+    elif learnset:
         regular = learnset.get("fast", []) + learnset.get("charged", [])
         if move_id in learnset.get("shadow", []):
             kind = "shadow"
@@ -85,7 +109,7 @@ def _match(item: dict, reference: Reference, learnset: dict[str, list[str]]) -> 
         "match": how,
         "marker": "*" if kind else "",
         "marker_kind": kind,
-        "reason": REASONS.get(kind),
+        "reason": change_reason or REASONS.get(kind),
         "reference_power": reference.move_power.get(move_id),
     }
     if how == "corrected":

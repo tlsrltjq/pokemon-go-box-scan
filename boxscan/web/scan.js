@@ -83,6 +83,10 @@ function levelBlock(level) {
     notes.push("다른 모습으로도 맞습니다: " +
       others.map(([form, found]) => `${form} 레벨 ${found.join("/")}`).join(", "));
   }
+  if (level.temp_evolution && level.regular?.length === 1) {
+    const regular = level.regular[0];
+    notes.push(`메가진화·원시회귀 중의 화면 CP로 계산했습니다. 기본 모습 CP ${regular.cp}, 최대 HP ${regular.max_hp} (계산값).`);
+  }
   const warn = ["CONFLICT", "AMBIGUOUS"].includes(level.status);
   return element("div", { class: warn ? "level warn" : "level" },
     element("h4", {}, title),
@@ -91,7 +95,7 @@ function levelBlock(level) {
 }
 
 function moveRow(label, move) {
-  const boost = move.weather_boost ? ` +${move.weather_boost}` : "";
+  const boost = move.boost ? ` +${move.boost}` : "";
   const notes = [`${move.observations}장 중 ${move.votes}장`];
   if (move.ocr_text) notes.push(`화면 글자 "${move.ocr_text}"를 기술 목록에서 가장 비슷한 이름으로 고침`);
   if (move.match === "none") notes.push("기술 사전에서 찾지 못해 화면 글자 그대로입니다");
@@ -107,6 +111,7 @@ function moveRow(label, move) {
     name,
     element("span", { class: "move-power" }, move.power === null ? "" : `위력 ${move.power}${boost}`),
     move.marker ? element("span", { class: "move-reason" }, `* ${move.reason}`) : null,
+    move.boost_kind === "mega" ? element("span", { class: "move-reason neutral" }, `+${move.boost}은 메가진화 보너스`) : null,
     element("span", { class: "move-votes" }, notes.join(" · ")),
   );
 }
@@ -120,7 +125,7 @@ function movesBlock(moves) {
   if (moves.fast) rows.push(moveRow("노말어택", moves.fast));
   else rows.push(element("p", { class: "muted" }, "노말어택을 읽지 못했습니다."));
   moves.charged.forEach((move, i) => rows.push(moveRow(moves.charged.length > 1 ? `스페셜어택 ${i + 1}` : "스페셜어택", move)));
-  const boosted = [moves.fast, ...moves.charged].some(move => move?.weather_boost);
+  const boosted = [moves.fast, ...moves.charged].some(move => move?.boost && move.boost_kind !== "mega");
   return element("div", { class: "moves" },
     element("h4", {}, "기술"),
     ...rows,
@@ -150,7 +155,46 @@ function candidateValues(individual) {
     fast_move: name(moves.fast),
     charged_moves: (moves.charged ?? []).map(name),
     lucky: individual.lucky?.value === true,
+    background: individual.background?.value === true,
+    max_state: individual.max_state?.value ?? "",
+    temp_evolution: individual.state?.temp_evolution ?? null,
+    max_moves: individual.max_moves ?? [],
   };
+}
+
+const MAX_STATE_NAMES = { dynamax: "다이맥스", gigantamax: "거다이맥스" };
+
+function stateBadges(individual) {
+  const state = individual.state ?? {};
+  const badges = [];
+  const max = individual.max_state?.value;
+  if (max) badges.push([MAX_STATE_NAMES[max], "max"]);
+  if (state.mega_active) {
+    const name = state.screen_name && state.screen_name !== individual.species?.value ? ` (${state.screen_name})` : "";
+    badges.push([`${state.temp_name ?? "메가진화"} 중${name}`, "mega"]);
+  }
+  if (individual.background?.value) badges.push(["배경 ◆", "plain"]);
+  if (state.fusion?.length) badges.push([state.fusion.some(f => f.type === "FUSE") ? "합체 가능" : "모습 변화 가능", "plain"]);
+  if (!badges.length) return null;
+  return element("div", { class: "badges" }, ...badges.map(([text, kind]) => element("span", { class: `badge state ${kind}` }, text)));
+}
+
+function fusionNote(state) {
+  const options = (state?.fusion ?? []).filter(f => f.component);
+  if (!options.length) return null;
+  return element("p", { class: "muted" }, "합체: " +
+    options.map(f => `${withParticle(f.component)} 합체하면 ${f.target_name ?? f.target}`).join(", "));
+}
+
+function maxMovesBlock(moves) {
+  if (!moves?.length) return null;
+  return element("div", { class: "moves" },
+    element("h4", {}, "맥스기술"),
+    ...moves.map(move => element("div", { class: "move" },
+      element("span", { class: "move-role" }, ""),
+      element("strong", {}, move.name),
+      element("span", { class: "move-power" }, move.level ? `레벨 ${move.level}` : move.locked ? "잠김" : "-"))),
+  );
 }
 
 function checkbox(label, name, checked) {
@@ -171,6 +215,9 @@ function readForm(formNode) {
     shiny: formNode.elements.shiny.checked,
     lucky: formNode.elements.lucky.checked,
     background: formNode.elements.background.checked,
+    max_state: formNode.elements.max_state.value || null,
+    temp_evolution: formNode.dataset.temp || null,
+    max_moves: JSON.parse(formNode.dataset.maxMoves || "[]"),
   };
 }
 
@@ -188,6 +235,7 @@ function previewValues(values, individual) {
     shiny: values.shiny,
     lucky: values.lucky,
     background: values.background,
+    max_state: values.max_state,
     cp: number(values.cp),
     max_hp: number(values.max_hp),
     iv: values.iv && Object.fromEntries(STATS.map(([key]) => [key, number(values.iv[key])])),
@@ -220,8 +268,8 @@ function saveBlock(individual, index) {
   const formNode = element("form", { class: "save-form" },
     element("div", { class: "fields" },
       field("종", "species", values.species, { maxlength: "30" }),
-      field("CP", "cp", values.cp, numeric),
-      field("최대 HP", "max_hp", values.max_hp, numeric),
+      field(values.temp_evolution ? "CP (메가진화 중)" : "CP", "cp", values.cp, numeric),
+      field(values.temp_evolution ? "최대 HP (메가진화 중)" : "최대 HP", "max_hp", values.max_hp, numeric),
       field("IV 공격", "iv_attack", iv.attack, numeric),
       field("IV 방어", "iv_defense", iv.defense, numeric),
       field("IV HP", "iv_stamina", iv.stamina, numeric),
@@ -232,18 +280,28 @@ function saveBlock(individual, index) {
     element("div", { class: "checks" },
       checkbox("이로치 *", "shiny", false),
       checkbox("반짝반짝 포켓몬 ♣", "lucky", values.lucky),
-      checkbox("배경 ◆", "background", false)),
-    element("p", { class: "muted" }, "반짝반짝 포켓몬은 화면 글자로 미리 체크합니다. 이로치와 배경은 직접 체크하세요."),
+      checkbox("배경 ◆", "background", values.background)),
+    element("label", { class: "field wide" }, element("span", {}, "다이맥스"),
+      element("select", { name: "max_state" },
+        element("option", { value: "" }, "해당 없음"),
+        element("option", { value: "dynamax", selected: values.max_state === "dynamax" ? "" : null }, "다이맥스"),
+        element("option", { value: "gigantamax", selected: values.max_state === "gigantamax" ? "" : null }, "거다이맥스"))),
+    element("p", { class: "muted" }, "반짝반짝 포켓몬·배경·다이맥스는 화면 글자로 미리 채웁니다. 이로치는 직접 체크하세요." +
+      (values.temp_evolution ? " 메가진화 중이라 기본 모습 CP·최대 HP는 레벨로 계산해 저장하고, 화면 값은 메가진화 기록으로 따로 남깁니다." : "")),
     element("label", { class: "field wide" }, element("span", {}, "저장 방식"), target),
     compare, message, submit);
+  if (values.temp_evolution) formNode.dataset.temp = values.temp_evolution;
+  formNode.dataset.maxMoves = JSON.stringify(values.max_moves);
   const existing = new Map();
   let acknowledge = false;
 
   const syncFlags = () => {
     // Updating keeps the saved shiny/lucky/background unless the user changes them.
     const entry = existing.get(target.value);
-    for (const key of ["shiny", "background"]) formNode.elements[key].checked = entry?.[key] === true;
+    formNode.elements.shiny.checked = entry?.shiny === true;
+    formNode.elements.background.checked = entry?.background === true || values.background;
     formNode.elements.lucky.checked = entry?.lucky === true || values.lucky;
+    formNode.elements.max_state.value = values.max_state || entry?.max_state || "";
   };
 
   const refresh = () => {
@@ -316,6 +374,7 @@ function card(individual, index) {
       element("h3", {}, `${index + 1}. ${species}${lucky ? "♣" : ""}`),
       element("span", { class: "badge" }, "자동 판독 후보"),
     ),
+    stateBadges(individual),
     element("div", { class: "evidence" },
       element("a", { href: individual.detail_frame },
         element("img", { src: individual.detail_frame, loading: "lazy", alt: `${species} 상세 화면` })),
@@ -332,6 +391,8 @@ function card(individual, index) {
     ivBlock(individual.appraisals),
     levelBlock(individual.level),
     movesBlock(individual.moves),
+    maxMovesBlock(individual.max_moves),
+    fusionNote(individual.state),
     element("p", { class: "muted" }, `프레임 ${first}–${last} · ${start}–${end}초`),
     saveBlock(individual, index),
   );

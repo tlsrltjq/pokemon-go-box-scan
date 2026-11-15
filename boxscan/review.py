@@ -5,9 +5,12 @@ here from those values, so an edited CP or IV cannot leave a stale level behind.
 """
 from . import level
 from . import moves as move_dictionary
+from . import species as species_names
+from .forms import display_name
 from .reference import Reference
 
 STATS = ("attack", "defense", "stamina")
+MAX_STATES = {"dynamax", "gigantamax"}
 
 
 def _integer(value, name: str, low: int, high: int) -> int | None:
@@ -43,6 +46,22 @@ def _flag(value, name: str) -> bool | None:
     return value
 
 
+def _max_moves(value) -> list[dict]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 3:
+        raise ValueError("맥스기술 값이 올바르지 않습니다.")
+    moves = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("맥스기술 값이 올바르지 않습니다.")
+        name = _text(item.get("name"), "맥스기술", 20)
+        if name:
+            moves.append({"name": name, "level": _integer(item.get("level"), "맥스기술 레벨", 1, 3),
+                          "locked": _flag(item.get("locked"), "맥스기술 잠김") or False})
+    return moves
+
+
 def normalize(raw: dict, reference: Reference | None) -> dict:
     """Return box values from user input. Raises ValueError with a message for the user."""
     if not isinstance(raw, dict):
@@ -67,10 +86,20 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
     shiny = _flag(raw.get("shiny"), "이로치")
     lucky = _flag(raw.get("lucky"), "반짝반짝 포켓몬")
     background = _flag(raw.get("background"), "배경")
+    max_state = raw.get("max_state") or None
+    if max_state is not None and max_state not in MAX_STATES:
+        raise ValueError("다이맥스 값이 올바르지 않습니다.")
+    max_moves = _max_moves(raw.get("max_moves"))
+    temp = raw.get("temp_evolution") or None
+    if temp is not None and temp not in species_names.TEMP_NAMES:
+        raise ValueError("메가진화 값이 올바르지 않습니다.")
     if not any([species, cp, max_hp, iv, fast, charged]):
         raise ValueError("저장할 값이 없습니다.")
 
-    estimated = level.estimate(reference, species, iv, cp, max_hp)
+    resolved = species_names.resolve(species, reference)  # "메가독침붕" -> 독침붕 + MEGA
+    species = resolved["species"]
+    temp = temp or resolved["temp_evolution"]
+    estimated = level.estimate(reference, species, iv, cp, max_hp, temp, resolved["form"])
     levels = estimated.get("levels", [])
     voted = {
         "fast": {"value": fast, "votes": 1, "observations": 1, "power": None} if fast else None,
@@ -83,11 +112,28 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
             "name": item.get("name") or item["value"]}
 
     pokemon_id = reference.korean_names.get(species) if reference and species else None
+    # While mega evolved the screen shows the mega CP/HP. Keep them as a separate observation and
+    # store the regular-form values only when the level fixes them (spec 6.4: never overwrite).
+    temp_observation, cp_source = None, "screen"
+    if temp:
+        temp_observation = {"temp_evolution": temp, "temp_name": species_names.TEMP_NAMES[temp],
+                            "cp": cp, "max_hp": max_hp}
+        regular = estimated.get("regular") or []
+        if estimated["status"] == level.RESOLVED and len(regular) == 1:
+            cp, max_hp, cp_source = regular[0]["cp"], regular[0]["max_hp"], "calculated"
+        else:
+            cp, max_hp, cp_source = None, None, None
+    form = resolved["form"] or estimated.get("form")
     return {
         "species": species,
         "dex": pokemon_id,
-        "form": estimated.get("form"),
-        "form_name": estimated.get("form_name"),
+        "form": form,
+        "form_name": display_name(pokemon_id, form),
+        "cp_source": cp_source,
+        "temp_observation": temp_observation,
+        "max_state": max_state,
+        "max_moves": max_moves,
+        "fusion": species_names.fusion_options(reference, species) or None,
         "shiny": shiny,
         "lucky": lucky,
         "background": background,

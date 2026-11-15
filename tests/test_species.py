@@ -1,0 +1,52 @@
+import unittest
+
+from boxscan import species
+from boxscan.moves import annotate
+from boxscan.reference import BaseStats, Reference
+
+from test_reference_level import synthetic_reference
+
+
+def named_reference() -> Reference:
+    stats = {646: [BaseStats(646, "Kyurem", "Normal", 246, 170, 245)],
+             6: [BaseStats(6, "Charizard", "Normal", 223, 173, 186)],
+             383: [BaseStats(383, "Groudon", "Normal", 270, 228, 205)]}
+    temp = {6: {"MEGA_X": BaseStats(6, "Charizard", "Mega_X", 273, 213, 186),
+                "MEGA_Y": BaseStats(6, "Charizard", "Mega_Y", 319, 212, 186)},
+            383: {"PRIMAL": BaseStats(383, "Groudon", "Primal", 353, 268, 218)}}
+    changes = {646: [{"target": "Black", "type": "FUSE", "component": "제크로무", "stats": [310, 183, 245],
+                      "existing_moves": [], "replacement_moves": []}]}
+    names = {"큐레무": 646, "리자몽": 6, "그란돈": 383}
+    return Reference("t", "", stats, {1.0: 0.1}, names, temp_stats=temp, form_changes=changes)
+
+
+class SpeciesNameTests(unittest.TestCase):
+    def test_screen_names_split_into_species_and_state(self):
+        data = named_reference()
+        cases = {
+            "리자몽": ("리자몽", None, None),
+            "메가리자몽X": ("리자몽", "MEGA_X", None),
+            "원시그란돈": ("그란돈", "PRIMAL", None),
+            "블랙큐레무": ("큐레무", None, "Black"),
+            "메가없는몬": ("메가없는몬", None, None),
+        }
+        for name, expected in cases.items():
+            with self.subTest(name=name):
+                found = species.resolve(name, data)
+                self.assertEqual((found["species"], found["temp_evolution"], found["form"]), expected)
+                self.assertEqual(found["screen_name"], name)
+
+    def test_timer_only_mega_and_fusion_options(self):
+        data = named_reference()
+        self.assertEqual(species.single_mega(data, "그란돈"), "PRIMAL")
+        self.assertIsNone(species.single_mega(data, "리자몽"))  # X or Y: cannot tell
+        self.assertEqual(species.fusion_options(data, "큐레무"), [
+            {"type": "FUSE", "component": "제크로무", "target": "Black", "target_name": "블랙큐레무"}])
+
+    def test_fusion_replacement_move_gets_a_fusion_reason(self):
+        data = synthetic_reference()
+        moves = {"fast": None, "charged": [{"value": "기술20번", "votes": 1, "observations": 1, "power": 20}]}
+        annotate(moves, data, "테스트몬6", "Fused")
+        (move,) = moves["charged"]
+        self.assertEqual((move["marker"], move["marker_kind"]), ("*", "form_change"))
+        self.assertEqual(move["reason"], "테스트몬7과 합체해야 쓸 수 있는 기술 (분리하면 다른 기술로 바뀜)")

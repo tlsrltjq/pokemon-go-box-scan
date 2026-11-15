@@ -12,6 +12,18 @@ function displayName(values) {
   return `${values?.species ?? "종 미확인"}${nameMarks(values)}${form}`;
 }
 
+// 제크로무와 / …과: choose 와 or 과 by the last syllable's final consonant.
+function withParticle(name) {
+  const code = name.charCodeAt(name.length - 1) - 0xac00;
+  return `${name}${code >= 0 && code < 11172 && code % 28 !== 0 ? "과" : "와"}`;
+}
+
+const MAX_NAMES = { dynamax: "다이맥스", gigantamax: "거다이맥스" };
+
+function formatMaxState(value) {
+  return MAX_NAMES[value] ?? "-";
+}
+
 function formatFlag(value) {
   return value === true ? "예" : value === false ? "아니요" : "-";
 }
@@ -66,6 +78,7 @@ const BOX_FIELDS = [
   ["shiny", "이로치 *", formatFlag],
   ["lucky", "반짝반짝 ♣", formatFlag],
   ["background", "배경 ◆", formatFlag],
+  ["max_state", "다이맥스", formatMaxState],
   ["cp", "CP", value => value ?? "-"],
   ["max_hp", "최대 HP", value => value ?? "-"],
   ["iv", "IV", formatIv],

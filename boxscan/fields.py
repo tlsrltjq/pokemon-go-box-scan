@@ -12,14 +12,24 @@ SPECIES = re.compile(r"이\s+(\S.*?)\s*\((?:을|를)\)(?:를|을)?\s*잡은")
 APPRAISAL_LABELS = {"공격", "방어", "방에", "HP", "Hp"}
 # "반짝반짝 포켓몬" under the name marks a lucky Pokémon; OCR sometimes garbles the last word.
 LUCKY = re.compile(r"반짝반짝\s*포")
+# Detail screen labels under the type row, and the special background note on the moves screen.
+DYNAMAX = re.compile(r"^다이맥스$")
+GIGANTAMAX = re.compile(r"^거다이맥")
+BACKGROUND = re.compile(r"배경은")
+MEGA_TIMER = re.compile(r"남은\s*시간")
+# 맥스기술: names start with 다이 or 거다이; the row above shows "레벨 N" or LOCKED per move.
+MAX_HEADER = re.compile(r"맥스기술")
+MAX_MOVE = re.compile(r"^(?:거다이|다이)[가-힣]{1,8}$")
+MAX_LEVEL = re.compile(r"레벨\s*(\d)")
 # Move rows: a Korean name on the left and its power on the same row at the right, such as
-# "지진 … 140+28" (the second number is the weather boost). Rows that also show a cost with
-# a comma ("해방 … 100,000") or that are buttons are not moves.
+# "지진 … 140+28". The second number is a bonus: "기술 날씨 보너스" or "메가진화 보너스" on the
+# line below says which. Rows that also show a cost with a comma ("해방 … 100,000") or that are
+# buttons are not moves.
 POWER = re.compile(r"^(\d{1,3})(?:\s*\+\s*(\d{1,3}))?$")
 NAME_EDGES = re.compile(r"^[^가-힣]+|[^가-힣]+$")
 MOVE_NAME = re.compile(r"^[가-힣]{2,12}$")
 COST = re.compile(r"\d{1,3}(?:,\d{3})+")
-BUTTONS = {"해방", "해빙", "해벙", "애방", "강화", "강차", "감화", "교환", "교한", "교체"}
+BUTTONS = {"해방", "해빙", "해벙", "애방", "강화", "강차", "감화", "교환", "교한", "교체", "합체"}
 # "체육관 배틀 & 레이드배틀" tab header, also when OCR garbles it.
 MOVE_HEADER = re.compile(r"체육관|채육관|제육|레이드|레미드")
 
@@ -50,8 +60,14 @@ def parse_moves(lines: list[dict], width: int | None) -> list[dict]:
                   if other["box"][0] > 0.7 * width and (match := POWER.match(other["text"].strip()))]
         if len(powers) != 1:
             continue
+        boost_kind = None
+        if powers[0][2]:
+            below = [other["text"] for other in lines
+                     if 0 < centre(other) - centre(line) <= max(30, h * 2.2)]
+            boost_kind = ("mega" if any("메가" in text for text in below)
+                          else "weather" if any("날씨" in text for text in below) else None)
         rows.append({"name": name, "power": int(powers[0][1]),
-                     "weather_boost": int(powers[0][2]) if powers[0][2] else None,
+                     "boost": int(powers[0][2]) if powers[0][2] else None, "boost_kind": boost_kind,
                      "y": centre(line), "height": h})
     rows.sort(key=lambda row: row["y"])
     for index, row in enumerate(rows):
@@ -67,11 +83,39 @@ def parse_moves(lines: list[dict], width: int | None) -> list[dict]:
     return rows
 
 
+def parse_max_moves(lines: list[dict]) -> list[dict]:
+    """맥스기술 names paired with the 레벨 N / LOCKED status shown above each, by x position."""
+    header = next((line for line in lines if MAX_HEADER.search(line["text"])), None)
+    if header is None:
+        return []
+    top = header["box"][1]
+
+    def x_centre(line):
+        return line["box"][0] + line["box"][2] / 2
+
+    below = [line for line in lines if line["box"][1] > top]
+    names = [line for line in below if MAX_MOVE.match(NAME_EDGES.sub("", line["text"].strip()))
+             and not GIGANTAMAX.match(line["text"].strip()) and line["text"].strip() != "다이맥스"]
+    statuses = [line for line in below if MAX_LEVEL.search(line["text"]) or "LOCK" in line["text"].upper()]
+    moves = []
+    for line in sorted(names, key=x_centre):
+        near = min(statuses, key=lambda s: abs(x_centre(s) - x_centre(line)), default=None)
+        if near is not None and abs(x_centre(near) - x_centre(line)) > line["box"][2]:
+            near = None
+        level = MAX_LEVEL.search(near["text"]) if near else None
+        moves.append({"name": NAME_EDGES.sub("", line["text"].strip()),
+                      "level": int(level[1]) if level else None,
+                      "locked": bool(near) and "LOCK" in near["text"].upper()})
+    return moves
+
+
 def parse_frame(lines: list[dict], width: int | None = None) -> dict:
     texts = [line["text"].strip() for line in lines]
     found: dict = {"screen": "UNKNOWN"}
     if moves := parse_moves(lines, width):
         found["moves"] = moves
+    if max_moves := parse_max_moves(lines):
+        found["max_moves"] = max_moves
     for text in texts:
         if "cp" not in found and (match := CP.search(text)):
             found["cp"] = int(match[1])
@@ -83,6 +127,14 @@ def parse_frame(lines: list[dict], width: int | None = None) -> dict:
             found["species"] = match[1]
         if LUCKY.search(text):
             found["lucky"] = True
+        if GIGANTAMAX.match(text):
+            found["max_state"] = "gigantamax"
+        elif DYNAMAX.match(text) and found.get("max_state") != "gigantamax":
+            found["max_state"] = "dynamax"
+        if BACKGROUND.search(text):
+            found["background"] = True
+        if MEGA_TIMER.search(text):
+            found["mega_timer"] = True
     labels = APPRAISAL_LABELS.intersection(texts)
     if "공격" in labels and len(labels) >= 2 or "species" in found:
         found["screen"] = "APPRAISAL"
@@ -153,7 +205,35 @@ def _summarize(group: list[dict]) -> dict:
         "species": vote([f["species"] for f in group if "species" in f]),
         "lucky": _lucky(group),
         "moves": _moves(group),
+        "max_state": _max_state(group),
+        "max_moves": _max_moves(group),
+        "background": _seen(group, "background"),
+        "mega_timer": _seen(group, "mega_timer"),
     }
+
+
+def _seen(group: list[dict], key: str) -> dict:
+    """A screen label: True once seen; otherwise unknown (absence is not proof)."""
+    votes = sum(1 for frame in group if frame.get(key))
+    return {"value": True if votes else None, "votes": votes}
+
+
+def _max_state(group: list[dict]) -> dict:
+    states = [frame["max_state"] for frame in group if frame.get("max_state")]
+    value = "gigantamax" if "gigantamax" in states else "dynamax" if states else None
+    return {"value": value, "votes": len(states)}
+
+
+def _max_moves(group: list[dict]) -> list[dict]:
+    """Merge 맥스기술 across frames, keeping a read level over an unread one."""
+    merged: dict[str, dict] = {}
+    for frame in group:
+        for move in frame.get("max_moves", []):
+            known = merged.setdefault(move["name"], dict(move))
+            if known["level"] is None and move["level"] is not None:
+                known["level"], known["locked"] = move["level"], False
+            known["locked"] = known["locked"] and move["locked"] if known["level"] is None else False
+    return list(merged.values())
 
 
 def _lucky(group: list[dict]) -> dict:
@@ -176,19 +256,27 @@ def _moves(group: list[dict]) -> dict:
     fast_name = fast["value"] if fast else None
     frames_with_moves = sum(1 for frame in group if frame.get("moves"))
     counts = Counter()
+    together = set()  # charged names seen in the same frame as another charged name
     for frame in group:
-        counts.update({row["name"] for row in frame.get("moves", [])
-                       if row["role"] == "charged" or row["role"] == "unknown" and row["name"] != fast_name})
-    top = counts.most_common(1)[0][1] if counts else 0
+        names = {row["name"] for row in frame.get("moves", [])
+                 if row["role"] == "charged" or row["role"] == "unknown" and row["name"] != fast_name}
+        names.discard(fast_name)
+        counts.update(names)
+        if len(names) == 2:
+            together.update(names)
+    ranked = counts.most_common()
+    top = ranked[0][1] if ranked else 0
+    # The second charged move sits lower and is often scrolled out, so it may be read only once.
+    # Keep it when it was frequent enough or appeared on screen together with the first.
     charged = [
         {"value": name, "votes": count, "observations": frames_with_moves}
-        for name, count in counts.most_common(2) if count * 2 >= top and name != fast_name
-    ]
+        for name, count in ranked if count * 2 >= top or name in together
+    ][:2]
 
     def power(name):
         found = [row for row in rows if row["name"] == name]
-        return vote([(row["power"], row["weather_boost"]) for row in found])["value"] if found else None
+        return vote([(row["power"], row["boost"], row["boost_kind"]) for row in found])["value"]
 
     for item in ([fast] if fast else []) + charged:
-        item["power"], item["weather_boost"] = power(item["value"])
+        item["power"], item["boost"], item["boost_kind"] = power(item["value"])
     return {"fast": fast, "charged": charged, "source": "ocr"}

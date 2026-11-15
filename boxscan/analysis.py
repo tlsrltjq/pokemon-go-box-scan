@@ -9,7 +9,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import ivbars, level, ocr, reference
+from . import ivbars, level, ocr, reference, species
 from . import moves as move_dictionary
 from .fields import group_frames, parse_frame
 from .store import JobStore
@@ -49,17 +49,7 @@ def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None =
             target.setdefault("appraisals", []).append(window)
     data = _reference(store.root)
     for individual in individuals:
-        ivs = [a["iv"] for a in individual.get("appraisals", []) if a["iv"]]
-        individual["level"] = level.estimate(
-            data,
-            (individual["species"] or {}).get("value"),
-            ivs[-1] if ivs else None,
-            (individual["cp"] or {}).get("value"),
-            (individual["max_hp"] or {}).get("value"),
-        )
-        move_dictionary.annotate(individual["moves"], data,
-                                 (individual["species"] or {}).get("value"),
-                                 individual["level"].get("form"))
+        apply_reference(individual, data)
     result = {
         "scan_id": scan_id,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -79,6 +69,32 @@ def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None =
     partial.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     partial.replace(output)
     return result
+
+
+def apply_reference(individual: dict, data: reference.Reference | None) -> None:
+    """Resolve the on-screen species into base species and state, then level and move marks."""
+    screen_name = (individual["species"] or {}).get("value")
+    resolved = species.resolve(screen_name, data)
+    if individual["species"] and resolved["species"] != screen_name:
+        individual["species"] = {**individual["species"], "value": resolved["species"]}
+    temp = resolved["temp_evolution"]
+    if temp is None and (individual.get("mega_timer") or {}).get("value"):
+        temp = species.single_mega(data, resolved["species"])  # timer seen, name not changed
+    individual["state"] = {
+        "screen_name": screen_name,
+        "temp_evolution": temp,
+        "temp_name": species.TEMP_NAMES.get(temp),
+        "mega_active": bool(temp) or bool((individual.get("mega_timer") or {}).get("value")),
+        "form": resolved["form"],
+        "fusion": species.fusion_options(data, resolved["species"]),
+    }
+    ivs = [a["iv"] for a in individual.get("appraisals", []) if a["iv"]]
+    individual["level"] = level.estimate(
+        data, resolved["species"], ivs[-1] if ivs else None,
+        (individual["cp"] or {}).get("value"), (individual["max_hp"] or {}).get("value"),
+        temp, resolved["form"])
+    move_dictionary.annotate(individual["moves"], data, resolved["species"],
+                             resolved["form"] or individual["level"].get("form"))
 
 
 def _reference(data_dir: Path) -> reference.Reference | None:

@@ -42,6 +42,15 @@ def master(count: int, whole=WHOLE) -> list[dict]:
         items.append(pokemon(n, "_NORMAL", f"MON{n}_NORMAL", 100 + n, 90 + n, 120 + n))
     items.append(pokemon(2, "_COSTUME_2020", "MON2_COSTUME_2020", 102, 92, 122))  # same stats
     items.append(pokemon(2, "_OTHER", "MON2_OTHER", 300, 50, 60))
+    # MON5 can mega evolve; MON6 fuses with MON7 (two duplicate entries) and the fused form
+    # replaces MOVE_11 with MOVE_20.
+    items[-1 - 2 * (count - 5) - 2]["data"]["pokemonSettings"]["tempEvoOverrides"] = [
+        {"tempEvoId": "TEMP_EVOLUTION_MEGA", "stats": {"baseAttack": 250, "baseDefense": 150, "baseStamina": 125}}]
+    fuse = {"availableForm": ["MON6_FUSED"],
+            "componentPokemonSettings": {"pokedexId": "MON7", "formChangeType": "FUSE"},
+            "moveReassignment": {"cinematicMoves": [{"existingMoves": ["MOVE_11"], "replacementMoves": ["MOVE_20"]}]}}
+    items[-1 - 2 * (count - 6) - 2]["data"]["pokemonSettings"]["formChange"] = [fuse, dict(fuse)]
+    items.append(pokemon(6, "_FUSED", "MON6_FUSED", 200, 180, 160))
     return items
 
 
@@ -95,6 +104,15 @@ class ReferenceTests(unittest.TestCase):
         learnset = data.learnsets["2|Normal"]
         self.assertEqual(learnset["elite_charged"], ["MOVE_13", "SPECIAL_BEAM_FIRE"])  # numeric id
         self.assertEqual((learnset["shadow"], learnset["purified"]), (["MOVE_15"], ["MOVE_14"]))
+
+    def test_mega_stats_and_form_changes_are_read(self):
+        data = synthetic_reference()
+        mega = data.temp_stats[5]["MEGA"]
+        self.assertEqual((mega.attack, mega.defense, mega.stamina), (250, 150, 125))
+        (change,) = data.form_changes[6]  # the duplicate entry is merged
+        self.assertEqual((change["target"], change["type"], change["component"], change["stats"]),
+                         ("Fused", "FUSE", "테스트몬7", [200, 180, 160]))
+        self.assertEqual((change["existing_moves"], change["replacement_moves"]), (["MOVE_11"], ["MOVE_20"]))
 
     def test_half_levels_follow_the_game_rules(self):
         low, high = WHOLE[0], WHOLE[1]
@@ -187,6 +205,26 @@ class LevelTests(unittest.TestCase):
         result = level.estimate(self.data, "테스트몬2", IV, cp, hp)
         self.assertEqual(result["form"], "Other")
         self.assertEqual(result["levels"], [20.0])
+
+    def test_mega_level_uses_mega_stats_and_reports_regular_values(self):
+        mega = self.data.temp_stats[5]["MEGA"]
+        regular = self.data.forms("테스트몬5")[0]
+        multiplier = CPM[22.5]
+        result = level.estimate(self.data, "테스트몬5", IV, level.cp(mega, IV, multiplier),
+                                level.hp(mega, IV, multiplier), "MEGA")
+        self.assertEqual((result["status"], result["levels"]), (level.RESOLVED, [22.5]))
+        self.assertEqual(result["regular"], [{"level": 22.5, "cp": level.cp(regular, IV, multiplier),
+                                              "max_hp": level.hp(regular, IV, multiplier)}])
+        no_mega = level.estimate(self.data, "테스트몬1", IV, 500, None, "MEGA")
+        self.assertEqual(no_mega["status"], level.UNKNOWN_SPECIES)
+
+    def test_forced_fused_form_uses_its_own_stats(self):
+        from boxscan.reference import BaseStats
+        fused = BaseStats(6, "Mon6", "Fused", 200, 180, 160)
+        multiplier = CPM[30.0]
+        result = level.estimate(self.data, "테스트몬6", IV, level.cp(fused, IV, multiplier),
+                                level.hp(fused, IV, multiplier), form="Fused")
+        self.assertEqual((result["levels"], result["form"]), ([30.0], "Fused"))
 
     def test_missing_inputs_and_reference(self):
         self.assertEqual(level.estimate(None, "테스트몬1", IV, 100, 50)["status"], level.NO_REFERENCE)

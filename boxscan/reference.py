@@ -69,6 +69,12 @@ class Reference:
     move_names: dict[str, str] | None = None  # game master move id -> Korean name
     move_power: dict[str, float] | None = None  # game master move id -> PvE power
     learnsets: dict[str, dict[str, list[str]]] | None = None  # "id|form" -> role -> move ids
+    # Mega / primal stats: pokemon id -> {"MEGA" | "MEGA_X" | "MEGA_Y" | "PRIMAL": stats}
+    temp_stats: dict[int, dict[str, BaseStats]] | None = None
+    # Fusion and other form changes from the regular form: pokemon id -> list of
+    # {"target": form, "type": "FUSE" | "CHANGE", "component": Korean name | None,
+    #  "existing_moves": [...], "replacement_moves": [...]}
+    form_changes: dict[int, list[dict]] | None = None
 
     def forms(self, korean_name: str) -> list[BaseStats]:
         pokemon_id = self.korean_names.get(korean_name.strip())
@@ -84,6 +90,7 @@ def parse(files: dict[str, bytes], version: str = "", fetched_at: str = "") -> R
     try:
         master = json.loads(files["game_master.json"])
         stats, learnsets = _master_stats(master)
+        temp_stats, form_changes, enum_ids = _master_extras(master)
         numbers, move_power = _master_moves(master)
         move_names, unmatched = _korean_moves(
             files["move_names.csv"], numbers, learnsets, move_power)
@@ -120,7 +127,81 @@ def parse(files: dict[str, bytes], version: str = "", fetched_at: str = "") -> R
     learnsets = {key: _resolve(value, numbers) for key, value in learnsets.items() if key in kept}
     notes = {"cpm_checked_levels": len(shared), "cpm_max_difference": worst,
              "stats_from_pogoapi": fallback, "moves_without_korean_name": unmatched}
-    return Reference(version, fetched_at, stats, cpm, names, notes, move_names, move_power, learnsets)
+    korean_by_id = {pokemon_id: name for name, pokemon_id in names.items()}
+    for changes in form_changes.values():
+        for change in changes:
+            component = change.pop("component_enum", None)
+            change["component"] = korean_by_id.get(enum_ids.get(component)) if component else None
+            for key in ("existing_moves", "replacement_moves"):
+                change[key] = sorted({numbers.get(m, m) for m in change[key]})
+    return Reference(version, fetched_at, stats, cpm, names, notes, move_names, move_power, learnsets,
+                     temp_stats, form_changes)
+
+
+def _form_code(name: str, form: str | None) -> str:
+    form = str(form or "Normal")
+    form = form.removeprefix(f"{name}_") if form.startswith(f"{name}_") else form
+    return "Normal" if form.upper() == "NORMAL" else form.title()
+
+
+def _master_extras(master: list[dict]) -> tuple[dict, dict, dict]:
+    """Mega/primal stats and form changes, read from each species' regular template."""
+    temp_stats: dict[int, dict[str, BaseStats]] = {}
+    form_changes: dict[int, list[dict]] = {}
+    enum_ids: dict[str, int] = {}
+    form_stats: dict[tuple[int, str], list[int]] = {}
+    for item in master:
+        match = TEMPLATE.match(item["templateId"])
+        settings = item.get("data", {}).get("pokemonSettings")
+        if not match or not settings:
+            continue
+        pokemon_id, name = int(match[1]), settings["pokemonId"]
+        enum_ids.setdefault(name, pokemon_id)
+        form = _form_code(name, settings.get("form"))
+        base = settings.get("stats") or {}
+        if all(k in base for k in ("baseAttack", "baseDefense", "baseStamina")):
+            form_stats.setdefault((pokemon_id, form), [
+                int(base["baseAttack"]), int(base["baseDefense"]), int(base["baseStamina"])])
+        if form != "Normal":
+            continue
+        for override in settings.get("tempEvoOverrides") or []:
+            base = override.get("stats") or {}
+            kind = str(override.get("tempEvoId", "")).removeprefix("TEMP_EVOLUTION_")
+            if kind and all(k in base for k in ("baseAttack", "baseDefense", "baseStamina")):
+                temp_stats.setdefault(pokemon_id, {})[kind] = BaseStats(
+                    pokemon_id, name.title(), kind.title(), int(base["baseAttack"]),
+                    int(base["baseDefense"]), int(base["baseStamina"]))
+        if pokemon_id in form_changes:
+            continue
+        changes, seen = [], set()
+        for change in settings.get("formChange") or []:
+            component = change.get("componentPokemonSettings") or {}
+            if component.get("formChangeType") == "UNFUSE":
+                continue
+            existing, replacement = set(), set()
+            for slots in (change.get("moveReassignment") or {}).values():
+                for slot in slots:
+                    existing.update(str(m) for m in slot.get("existingMoves") or [])
+                    replacement.update(str(m) for m in slot.get("replacementMoves") or [])
+            for target in change.get("availableForm") or []:
+                key = (_form_code(name, target), tuple(sorted(replacement)))
+                if key in seen:
+                    continue
+                seen.add(key)
+                changes.append({
+                    "target": _form_code(name, target),
+                    "type": "FUSE" if component.get("formChangeType") == "FUSE" else "CHANGE",
+                    "component_enum": component.get("pokedexId"),
+                    "existing_moves": list(existing),
+                    "replacement_moves": list(replacement),
+                })
+        if changes:
+            form_changes[pokemon_id] = changes
+    # Each target keeps its own stats; identical stat lines (블랙/화이트큐레무) are merged in `stats`.
+    for pokemon_id, changes in form_changes.items():
+        for change in changes:
+            change["stats"] = form_stats.get((pokemon_id, change["target"]))
+    return temp_stats, form_changes, enum_ids
 
 
 def _resolve(learnset: dict[str, list[str]], numbers: dict[str, str]) -> dict[str, list[str]]:
@@ -197,9 +278,7 @@ def _master_stats(master: list[dict]) -> tuple[dict[int, list[BaseStats]], dict]
         if not all(key in base for key in ("baseAttack", "baseDefense", "baseStamina")):
             continue
         name = settings["pokemonId"]
-        form = str(settings.get("form") or "Normal")
-        form = form.removeprefix(f"{name}_") if form.startswith(f"{name}_") else form
-        form = "Normal" if form.upper() == "NORMAL" else form.title()
+        form = _form_code(name, settings.get("form"))
         _add(stats, BaseStats(int(match[1]), name.title(), form, int(base["baseAttack"]),
                               int(base["baseDefense"]), int(base["baseStamina"])))
         learnset = learnsets.setdefault(f"{int(match[1])}|{form}", {})
@@ -238,6 +317,9 @@ def to_json(reference: Reference) -> dict:
         "move_names": reference.move_names,
         "move_power": reference.move_power,
         "learnsets": reference.learnsets,
+        "temp_stats": [{"kind": kind, **asdict(stats)}
+                       for forms in (reference.temp_stats or {}).values() for kind, stats in forms.items()],
+        "form_changes": {str(k): v for k, v in (reference.form_changes or {}).items()},
     }
 
 
@@ -245,10 +327,15 @@ def from_json(data: dict) -> Reference:
     stats: dict[int, list[BaseStats]] = {}
     for item in data["stats"]:
         stats.setdefault(item["pokemon_id"], []).append(BaseStats(**item))
+    temp_stats: dict[int, dict[str, BaseStats]] = {}
+    for item in data.get("temp_stats") or []:
+        kind = item.pop("kind")
+        temp_stats.setdefault(item["pokemon_id"], {})[kind] = BaseStats(**item)
     return Reference(data["version"], data["fetched_at"], stats,
                      {float(level): value for level, value in data["cpm"].items()},
                      data["korean_names"], data.get("notes"), data.get("move_names"),
-                     data.get("move_power"), data.get("learnsets"))
+                     data.get("move_power"), data.get("learnsets"), temp_stats,
+                     {int(k): v for k, v in (data.get("form_changes") or {}).items()})
 
 
 def rebuild(data_dir: Path) -> dict:

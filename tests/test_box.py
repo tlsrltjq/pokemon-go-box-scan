@@ -113,6 +113,30 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(values["moves"]["fast"]["marker"], "")
         self.assertEqual([m["marker"] for m in values["moves"]["charged"]], ["*"])
 
+    def test_mega_candidate_keeps_screen_cp_apart_and_stores_regular_cp(self):
+        from boxscan import level
+        mega = self.data.temp_stats[5]["MEGA"]
+        regular = self.data.forms("테스트몬5")[0]
+        multiplier = CPM[22.5]
+        raw = {"species": "메가테스트몬5", "cp": level.cp(mega, IV, multiplier),
+               "max_hp": level.hp(mega, IV, multiplier), "iv": IV}
+        values = review.normalize(raw, self.data)
+        self.assertEqual((values["species"], values["cp_source"]), ("테스트몬5", "calculated"))
+        self.assertEqual(values["cp"], level.cp(regular, IV, multiplier))
+        self.assertEqual(values["temp_observation"]["cp"], raw["cp"])
+        unresolved = review.normalize({**raw, "cp": 11}, self.data)
+        self.assertIsNone(unresolved["cp"])  # never store a mega CP as the regular CP
+        self.assertEqual(unresolved["temp_observation"]["cp"], 11)
+
+    def test_max_state_and_moves_are_validated(self):
+        values = review.normalize({"cp": 100, "max_state": "gigantamax",
+                                   "max_moves": [{"name": "거다이감쇠", "level": 1, "locked": False}]}, self.data)
+        self.assertEqual((values["max_state"], values["max_moves"][0]["level"]), ("gigantamax", 1))
+        for bad in ({"cp": 100, "max_state": "huge"}, {"cp": 100, "temp_evolution": "MEGA_Z"},
+                    {"cp": 100, "max_moves": [{"name": "다이월", "level": 9}]}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                review.normalize(bad, self.data)
+
     def test_flags_are_strict_booleans(self):
         values = review.normalize({"cp": 100, "shiny": True, "lucky": False}, self.data)
         self.assertEqual((values["shiny"], values["lucky"], values["background"]), (True, False, None))

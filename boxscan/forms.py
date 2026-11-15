@@ -12,6 +12,8 @@ REGIONAL = {
 }
 SPECIAL = {
     (150, "A"): "아머드",  # 아머드 뮤츠
+    (646, "Black"): "블랙큐레무",  # names from the Korean client's fusion text
+    (646, "White"): "화이트큐레무",
 }
 
 

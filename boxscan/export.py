@@ -48,6 +48,18 @@ def _local(stamp: str | None) -> datetime | None:
 
 
 NAME_MARKS = (("shiny", "*"), ("lucky", "♣"), ("background", "◆"))
+MAX_NAMES = {"dynamax": "다이맥스", "gigantamax": "거다이맥스"}
+
+
+def _max_moves(entry: dict) -> str | None:
+    moves = entry.get("max_moves") or []
+    return ", ".join(f"{m['name']} {'레벨 ' + str(m['level']) if m.get('level') else '잠김' if m.get('locked') else ''}".strip()
+                     for m in moves) or None
+
+
+def _fusion(entry: dict) -> str | None:
+    return ", ".join(f"{f['component']} → {f.get('target_name') or f['target']}" if f.get("component")
+                     else (f.get("target_name") or f["target"]) for f in entry.get("fusion") or []) or None
 
 
 def _flag(value) -> str | None:
@@ -107,7 +119,9 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
             entry["code"], _display_name(entry), entry.get("species"), entry.get("dex"),
             entry.get("form_name") or (entry.get("form") if entry.get("form") != "Normal" else None),
             _flag(entry.get("shiny")), _flag(entry.get("lucky")), _flag(entry.get("background")),
+            MAX_NAMES.get(entry.get("max_state")),
             entry.get("cp"), entry.get("max_hp"),
+            "계산값" if entry.get("cp_source") == "calculated" else None,
             level.get("value"), LEVEL_STATUS.get(level.get("status"), level.get("status")),
             ", ".join(f"{value:g}" for value in candidates) if len(candidates) > 1 else None,
             iv["attack"] if iv else None, iv["defense"] if iv else None, iv["stamina"] if iv else None,
@@ -115,6 +129,8 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
             _move_label(moves.get("fast")),
             _move_label(charged[0]) if len(charged) > 0 else None,
             _move_label(charged[1]) if len(charged) > 1 else None,
+            _max_moves(entry), _fusion(entry),
+            (entry.get("temp_observation") or {}).get("cp"),
             _local(entry.get("created_at")), _local(entry.get("updated_at")),
             entry["revision"], entry["id"],
         ])
@@ -125,15 +141,20 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
             if move:
                 move_rows.append([entry["code"], entry.get("species"), slot, move.get("name"),
                                   move.get("move_id"), move.get("marker") or None, move.get("reason")])
+        for move in entry.get("max_moves") or []:
+            state = f"레벨 {move['level']}" if move.get("level") else "잠김" if move.get("locked") else None
+            move_rows.append([entry["code"], entry.get("species"), "맥스기술", move["name"], None, None, state])
 
     _sheet(workbook, "포켓몬 목록",
-           ["관리 번호", "이름 표시", "종", "도감 번호", "모습", "이로치", "반짝반짝", "배경",
-            "CP", "최대 HP", "레벨", "레벨 판정", "레벨 후보",
+           ["관리 번호", "이름 표시", "종", "도감 번호", "모습", "이로치", "반짝반짝", "배경", "다이맥스",
+            "CP", "최대 HP", "CP 출처", "레벨", "레벨 판정", "레벨 후보",
             "IV 공격", "IV 방어", "IV HP", "IV %", "노말어택", "스페셜어택 1", "스페셜어택 2",
+            "맥스기술", "합체·모습 변화", "메가진화 중 CP",
             "처음 저장", "마지막 갱신", "revision", "UUID"],
            pokemon_rows,
-           [10, 16, 14, 9, 10, 8, 9, 7, 8, 8, 7, 14, 12, 8, 8, 8, 8, 16, 18, 18, 17, 17, 9, 38],
-           {17: "0%"}, first=True)
+           [10, 16, 14, 9, 10, 8, 9, 7, 10, 8, 8, 9, 7, 14, 12, 8, 8, 8, 8, 16, 18, 18,
+            34, 30, 12, 17, 17, 9, 38],
+           {19: "0%"}, first=True)
     _sheet(workbook, "기술", ["관리 번호", "종", "슬롯", "기술", "기술 ID", "표시", "표시 이유"],
            move_rows, [10, 14, 10, 18, 24, 6, 48])
     notes = [
@@ -146,10 +167,11 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
                    "그림자 포켓몬·정화된 포켓몬 전용 기술, 지금 배울 수 있는 기술 목록에 없는 기술"],
         ["모습", "기본 모습은 빈칸입니다. 알로라의 모습 등 다른 모습만 적습니다."],
         ["이름 표시", "종 이름 뒤에 이로치 *, 반짝반짝 포켓몬 ♣, 배경 ◆를 붙입니다."],
+        ["CP 출처", "계산값: 메가진화 중에 찍은 개체라 화면 CP 대신 레벨로 계산한 기본 모습 CP입니다."],
         ["빈칸", "읽지 못했거나 확인하지 않은 값입니다. 0으로 채우지 않습니다."],
         ["포함하지 않은 정보", "영상, 프레임, 파일 이름, 촬영 시각 등 촬영 정보"],
         ["주의", "이 파일은 보기용입니다. 박스 복원에는 별도 백업을 사용하세요."],
-        ["아직 없는 시트", "메가·맥스, 전투 추천 결과 (해당 기능 구현 후 추가)"],
+        ["아직 없는 시트", "전투 추천 결과 (해당 기능 구현 후 추가)"],
     ]
     _sheet(workbook, "메타데이터", ["항목", "값"], notes, [22, 80])
     workbook["메타데이터"].freeze_panes = "A2"

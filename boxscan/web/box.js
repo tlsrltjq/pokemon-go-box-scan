@@ -50,19 +50,31 @@ function entryCard(entry) {
     }
   });
   const moves = entry.moves ?? {};
+  const badges = [];
+  if (entry.max_state) badges.push([formatMaxState(entry.max_state), "max"]);
+  if (entry.fusion?.length) badges.push([entry.fusion.some(f => f.type === "FUSE") ? "합체 가능" : "모습 변화 가능", "plain"]);
+  const temp = entry.temp_observation;
   return element("article", { class: "card", id: entry.id },
     element("header", {},
       element("h3", {}, `${entry.code} · ${displayName(entry)}`),
       element("span", { class: "badge neutral" }, `rev ${entry.revision}`)),
+    badges.length ? element("div", { class: "badges" },
+      ...badges.map(([text, kind]) => element("span", { class: `badge state ${kind}` }, text))) : null,
     element("dl", {},
       element("div", {}, element("dt", {}, "CP"), element("dd", {}, element("strong", {}, String(entry.cp ?? "-")))),
       element("div", {}, element("dt", {}, "최대 HP"), element("dd", {}, element("strong", {}, String(entry.max_hp ?? "-")))),
       element("div", {}, element("dt", {}, "레벨"), element("dd", {}, element("strong", {}, formatLevel(entry.level)))),
     ),
     element("p", {}, element("span", { class: "muted" }, "IV 공/방/체 "), element("strong", {}, formatIv(entry.iv))),
+    entry.cp_source === "calculated" ? element("p", { class: "muted" },
+      "CP·최대 HP는 메가진화 중 기록과 레벨로 계산한 기본 모습 값입니다.") : null,
+    temp ? element("p", { class: "muted" },
+      `${temp.temp_name} 중 기록: CP ${temp.cp ?? "-"}, 최대 HP ${temp.max_hp ?? "-"}`) : null,
     element("div", { class: "moves" },
       moveLine("노말어택", moves.fast),
       ...(moves.charged ?? []).map((move, i, all) => moveLine(all.length > 1 ? `스페셜어택 ${i + 1}` : "스페셜어택", move))),
+    entry.max_moves?.length ? element("p", {}, element("span", { class: "muted" }, "맥스기술 "),
+      entry.max_moves.map(m => `${m.name} ${m.level ? `레벨 ${m.level}` : m.locked ? "잠김" : ""}`.trim()).join(", ")) : null,
     element("p", { class: "muted" }, `마지막 갱신 ${new Date(entry.updated_at).toLocaleString("ko-KR")}`),
     element("div", { class: "actions" }, toggle, remove),
     history,
