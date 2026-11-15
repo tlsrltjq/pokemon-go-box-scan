@@ -27,12 +27,13 @@ def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None =
     frames = []
     for path in images:
         number = int(path.stem.split("-")[-1])
-        lines = recognized.get(path, {}).get("lines", [])
+        item = recognized.get(path, {})
+        lines = item.get("lines", [])
         frames.append({
             "frame": number,
             "seconds": (number - 1) * SAMPLE_SECONDS,
             "duration": SAMPLE_SECONDS,
-            **parse_frame(lines),
+            **parse_frame(lines, item.get("width")),
             "ocr": lines,
         })
     # Drop stretches without any reading (for example transitions or other screens).

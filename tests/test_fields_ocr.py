@@ -57,6 +57,50 @@ class FieldParserTests(unittest.TestCase):
         self.assertEqual((second["start_seconds"], second["end_seconds"]), (4, 7))
 
 
+def boxed(*items):
+    """OCR lines with explicit boxes: (text, x, y, w, h). Layout mimics a 332 px wide frame."""
+    return [{"text": t, "confidence": 1.0, "box": [x, y, w, h]} for t, x, y, w, h in items]
+
+
+MOVE_SCREEN = boxed(
+    ("체육관 배틀 & 레이드배틀", 63, 400, 94, 11), ("트레이너 배틀", 193, 400, 52, 12),
+    ("테스트펀치", 43, 435, 50, 16), ("12", 290, 434, 16, 14),
+    ("• 합성빔", 46, 463, 60, 16), ("90+18", 260, 464, 46, 14),
+    ("기술 날씨 보너스", 67, 486, 66, 11),
+    ("해방", 77, 505, 24, 11), ("100,000", 165, 503, 60, 16), ("100", 246, 505, 25, 11),
+)
+
+
+class MoveParserTests(unittest.TestCase):
+    def test_reads_fast_and_charged_rows_with_weather_boost(self):
+        found = parse_frame(MOVE_SCREEN, 332)
+        self.assertEqual(found["screen"], "DETAIL_MOVES")
+        self.assertEqual(found["moves"], [
+            {"name": "테스트펀치", "power": 12, "weather_boost": None, "role": "fast"},
+            {"name": "합성빔", "power": 90, "weather_boost": 18, "role": "charged"},
+        ])
+
+    def test_missing_fast_row_does_not_promote_the_charged_move(self):
+        lines = [line for line in MOVE_SCREEN if line["text"] not in ("테스트펀치", "12")]
+        self.assertEqual([m["role"] for m in parse_frame(lines, 332)["moves"]], ["charged"])
+
+    def test_scrolled_screen_without_header_marks_role_unknown(self):
+        lines = [line for line in MOVE_SCREEN if "배틀" not in line["text"]]
+        self.assertEqual({m["role"] for m in parse_frame(lines, 332)["moves"]}, {"unknown"})
+
+    def test_group_votes_moves_across_frames(self):
+        full = {"frame": 1, "seconds": 0, "duration": 1, "cp": 1000, **parse_frame(MOVE_SCREEN, 332)}
+        partial = [line for line in MOVE_SCREEN if line["text"] not in ("테스트펀치", "12")]
+        frames = [full, {**full, "frame": 2, **parse_frame(partial, 332)},
+                  {**full, "frame": 3, "moves": [{"name": "합성빔", "power": 90,
+                                                  "weather_boost": 18, "role": "unknown"}]}]
+        (group,) = group_frames(frames)
+        moves = group["moves"]
+        self.assertEqual((moves["fast"]["value"], moves["fast"]["votes"]), ("테스트펀치", 1))
+        self.assertEqual([(m["value"], m["votes"], m["observations"], m["power"], m["weather_boost"])
+                          for m in moves["charged"]], [("합성빔", 3, 3, 90, 18)])
+
+
 @unittest.skipUnless(ocr.swiftc() and FFMPEG, "Apple Vision OCR needs macOS with swiftc and FFmpeg")
 class AppleVisionTests(unittest.TestCase):
     def test_tool_builds_and_reports_each_image(self):

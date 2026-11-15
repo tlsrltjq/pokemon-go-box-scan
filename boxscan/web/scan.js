@@ -107,6 +107,35 @@ function levelBlock(level) {
   );
 }
 
+function moveRow(label, move) {
+  const boost = move.weather_boost ? ` +${move.weather_boost}` : "";
+  return element("div", { class: "move" },
+    element("span", { class: "move-role" }, label),
+    element("strong", {}, move.value),
+    element("span", { class: "move-power" }, move.power === null ? "" : `위력 ${move.power}${boost}`),
+    element("span", { class: "move-votes" }, `${move.observations}장 중 ${move.votes}장`),
+  );
+}
+
+function movesBlock(moves) {
+  if (!moves || (!moves.fast && !moves.charged.length)) {
+    return element("div", { class: "moves empty" }, element("h4", {}, "기술"),
+      element("p", {}, "기술 화면을 찾지 못했습니다. 기술 목록이 보이게 1초 정도 멈춰 주세요."));
+  }
+  const rows = [];
+  if (moves.fast) rows.push(moveRow("노말", moves.fast));
+  else rows.push(element("p", { class: "muted" }, "노말 기술을 읽지 못했습니다."));
+  moves.charged.forEach((move, i) => rows.push(moveRow(moves.charged.length > 1 ? `스페셜 ${i + 1}` : "스페셜", move)));
+  const boosted = [moves.fast, ...moves.charged].some(move => move?.weather_boost);
+  return element("div", { class: "moves" },
+    element("h4", {}, "기술"),
+    ...rows,
+    element("p", { class: "muted" },
+      "화면 글자 그대로입니다. 기술 사전 대조와 레거시·이벤트 기술 * 표시는 다음 단계입니다." +
+      (boosted ? " +숫자는 녹화 당시 날씨 보너스입니다." : "")),
+  );
+}
+
 function card(individual, index) {
   const species = individual.species?.value ?? "종 미확인";
   const appraisal = individual.appraisals.filter(item => item.evidence).at(-1);
@@ -130,6 +159,7 @@ function card(individual, index) {
     ),
     ivBlock(individual.appraisals),
     levelBlock(individual.level),
+    movesBlock(individual.moves),
     element("p", { class: "muted" }, `프레임 ${first}–${last} · ${start}–${end}초`),
   );
 }

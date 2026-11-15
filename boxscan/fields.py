@@ -10,11 +10,66 @@ HP = re.compile(r"(\d{1,3})\s*/\s*(\d{1,3})\s*[Hh][Pp]")
 # Appraisal caption: "이 마기라스(을)를 잡은 날과 장소는 ..." names the species, not the nickname.
 SPECIES = re.compile(r"이\s+(\S.*?)\s*\((?:을|를)\)(?:를|을)?\s*잡은")
 APPRAISAL_LABELS = {"공격", "방어", "방에", "HP", "Hp"}
+# Move rows: a Korean name on the left and its power on the same row at the right, such as
+# "지진 … 140+28" (the second number is the weather boost). Rows that also show a cost with
+# a comma ("해방 … 100,000") or that are buttons are not moves.
+POWER = re.compile(r"^(\d{1,3})(?:\s*\+\s*(\d{1,3}))?$")
+NAME_EDGES = re.compile(r"^[^가-힣]+|[^가-힣]+$")
+MOVE_NAME = re.compile(r"^[가-힣]{2,12}$")
+COST = re.compile(r"\d{1,3}(?:,\d{3})+")
+BUTTONS = {"해방", "해빙", "해벙", "애방", "강화", "강차", "감화", "교환", "교한", "교체"}
+# "체육관 배틀 & 레이드배틀" tab header, also when OCR garbles it.
+MOVE_HEADER = re.compile(r"체육관|채육관|제육|레이드|레미드")
 
 
-def parse_frame(lines: list[dict]) -> dict:
+def parse_moves(lines: list[dict], width: int | None) -> list[dict]:
+    """Return move rows top to bottom with role fast, charged or unknown (header not visible)."""
+    if not lines:
+        return []
+    width = width or max(line["box"][0] + line["box"][2] for line in lines)
+
+    def centre(line):
+        return line["box"][1] + line["box"][3] / 2
+
+    header = next((centre(line) for line in lines if MOVE_HEADER.search(line["text"])), None)
+    rows = []
+    for line in lines:
+        x, _, w, h = line["box"]
+        name = NAME_EDGES.sub("", line["text"].strip())
+        if x > 0.3 * width or not MOVE_NAME.match(name) or name in BUTTONS:
+            continue
+        if header is not None and centre(line) < header:
+            continue
+        same_row = [other for other in lines if other is not line
+                    and abs(centre(other) - centre(line)) <= max(8, h * 0.6)]
+        if any(COST.search(other["text"]) for other in same_row):
+            continue
+        powers = [match for other in same_row
+                  if other["box"][0] > 0.7 * width and (match := POWER.match(other["text"].strip()))]
+        if len(powers) != 1:
+            continue
+        rows.append({"name": name, "power": int(powers[0][1]),
+                     "weather_boost": int(powers[0][2]) if powers[0][2] else None,
+                     "y": centre(line), "height": h})
+    rows.sort(key=lambda row: row["y"])
+    for index, row in enumerate(rows):
+        # The fast move sits right under the tab header; a first row further down means the
+        # fast move was not read in this frame.
+        if header is None:
+            row["role"] = "unknown"
+        elif index == 0 and row["y"] - header <= 3 * row["height"]:
+            row["role"] = "fast"
+        else:
+            row["role"] = "charged"
+        del row["y"], row["height"]
+    return rows
+
+
+def parse_frame(lines: list[dict], width: int | None = None) -> dict:
     texts = [line["text"].strip() for line in lines]
     found: dict = {"screen": "UNKNOWN"}
+    if moves := parse_moves(lines, width):
+        found["moves"] = moves
     for text in texts:
         if "cp" not in found and (match := CP.search(text)):
             found["cp"] = int(match[1])
@@ -29,6 +84,8 @@ def parse_frame(lines: list[dict]) -> dict:
         found["screen"] = "APPRAISAL"
     elif "cp" in found or "hp" in found:
         found["screen"] = "DETAIL"
+    elif "moves" in found:
+        found["screen"] = "DETAIL_MOVES"
     return found
 
 
@@ -90,4 +147,30 @@ def _summarize(group: list[dict]) -> dict:
         "cp": vote([f["cp"] for f in group if "cp" in f]),
         "max_hp": vote([f["hp"]["max"] for f in group if "hp" in f]),
         "species": vote([f["species"] for f in group if "species" in f]),
+        "moves": _moves(group),
     }
+
+
+def _moves(group: list[dict]) -> dict:
+    """Vote the fast move and up to two charged moves over the group's move rows."""
+    rows = [row for frame in group for row in frame.get("moves", [])]
+    fast = vote([row["name"] for row in rows if row["role"] == "fast"])
+    fast_name = fast["value"] if fast else None
+    frames_with_moves = sum(1 for frame in group if frame.get("moves"))
+    counts = Counter()
+    for frame in group:
+        counts.update({row["name"] for row in frame.get("moves", [])
+                       if row["role"] == "charged" or row["role"] == "unknown" and row["name"] != fast_name})
+    top = counts.most_common(1)[0][1] if counts else 0
+    charged = [
+        {"value": name, "votes": count, "observations": frames_with_moves}
+        for name, count in counts.most_common(2) if count * 2 >= top and name != fast_name
+    ]
+
+    def power(name):
+        found = [row for row in rows if row["name"] == name]
+        return vote([(row["power"], row["weather_boost"]) for row in found])["value"] if found else None
+
+    for item in ([fast] if fast else []) + charged:
+        item["power"], item["weather_boost"] = power(item["value"])
+    return {"fast": fast, "charged": charged, "source": "ocr"}

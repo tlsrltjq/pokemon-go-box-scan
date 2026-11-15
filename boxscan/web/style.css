@@ -67,3 +67,10 @@ dd span { color: #3f5953; font-size: .75rem; }
 .level h4 { margin: 0; font-size: 1.05rem; }
 .level p { margin: .2rem 0 0; color: #3f5953; font-size: .85rem; }
 .level.warn h4 { color: #8a3b12; }
+.moves { margin-top: .8rem; padding-top: .7rem; border-top: 1px solid #e3eae6; }
+.moves h4 { margin: 0 0 .35rem; font-size: 1rem; }
+.move { display: grid; grid-template-columns: 3.6rem 1fr auto; align-items: baseline; gap: 0 .5rem; margin: .2rem 0; }
+.move-role { font-size: .8rem; color: #3f5953; }
+.move-power { font-size: .85rem; text-align: right; }
+.move-votes { grid-column: 2 / 4; font-size: .75rem; color: #3f5953; }
+.moves.empty p { color: #7a3d14; margin: 0; font-size: .9rem; }
