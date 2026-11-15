@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>내 박스 · 포켓몬 GO 박스 스캔</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/common.js" defer></script>
+  <script src="/assets/box.js" defer></script>
+</head>
+<body>
+  <main>
+    <nav aria-label="주요 화면"><a href="/">스캔</a><a href="/box" aria-current="page">내 박스</a></nav>
+    <header>
+      <p class="eyebrow">POKÉMON GO · 개인 박스</p>
+      <h1>내 박스</h1>
+      <p>승인해 저장한 개체입니다. 갱신할 때마다 이전 값이 이력에 남습니다.</p>
+    </header>
+    <label class="field search" for="search"><span>종 이름으로 찾기</span>
+      <input id="search" type="search" autocomplete="off" placeholder="예: 마기라스"></label>
+    <p id="status" role="status">불러오는 중입니다.</p>
+    <div id="pokemon" class="grid"></div>
+  </main>
+</body>
+</html>

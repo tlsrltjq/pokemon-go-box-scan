@@ -8,25 +8,8 @@ const gallery = document.querySelector("#frames");
 const analysisSection = document.querySelector("#analysis-section");
 const analysisStatus = document.querySelector("#analysis-status");
 const cards = document.querySelector("#individuals");
-const STATS = [["attack", "공격"], ["defense", "방어"], ["stamina", "HP"]];
-
-async function jsonResponse(response) {
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(typeof payload.detail === "string" ? payload.detail : "요청을 처리하지 못했습니다.");
-  }
-  return payload;
-}
-
-function element(tag, attributes = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [name, value] of Object.entries(attributes)) {
-    if (name === "class") node.className = value;
-    else node.setAttribute(name, value);
-  }
-  node.append(...children.filter(child => child !== null && child !== undefined));
-  return node;
-}
+const STATS = IV_KEYS;
+let currentScan = null;
 
 function showFrames(frames) {
   gallery.replaceChildren(...frames.map((url, index) => element("figure", {},
@@ -151,6 +134,153 @@ function movesBlock(moves) {
   );
 }
 
+function field(label, name, value, attributes = {}) {
+  return element("label", { class: "field" }, element("span", {}, label),
+    element("input", { name, value: value ?? "", autocomplete: "off", ...attributes }));
+}
+
+function candidateValues(individual) {
+  const moves = individual.moves ?? {};
+  const name = move => (move ? move.name ?? move.value : "");
+  return {
+    species: individual.species?.value ?? "",
+    cp: individual.cp?.value ?? "",
+    max_hp: individual.max_hp?.value ?? "",
+    iv: individual.appraisals.filter(item => item.iv).at(-1)?.iv ?? null,
+    fast_move: name(moves.fast),
+    charged_moves: (moves.charged ?? []).map(name),
+  };
+}
+
+function readForm(formNode) {
+  const get = name => formNode.elements[name].value.trim();
+  const iv = STATS.map(([key]) => get(`iv_${key}`));
+  return {
+    species: get("species") || null,
+    cp: get("cp") || null,
+    max_hp: get("max_hp") || null,
+    iv: iv.every(value => value === "") ? null : { attack: iv[0], defense: iv[1], stamina: iv[2] },
+    fast_move: get("fast_move") || null,
+    charged_moves: [get("charged_1"), get("charged_2")].filter(Boolean),
+  };
+}
+
+function previewValues(values, individual) {
+  const number = value => (value === null || value === "" ? null : Number(value));
+  const known = [individual.moves?.fast, ...(individual.moves?.charged ?? [])].filter(Boolean);
+  const move = name => {
+    if (!name) return null;
+    const match = known.find(item => (item.name ?? item.value) === name);
+    return { name, marker: match?.marker ?? "" };
+  };
+  const level = individual.level;
+  return {
+    species: values.species,
+    cp: number(values.cp),
+    max_hp: number(values.max_hp),
+    iv: values.iv && Object.fromEntries(STATS.map(([key]) => [key, number(values.iv[key])])),
+    level: level && {
+      value: level.status === "RESOLVED_BY_CONSTRAINTS" ? level.levels[0] : null,
+      candidates: level.levels,
+      status: level.status,
+    },
+    moves: { fast: move(values.fast_move), charged: values.charged_moves.map(move) },
+  };
+}
+
+function savedNote(approval, duplicate = false) {
+  return element("div", { class: "save saved" },
+    element("h4", {}, approval.deleted ? `${approval.code} · 박스에서 제거됨` : `${approval.code}(으)로 저장됨`),
+    element("p", {},
+      duplicate ? "이미 저장한 후보입니다. " : "",
+      element("a", { href: `/box#${approval.pokemon_id}` }, "내 박스에서 보기")));
+}
+
+function saveBlock(individual, index) {
+  if (individual.approval) return savedNote(individual.approval);
+  const values = candidateValues(individual);
+  const iv = values.iv ?? {};
+  const numeric = { inputmode: "numeric" };
+  const target = element("select", { name: "target" }, element("option", { value: "" }, "새 개체로 저장"));
+  const compare = element("div", { class: "compare-area" });
+  const message = element("div", { class: "save-message", role: "status" });
+  const submit = element("button", { type: "submit" }, "박스에 저장");
+  const formNode = element("form", { class: "save-form" },
+    element("div", { class: "fields" },
+      field("종", "species", values.species, { maxlength: "30" }),
+      field("CP", "cp", values.cp, numeric),
+      field("최대 HP", "max_hp", values.max_hp, numeric),
+      field("IV 공격", "iv_attack", iv.attack, numeric),
+      field("IV 방어", "iv_defense", iv.defense, numeric),
+      field("IV HP", "iv_stamina", iv.stamina, numeric),
+      field("노말 기술", "fast_move", values.fast_move, { maxlength: "30" }),
+      field("스페셜 1", "charged_1", values.charged_moves[0], { maxlength: "30" }),
+      field("스페셜 2", "charged_2", values.charged_moves[1], { maxlength: "30" }),
+    ),
+    element("label", { class: "field wide" }, element("span", {}, "저장 방식"), target),
+    compare, message, submit);
+  const existing = new Map();
+  let acknowledge = false;
+
+  const refresh = () => {
+    const entry = existing.get(target.value);
+    acknowledge = false;
+    message.replaceChildren();
+    compare.replaceChildren();
+    if (entry) {
+      compare.append(comparisonTable(entry, previewValues(readForm(formNode), individual)),
+        element("p", { class: "muted" }, "비운 칸은 기존 값을 그대로 둡니다. 레벨과 * 표시는 저장할 때 다시 계산합니다."));
+    }
+    submit.textContent = entry ? `${entry.code} 갱신` : "박스에 저장";
+  };
+
+  if (values.species) {
+    fetch(`/api/pokemon?species=${encodeURIComponent(values.species)}`).then(jsonResponse).then(({ pokemon }) => {
+      for (const entry of pokemon) {
+        existing.set(entry.id, entry);
+        const same = values.iv && entry.iv && STATS.every(([key]) => entry.iv[key] === values.iv[key]);
+        target.append(element("option", { value: entry.id },
+          `${entry.code} 갱신 · CP ${entry.cp ?? "-"} · IV ${formatIv(entry.iv)}${same ? " · IV 일치" : ""}`));
+      }
+    }).catch(() => {});
+  }
+  target.addEventListener("change", refresh);
+  formNode.addEventListener("input", event => { if (event.target !== target) refresh(); });
+  formNode.addEventListener("submit", async event => {
+    event.preventDefault();
+    submit.disabled = true;
+    message.replaceChildren();
+    const entry = existing.get(target.value);
+    try {
+      const saved = await jsonResponse(await fetch(
+        `/api/scans/${encodeURIComponent(currentScan)}/individuals/${index}/approve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            values: readForm(formNode),
+            target: entry?.id ?? null,
+            expected_revision: entry?.revision ?? null,
+            acknowledge,
+          }),
+        }));
+      formNode.replaceWith(savedNote({ pokemon_id: saved.id, code: saved.code }, saved.duplicate));
+    } catch (error) {
+      if (error.payload?.warnings) {
+        acknowledge = true;
+        message.append(
+          element("ul", { class: "warnings" }, ...error.payload.warnings.map(text => element("li", {}, text))),
+          element("p", {}, "같은 개체가 맞으면 한 번 더 누르세요."));
+        submit.textContent = "확인했고 저장";
+      } else {
+        message.textContent = error.message;
+      }
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  return element("details", { class: "save", open: "" }, element("summary", {}, "박스에 저장"), formNode);
+}
+
 function card(individual, index) {
   const species = individual.species?.value ?? "종 미확인";
   const appraisal = individual.appraisals.filter(item => item.evidence).at(-1);
@@ -176,6 +306,7 @@ function card(individual, index) {
     levelBlock(individual.level),
     movesBlock(individual.moves),
     element("p", { class: "muted" }, `프레임 ${first}–${last} · ${start}–${end}초`),
+    saveBlock(individual, index),
   );
 }
 
@@ -209,6 +340,7 @@ async function monitor(id) {
       return;
     }
     if (scan.status === "ready") {
+      currentScan = scan.id;
       status.textContent = scan.filename;
       framesSection.hidden = false;
       framesStatus.textContent = `1초마다 추출한 ${scan.frames.length}장`;

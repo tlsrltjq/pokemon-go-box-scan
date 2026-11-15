@@ -10,7 +10,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
+from . import reference, review
 from .analysis import RESULT
+from .box import BoxStore, Conflict
 from .store import JobStore
 from .video import MAX_FRAMES
 
@@ -27,6 +29,7 @@ def create_app(
         raise ValueError("LAN 모드에는 접속 암호가 필요합니다.")
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     store = JobStore(data_dir)
+    box = BoxStore(store.root)
 
     @app.middleware("http")
     async def protect_local_data(request: Request, call_next):
@@ -44,7 +47,7 @@ def create_app(
                     status_code=401,
                     headers={"WWW-Authenticate": 'Basic realm="Box Scan", charset="UTF-8"'},
                 )
-        if request.method == "POST":
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
             expected = f"{request.url.scheme}://{request.headers['host']}"
             origin = request.headers.get("origin")
             if origin is not None and origin != expected:
@@ -62,6 +65,10 @@ def create_app(
     @app.get("/")
     def index():
         return FileResponse(WEB / "index.html")
+
+    @app.get("/box")
+    def box_page():
+        return FileResponse(WEB / "box.html")
 
     @app.get("/api/health")
     def health():
@@ -112,7 +119,83 @@ def create_app(
             ]
         job["analysis"] = _analysis(store.root / str(scan_id), str(scan_id),
                                     job.pop("analysis_status"), job.pop("analysis_error"))
+        for index, individual in enumerate(job["analysis"]["individuals"]):
+            individual["approval"] = box.approval(str(scan_id), index)
         return job
+
+    @app.post("/api/scans/{scan_id}/individuals/{index}/approve")
+    async def approve(scan_id: UUID, index: int, request: Request):
+        if request.headers.get("content-type", "").split(";")[0] != "application/json":
+            raise HTTPException(415, "JSON 요청만 지원합니다.")
+        try:
+            payload = await request.json()
+        except ValueError:
+            raise HTTPException(400, "요청 형식이 올바르지 않습니다.") from None
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "요청 형식이 올바르지 않습니다.")
+        job = store.get(str(scan_id))
+        result_path = store.root / str(scan_id) / RESULT
+        if job is None or job["status"] != "ready" or not result_path.is_file():
+            raise HTTPException(404, "분석을 마친 스캔을 찾을 수 없습니다.")
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        if not 0 <= index < len(result["individuals"]):
+            raise HTTPException(404, "판독 후보를 찾을 수 없습니다.")
+        try:
+            data = reference.load(store.root)
+        except (OSError, ValueError, KeyError):
+            data = None
+        try:
+            values = review.normalize(payload.get("values"), data)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+        target = payload.get("target")
+        if target is not None:
+            try:
+                target = str(UUID(str(target)))
+            except ValueError:
+                raise HTTPException(422, "갱신할 개체를 다시 선택하세요.") from None
+            existing = box.get(target)
+            if existing is None:
+                raise HTTPException(409, "갱신할 개체가 박스에 없습니다.")
+            found = review.warnings(existing, values)
+            if found and payload.get("acknowledge") is not True:
+                return JSONResponse({"detail": "기존 개체와 다른 점이 있습니다.", "warnings": found},
+                                    status_code=409)
+        candidate = result["individuals"][index]
+        source = {
+            "scan_id": str(scan_id),
+            "individual": index,
+            "filename": job["filename"],
+            "frames": candidate["frames"],
+            "recognizer": result.get("recognizer"),
+            "analysis_created_at": result.get("created_at"),
+            "candidate": {key: (candidate.get(key) or {}).get("value")
+                          for key in ("species", "cp", "max_hp")},
+        }
+        try:
+            entry = box.approve(str(scan_id), index, values, source, target,
+                                payload.get("expected_revision"))
+        except Conflict as error:
+            raise HTTPException(409, str(error)) from None
+        return entry
+
+    @app.get("/api/pokemon")
+    def pokemon_list(species: str | None = None):
+        return {"pokemon": box.list(species)}
+
+    @app.get("/api/pokemon/{pokemon_id}")
+    def pokemon_detail(pokemon_id: UUID):
+        entry = box.get(str(pokemon_id))
+        if entry is None:
+            raise HTTPException(404, "박스에서 개체를 찾을 수 없습니다.")
+        return entry
+
+    @app.delete("/api/pokemon/{pokemon_id}", status_code=204)
+    def pokemon_delete(pokemon_id: UUID, revision: int):
+        try:
+            box.delete(str(pokemon_id), revision)
+        except Conflict as error:
+            raise HTTPException(409, str(error)) from None
 
     @app.get("/api/scans/{scan_id}/evidence/{number}")
     def evidence(scan_id: UUID, number: int):
