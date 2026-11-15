@@ -16,8 +16,11 @@
       <h1>내 박스</h1>
       <p>승인해 저장한 개체입니다. 갱신할 때마다 이전 값이 이력에 남습니다.</p>
     </header>
-    <label class="field search" for="search"><span>종 이름으로 찾기</span>
-      <input id="search" type="search" autocomplete="off" placeholder="예: 마기라스"></label>
+    <div class="toolbar">
+      <label class="field search" for="search"><span>종 이름으로 찾기</span>
+        <input id="search" type="search" autocomplete="off" placeholder="예: 마기라스"></label>
+      <a class="button" href="/api/exports/box.xlsx" download>Excel로 내보내기</a>
+    </div>
     <p id="status" role="status">불러오는 중입니다.</p>
     <div id="pokemon" class="grid"></div>
   </main>

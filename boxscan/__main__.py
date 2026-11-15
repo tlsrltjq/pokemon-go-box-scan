@@ -28,6 +28,8 @@ def main() -> None:
     commands.add_parser("doctor")
     analyze = commands.add_parser("analyze", help="실험: 추출한 스캔에 OCR·IV 판독 실행")
     analyze.add_argument("scan_id")
+    export_cmd = commands.add_parser("export", help="박스를 Excel 파일로 내보내기")
+    export_cmd.add_argument("--output", type=Path, help="저장할 .xlsx 경로 (기본: 현재 폴더)")
     ref = commands.add_parser("reference", help="레벨 계산용 기준 데이터 관리")
     ref.add_argument("action", choices=["update", "show"])
     args = parser.parse_args()
@@ -44,6 +46,21 @@ def main() -> None:
                 serve.error("접속 암호는 12자 이상이어야 합니다.")
         uvicorn.run(create_app(args.data_dir, host, password), host=host, port=args.port,
                     proxy_headers=False)
+        return
+
+    if args.command == "export":
+        from . import export
+        from .box import BoxStore
+        output = args.output or Path(export.filename())
+        if output.suffix.lower() != ".xlsx":
+            export_cmd.error("--output은 .xlsx 파일이어야 합니다.")
+        entries = BoxStore(args.data_dir).list()
+        try:
+            data = reference.load(args.data_dir)
+        except (OSError, ValueError, KeyError):
+            data = None
+        output.write_bytes(export.workbook_bytes(entries, data, export.app_version()))
+        print(f"{len(entries)}개체를 {output.resolve()}에 저장했습니다.")
         return
 
     if args.command == "reference":

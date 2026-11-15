@@ -102,3 +102,5 @@ button.secondary { background: #dbe7e2; color: #172b28; }
 button.danger { background: #fbe8d9; color: #7a3d14; }
 .history { margin: .8rem 0 0; padding-left: 1.2rem; font-size: .9rem; }
 .history p { margin: .3rem 0; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: .75rem; }
+a.button { display: inline-flex; align-items: center; min-height: 2.75rem; padding: .55rem 1rem; border-radius: .55rem; background: #236154; color: white; font-weight: 700; text-decoration: none; }

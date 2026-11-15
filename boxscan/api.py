@@ -6,11 +6,11 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from . import reference, review
+from . import export, reference, review
 from .analysis import RESULT
 from .box import BoxStore, Conflict
 from .store import JobStore
@@ -189,6 +189,16 @@ def create_app(
         if entry is None:
             raise HTTPException(404, "박스에서 개체를 찾을 수 없습니다.")
         return entry
+
+    @app.get("/api/exports/box.xlsx")
+    def export_box():
+        try:
+            data = reference.load(store.root)
+        except (OSError, ValueError, KeyError):
+            data = None
+        content = export.workbook_bytes(box.list(), data, export.app_version())
+        return Response(content, media_type=export.MEDIA_TYPE, headers={
+            "Content-Disposition": f'attachment; filename="{export.filename()}"'})
 
     @app.delete("/api/pokemon/{pokemon_id}", status_code=204)
     def pokemon_delete(pokemon_id: UUID, revision: int):
