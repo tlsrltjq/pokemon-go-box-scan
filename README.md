@@ -2,7 +2,7 @@
 
 iPhone으로 직접 녹화한 Pokémon GO 화면을 Mac에서 분석해 개인 박스를 관리하는 프로젝트입니다. 최종적으로 **현재 보유한 개체 중 전투 종료 전까지 가장 많은 예상 피해를 낼 파티와 출전 순서**를 추천합니다.
 
-현재 첫 버전은 **영상 업로드 → 로컬 저장 → SQLite 작업 등록 → FFmpeg 프레임 추출 → OCR·IV 판독 후보 → 브라우저 확인**까지 실행됩니다. 판독 값은 자동 후보이며 승인 기능은 아직 없습니다. 박스 확정 저장, Excel, 전투 추천은 아래 로드맵에 있습니다.
+현재 첫 버전은 **영상 업로드 → 로컬 저장 → SQLite 작업 등록 → FFmpeg 프레임 추출 → OCR·IV 판독과 레벨 계산 후보 → 브라우저 확인**까지 실행됩니다. 판독 값은 자동 후보이며 승인 기능은 아직 없습니다. 박스 확정 저장, Excel, 전투 추천은 아래 로드맵에 있습니다.
 
 - [현재 기준 기획서 v1.2](docs/spec-v1.2.md)에는 요구사항, 데이터 모델, API, 검증 목록과 출처를 보존합니다.
 - [v1.1 보관본](docs/archive/spec-v1.1.md)에는 초기 조사, 수식과 엔드포인트 후보가 남아 있습니다. 범위나 계산 정책이 다르면 v1.2를 따릅니다.
@@ -18,8 +18,11 @@ git clone https://github.com/tlsrltjq/pokemon-go-box-scan.git
 cd pokemon-go-box-scan
 uv sync --locked
 uv run --locked python -m boxscan doctor
+uv run --locked python -m boxscan reference update
 uv run --locked python -m boxscan serve
 ```
+
+`reference update`는 레벨 계산용 기준 데이터를 `data/reference/`에 내려받습니다. 이 명령을 실행할 때만 인터넷에 접속하며, 분석 중에는 받은 데이터만 사용합니다. 아래 [레벨 계산](#레벨-계산)을 참고하세요.
 
 다른 터미널에서도 같은 디렉터리로 이동해 워커를 실행합니다.
 
@@ -27,7 +30,7 @@ uv run --locked python -m boxscan serve
 uv run --locked python -m boxscan worker
 ```
 
-Mac에서 브라우저로 `http://127.0.0.1:8000`에 접속해 MOV나 MP4를 올립니다. 성공하면 갤러리에 프레임이 나타나고, 이어서 워커가 OCR·IV를 판독해 개체별 카드(종·CP·최대 HP·IV와 근거 프레임)를 보여줍니다. 200 MiB 이하 영상의 처음 72초에서 1초마다 프레임을 추출하며, 최대 72장을 보여줍니다. 업로드를 마치면 브라우저를 닫아도 실행 중인 워커는 계속 처리합니다. 결과 페이지 주소로 다시 열 수 있습니다.
+Mac에서 브라우저로 `http://127.0.0.1:8000`에 접속해 MOV나 MP4를 올립니다. 성공하면 갤러리에 프레임이 나타나고, 이어서 워커가 OCR·IV를 판독해 개체별 카드(종·CP·최대 HP·IV·레벨과 근거 프레임)를 보여줍니다. 200 MiB 이하 영상의 처음 72초에서 1초마다 프레임을 추출하며, 최대 72장을 보여줍니다. 업로드를 마치면 브라우저를 닫아도 실행 중인 워커는 계속 처리합니다. 결과 페이지 주소로 다시 열 수 있습니다.
 
 개인 영상 없이 확인하려면 합성 클립을 생성할 수 있습니다.
 
@@ -56,6 +59,29 @@ uv run --locked python -m boxscan analyze <스캔 ID>
 - 개체 구간은 CP·최대 HP·종 이름의 변화로만 나눕니다. 같은 종·같은 CP 개체가 연속으로 나오면 하나로 묶일 수 있습니다.
 - OCR 원문에는 트레이너 이름과 잡은 장소가 포함됩니다. `analysis.json`은 로컬 `data/`에만 둡니다.
 
+### 레벨 계산
+
+종(조사 문구), IV, CP, 최대 HP로 레벨을 구합니다. 기준 데이터의 모든 레벨에 CP·HP 공식을 적용해 화면 값과 같은 레벨만 남깁니다.
+
+| 결과 | 의미 |
+| --- | --- |
+| 하나로 정해짐 (`RESOLVED_BY_CONSTRAINTS`) | 맞는 레벨이 하나입니다. 높은 CP에서는 대부분 이렇게 정해집니다. |
+| 후보 여러 개 (`AMBIGUOUS`) | 낮은 CP 등에서 이웃 레벨이 같은 값을 냅니다. 다음 강화 비용으로 좁히는 것은 후속 단계입니다. |
+| 맞는 레벨 없음 (`CONFLICT`) | CP·HP·IV·종 중 하나를 잘못 읽었거나, 메가진화·베스트 파트너·특수 폼처럼 아직 반영하지 않은 상태일 수 있습니다. |
+
+기준 데이터는 다음 세 파일입니다. 받은 시각, 원본 주소, SHA-256을 버전 폴더의 `manifest.json`에 남기며, 새로 받은 데이터가 형식 검사를 통과하지 못하면 이전 버전을 유지합니다. 재배포 조건을 확인하지 않았으므로 Git에는 넣지 않습니다.
+
+- 종족값: [PoGo API `pokemon_stats.json`](https://pogoapi.net/documentation/)
+- 레벨별 CP 배율(CPM): PoGo API `cp_multiplier.json`
+- 한국어 종 이름 → 도감 번호: [PokeAPI `pokemon_species_names.csv`](https://github.com/PokeAPI/pokeapi/tree/master/data/v2/csv)
+
+현재 한계는 다음과 같습니다.
+
+- PoGo API의 CPM 표는 레벨 45까지입니다(2026-11-15 확인). 레벨 45.5~50 개체는 `CONFLICT`로 나오며, 화면에도 이 범위를 확인하지 못했다고 표시합니다.
+- PoGo API 종족값 파일의 서버 갱신일은 2025-11-11입니다. 이후 추가된 포켓몬이나 조정된 수치는 없을 수 있습니다.
+- 같은 종에 여러 폼이 있으면 기본 폼(`Normal`)을 우선하고, 다른 폼으로도 맞으면 함께 표시합니다. 폼을 화면에서 판별하지는 않습니다.
+- 다음 1회 강화 비용, 반짝반짝·그림자·정화 보정, 베스트 파트너 레벨은 아직 사용하지 않습니다.
+
 ### iPhone Safari로 연결
 
 Mac의 Wi-Fi 설정에서 집 네트워크 IPv4 주소를 확인합니다. 기존 서버를 종료하고 아래 예시 주소를 실제 주소로 바꿔 실행합니다. 워커는 동일한 프로젝트 디렉터리에서 그대로 사용합니다.
@@ -80,6 +106,8 @@ boxscan/
   ocr.py           Apple Vision 도구 컴파일·실행 (vision_ocr.swift)
   fields.py        OCR 원문에서 CP·HP·종 후보 추출, 개체 구간 나누기
   ivbars.py        원본 영상의 조사 화면 IV 막대 판독
+  reference.py     기준 데이터 내려받기·검증·버전 관리 (data/reference/)
+  level.py         종·IV·CP·최대 HP로 레벨 후보 계산
   web/             업로드, 판독 후보 카드, 프레임 검토 화면
 docs/
   spec-v1.2.md     제품·기술 명세
@@ -143,7 +171,7 @@ Mac OCR은 Apple Vision으로 실험 중입니다. FFmpeg로 프레임을 뽑고
 uv run --locked python -m unittest discover -s tests -v
 ```
 
-현재 테스트는 합성 MP4의 업로드·작업 처리·JPEG 조회, 잘못된 파일의 실패 상태, 집 네트워크 접속 인증을 확인합니다. 합성 막대로 IV 기준 위치 16개, 애니메이션 중간 정지, 너무 빨리 닫힌 조사 창, 인코딩한 영상 판독을 검사합니다. OCR 파서는 합성 문자열로, Apple Vision 도구는 Mac에서 컴파일·실행 여부만 검사합니다. 워커의 판독 상태 기록, 판독 실패 시 프레임 유지, 판독 결과 요약 API(OCR 원문 제외), 기존 DB 열 추가와 동시 시작도 검사합니다. 기기 환경과 실제 게임 화면에서의 인식 정확도는 별도 확인 항목입니다.
+현재 테스트는 합성 MP4의 업로드·작업 처리·JPEG 조회, 잘못된 파일의 실패 상태, 집 네트워크 접속 인증을 확인합니다. 합성 막대로 IV 기준 위치 16개, 애니메이션 중간 정지, 너무 빨리 닫힌 조사 창, 인코딩한 영상 판독을 검사합니다. OCR 파서는 합성 문자열로, Apple Vision 도구는 Mac에서 컴파일·실행 여부만 검사합니다. 워커의 판독 상태 기록, 판독 실패 시 프레임 유지, 판독 결과 요약 API(OCR 원문 제외), 기존 DB 열 추가와 동시 시작도 검사합니다. 레벨 계산과 기준 데이터 검증·버전 유지는 합성 종족값과 합성 CPM 표로만 검사하며, 실제 게임 데이터는 테스트에 쓰지 않습니다. 기기 환경과 실제 게임 화면에서의 인식 정확도는 별도 확인 항목입니다.
 
 - 영상 처리 도구와 의존성 재현 방법은 [FFmpeg 문서](https://ffmpeg.org/documentation.html)와 [uv FastAPI 가이드](https://docs.astral.sh/uv/guides/integration/fastapi/)를 참고합니다.
 - 로컬 OCR의 언어·버전 지원은 Mac에서 확인합니다. [Apple Vision](https://developer.apple.com/documentation/vision/recognizing-text-in-images)
