@@ -38,6 +38,14 @@ class FieldParserTests(unittest.TestCase):
         self.assertEqual(found["screen"], "APPRAISAL")
         self.assertEqual(found["species"], "테스트몬")
 
+    def test_lucky_label_needs_repeated_evidence(self):
+        self.assertTrue(parse_frame(lines("Ⓡ별명", "반짝반짝 포컷몬", "CP1000"))["lucky"])
+        lucky = [frame(n, "CP1000", "반짝반짝 포켓몬") for n in (1, 2)]
+        plain = [frame(n, "CP1000", "10 / 10 HP") for n in (1, 2, 3)]
+        self.assertTrue(group_frames(lucky)[0]["lucky"]["value"])
+        self.assertIs(group_frames(plain)[0]["lucky"]["value"], False)
+        self.assertIsNone(group_frames(plain[:1])[0]["lucky"]["value"])  # too little to say no
+
     def test_groups_split_on_confident_changes_only(self):
         frames = [
             frame(1, "CP1000", "100 / 100 HP"),

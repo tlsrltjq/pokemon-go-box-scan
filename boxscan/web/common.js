@@ -1,5 +1,20 @@
 // Helpers shared by the scan page and the box page.
 const IV_KEYS = [["attack", "공격"], ["defense", "방어"], ["stamina", "HP"]];
+// Marks after the species name: 이로치 *, 반짝반짝 포켓몬 ♣, 배경 ◆ (in this order).
+const NAME_MARKS = [["shiny", "*", "이로치"], ["lucky", "♣", "반짝반짝 포켓몬"], ["background", "◆", "배경"]];
+
+function nameMarks(values) {
+  return NAME_MARKS.filter(([key]) => values?.[key] === true).map(([, mark]) => mark).join("");
+}
+
+function displayName(values) {
+  const form = values?.form_name ? ` (${values.form_name})` : "";
+  return `${values?.species ?? "종 미확인"}${nameMarks(values)}${form}`;
+}
+
+function formatFlag(value) {
+  return value === true ? "예" : value === false ? "아니요" : "-";
+}
 
 async function jsonResponse(response) {
   if (response.status === 204) return null;
@@ -48,6 +63,9 @@ function formatMoves(moves) {
 
 const BOX_FIELDS = [
   ["species", "종", value => value ?? "-"],
+  ["shiny", "이로치 *", formatFlag],
+  ["lucky", "반짝반짝 ♣", formatFlag],
+  ["background", "배경 ◆", formatFlag],
   ["cp", "CP", value => value ?? "-"],
   ["max_hp", "최대 HP", value => value ?? "-"],
   ["iv", "IV", formatIv],

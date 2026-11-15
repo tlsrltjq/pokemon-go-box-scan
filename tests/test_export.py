@@ -15,6 +15,7 @@ from test_reference_level import synthetic_reference
 
 FULL = {
     "species": "하나몬", "dex": 1, "form": "Normal", "cp": 1500, "max_hp": 120,
+    "shiny": True, "lucky": False, "background": True,
     "iv": {"attack": 15, "defense": 12, "stamina": 15},
     "level": {"value": 30.5, "status": "RESOLVED_BY_CONSTRAINTS", "candidates": [30.5]},
     "moves": {"fast": {"name": "기술1번", "move_id": "MOVE_1_FAST", "marker": "", "reason": None},
@@ -49,15 +50,18 @@ class ExportTests(unittest.TestCase):
         self.assertAlmostEqual(row["IV %"], 42 / 45)
         self.assertEqual((row["스페셜어택 1"], row["스페셜어택 2"]), ("기술13번*", "기술11번"))
         self.assertIsNone(row["모습"])  # the regular form stays empty
+        self.assertEqual((row["이름 표시"], row["이로치"], row["반짝반짝"], row["배경"]),
+                         ("하나몬*◆", "예", "아니요", "예"))
         self.assertIsInstance(row["마지막 갱신"], datetime)
         partial = dict(zip(headers, [cell.value for cell in sheet[3]]))
         self.assertIsNone(partial["IV 공격"])  # unknown stays empty, never 0
+        self.assertIsNone(partial["이로치"])
         self.assertIsNone(partial["최대 HP"])
         self.assertEqual((partial["레벨 판정"], partial["레벨 후보"]), ("후보 여러 개", "10, 10.5"))
 
     def test_text_that_looks_like_a_formula_stays_text(self):
         book, raw = self.workbook()
-        cell = book["포켓몬 목록"]["B3"]
+        cell = book["포켓몬 목록"]["C3"]
         self.assertEqual(cell.data_type, "s")
         self.assertTrue(cell.value.startswith("=HYPERLINK"))
         self.assertNotIn(b"private-video", raw)

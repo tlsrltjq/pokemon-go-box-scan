@@ -149,7 +149,13 @@ function candidateValues(individual) {
     iv: individual.appraisals.filter(item => item.iv).at(-1)?.iv ?? null,
     fast_move: name(moves.fast),
     charged_moves: (moves.charged ?? []).map(name),
+    lucky: individual.lucky?.value === true,
   };
+}
+
+function checkbox(label, name, checked) {
+  return element("label", { class: "check" },
+    element("input", { type: "checkbox", name, checked: checked ? "" : null }), element("span", {}, label));
 }
 
 function readForm(formNode) {
@@ -162,6 +168,9 @@ function readForm(formNode) {
     iv: iv.every(value => value === "") ? null : { attack: iv[0], defense: iv[1], stamina: iv[2] },
     fast_move: get("fast_move") || null,
     charged_moves: [get("charged_1"), get("charged_2")].filter(Boolean),
+    shiny: formNode.elements.shiny.checked,
+    lucky: formNode.elements.lucky.checked,
+    background: formNode.elements.background.checked,
   };
 }
 
@@ -176,6 +185,9 @@ function previewValues(values, individual) {
   const level = individual.level;
   return {
     species: values.species,
+    shiny: values.shiny,
+    lucky: values.lucky,
+    background: values.background,
     cp: number(values.cp),
     max_hp: number(values.max_hp),
     iv: values.iv && Object.fromEntries(STATS.map(([key]) => [key, number(values.iv[key])])),
@@ -217,10 +229,22 @@ function saveBlock(individual, index) {
       field("스페셜어택 1", "charged_1", values.charged_moves[0], { maxlength: "30" }),
       field("스페셜어택 2", "charged_2", values.charged_moves[1], { maxlength: "30" }),
     ),
+    element("div", { class: "checks" },
+      checkbox("이로치 *", "shiny", false),
+      checkbox("반짝반짝 포켓몬 ♣", "lucky", values.lucky),
+      checkbox("배경 ◆", "background", false)),
+    element("p", { class: "muted" }, "반짝반짝 포켓몬은 화면 글자로 미리 체크합니다. 이로치와 배경은 직접 체크하세요."),
     element("label", { class: "field wide" }, element("span", {}, "저장 방식"), target),
     compare, message, submit);
   const existing = new Map();
   let acknowledge = false;
+
+  const syncFlags = () => {
+    // Updating keeps the saved shiny/lucky/background unless the user changes them.
+    const entry = existing.get(target.value);
+    for (const key of ["shiny", "background"]) formNode.elements[key].checked = entry?.[key] === true;
+    formNode.elements.lucky.checked = entry?.lucky === true || values.lucky;
+  };
 
   const refresh = () => {
     const entry = existing.get(target.value);
@@ -244,7 +268,7 @@ function saveBlock(individual, index) {
       }
     }).catch(() => {});
   }
-  target.addEventListener("change", refresh);
+  target.addEventListener("change", () => { syncFlags(); refresh(); });
   formNode.addEventListener("input", event => { if (event.target !== target) refresh(); });
   formNode.addEventListener("submit", async event => {
     event.preventDefault();
@@ -283,12 +307,13 @@ function saveBlock(individual, index) {
 
 function card(individual, index) {
   const species = individual.species?.value ?? "종 미확인";
+  const lucky = individual.lucky?.value === true;
   const appraisal = individual.appraisals.filter(item => item.evidence).at(-1);
   const [first, last] = individual.frames;
   const [start, end] = individual.seconds;
   return element("article", { class: "card" },
     element("header", {},
-      element("h3", {}, `${index + 1}. ${species}`),
+      element("h3", {}, `${index + 1}. ${species}${lucky ? "♣" : ""}`),
       element("span", { class: "badge" }, "자동 판독 후보"),
     ),
     element("div", { class: "evidence" },
@@ -302,6 +327,8 @@ function card(individual, index) {
       reading("최대 HP", individual.max_hp),
       reading("종(조사 문구)", individual.species),
     ),
+    lucky ? element("p", { class: "muted" },
+      `♣ 반짝반짝 포켓몬 (${individual.lucky.observations}장 중 ${individual.lucky.votes}장에서 확인)`) : null,
     ivBlock(individual.appraisals),
     levelBlock(individual.level),
     movesBlock(individual.moves),

@@ -89,6 +89,9 @@ class BoxStoreTests(unittest.TestCase):
     def test_merge_ignores_empty_values(self):
         self.assertEqual(merge({"cp": 1, "iv": {"attack": 1}}, {"cp": None, "iv": {}}),
                          {"cp": 1, "iv": {"attack": 1}})
+        # An explicit "no" from the user replaces an earlier "yes"; unknown keeps it.
+        self.assertEqual(merge({"shiny": True, "lucky": True}, {"shiny": False, "lucky": None}),
+                         {"shiny": False, "lucky": True})
 
 
 class ReviewTests(unittest.TestCase):
@@ -110,9 +113,14 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(values["moves"]["fast"]["marker"], "")
         self.assertEqual([m["marker"] for m in values["moves"]["charged"]], ["*"])
 
+    def test_flags_are_strict_booleans(self):
+        values = review.normalize({"cp": 100, "shiny": True, "lucky": False}, self.data)
+        self.assertEqual((values["shiny"], values["lucky"], values["background"]), (True, False, None))
+
     def test_normalize_rejects_bad_input(self):
         for raw in ({"cp": 5}, {"iv": {"attack": 1}}, {"iv": {"attack": 16, "defense": 1, "stamina": 1}},
-                    {"charged_moves": ["a", "b", "c"]}, {}, {"cp": True}, "text"):
+                    {"charged_moves": ["a", "b", "c"]}, {}, {"cp": True}, "text",
+                    {"cp": 100, "shiny": "yes"}, {"cp": 100, "background": 1}):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
                 review.normalize(raw, self.data)
 

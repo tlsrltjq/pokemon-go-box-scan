@@ -40,7 +40,7 @@ function entryCard(entry) {
     toggle.textContent = "이력 닫기";
   });
   remove.addEventListener("click", async () => {
-    const name = `${entry.code} ${entry.species ?? ""}`.trim();
+    const name = `${entry.code} ${displayName(entry)}`;
     if (!confirm(`${name}을(를) 박스에서 제거할까요? 이력과 관리 번호는 남고, 번호는 다시 쓰지 않습니다.`)) return;
     try {
       await jsonResponse(await fetch(`/api/pokemon/${entry.id}?revision=${entry.revision}`, { method: "DELETE" }));
@@ -52,7 +52,7 @@ function entryCard(entry) {
   const moves = entry.moves ?? {};
   return element("article", { class: "card", id: entry.id },
     element("header", {},
-      element("h3", {}, `${entry.code} · ${entry.species ?? "종 미확인"}${entry.form_name ? ` (${entry.form_name})` : ""}`),
+      element("h3", {}, `${entry.code} · ${displayName(entry)}`),
       element("span", { class: "badge neutral" }, `rev ${entry.revision}`)),
     element("dl", {},
       element("div", {}, element("dt", {}, "CP"), element("dd", {}, element("strong", {}, String(entry.cp ?? "-")))),

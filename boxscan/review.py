@@ -35,6 +35,14 @@ def _text(value, name: str, limit: int = 30) -> str | None:
     return value or None
 
 
+def _flag(value, name: str) -> bool | None:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} 값이 올바르지 않습니다.")
+    return value
+
+
 def normalize(raw: dict, reference: Reference | None) -> dict:
     """Return box values from user input. Raises ValueError with a message for the user."""
     if not isinstance(raw, dict):
@@ -54,6 +62,11 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
     if not isinstance(charged_raw, list) or len(charged_raw) > 2:
         raise ValueError("스페셜어택은 최대 2개입니다.")
     charged = [name for value in charged_raw if (name := _text(value, "스페셜어택"))]
+    # Lucky (반짝반짝 포켓몬) is prefilled from OCR; shiny (이로치) and special background (배경)
+    # are checked by the user because they are not read from video yet.
+    shiny = _flag(raw.get("shiny"), "이로치")
+    lucky = _flag(raw.get("lucky"), "반짝반짝 포켓몬")
+    background = _flag(raw.get("background"), "배경")
     if not any([species, cp, max_hp, iv, fast, charged]):
         raise ValueError("저장할 값이 없습니다.")
 
@@ -75,6 +88,9 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
         "dex": pokemon_id,
         "form": estimated.get("form"),
         "form_name": estimated.get("form_name"),
+        "shiny": shiny,
+        "lucky": lucky,
+        "background": background,
         "cp": cp,
         "max_hp": max_hp,
         "iv": iv,

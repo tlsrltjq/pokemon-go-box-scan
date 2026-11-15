@@ -258,6 +258,7 @@ def _analysis(folder: Path, scan_id: str, status: str | None, error: str | None)
             "species": individual["species"],
             "cp": individual["cp"],
             "max_hp": individual["max_hp"],
+            "lucky": individual.get("lucky"),
             "appraisals": [appraisal(w) for w in individual.get("appraisals", [])],
             "level": individual.get("level"),
             "moves": individual.get("moves"),

@@ -10,6 +10,8 @@ HP = re.compile(r"(\d{1,3})\s*/\s*(\d{1,3})\s*[Hh][Pp]")
 # Appraisal caption: "이 마기라스(을)를 잡은 날과 장소는 ..." names the species, not the nickname.
 SPECIES = re.compile(r"이\s+(\S.*?)\s*\((?:을|를)\)(?:를|을)?\s*잡은")
 APPRAISAL_LABELS = {"공격", "방어", "방에", "HP", "Hp"}
+# "반짝반짝 포켓몬" under the name marks a lucky Pokémon; OCR sometimes garbles the last word.
+LUCKY = re.compile(r"반짝반짝\s*포")
 # Move rows: a Korean name on the left and its power on the same row at the right, such as
 # "지진 … 140+28" (the second number is the weather boost). Rows that also show a cost with
 # a comma ("해방 … 100,000") or that are buttons are not moves.
@@ -79,6 +81,8 @@ def parse_frame(lines: list[dict], width: int | None = None) -> dict:
                 found["hp"] = {"current": current, "max": maximum}
         if "species" not in found and (match := SPECIES.search(text)):
             found["species"] = match[1]
+        if LUCKY.search(text):
+            found["lucky"] = True
     labels = APPRAISAL_LABELS.intersection(texts)
     if "공격" in labels and len(labels) >= 2 or "species" in found:
         found["screen"] = "APPRAISAL"
@@ -147,8 +151,22 @@ def _summarize(group: list[dict]) -> dict:
         "cp": vote([f["cp"] for f in group if "cp" in f]),
         "max_hp": vote([f["hp"]["max"] for f in group if "hp" in f]),
         "species": vote([f["species"] for f in group if "species" in f]),
+        "lucky": _lucky(group),
         "moves": _moves(group),
     }
+
+
+def _lucky(group: list[dict]) -> dict:
+    """True when the label is seen; False only when enough detail frames lack it."""
+    detail = sum(1 for frame in group if frame.get("screen") == "DETAIL" or frame.get("lucky"))
+    votes = sum(1 for frame in group if frame.get("lucky"))
+    if votes >= 2 or (votes == 1 and detail <= 2):
+        value = True
+    elif votes == 0 and detail >= 3:
+        value = False
+    else:
+        value = None
+    return {"value": value, "votes": votes, "observations": detail}
 
 
 def _moves(group: list[dict]) -> dict:

@@ -47,6 +47,19 @@ def _local(stamp: str | None) -> datetime | None:
     return datetime.fromisoformat(stamp).astimezone().replace(tzinfo=None)
 
 
+NAME_MARKS = (("shiny", "*"), ("lucky", "♣"), ("background", "◆"))
+
+
+def _flag(value) -> str | None:
+    return "예" if value is True else "아니요" if value is False else None
+
+
+def _display_name(entry: dict) -> str | None:
+    if not entry.get("species"):
+        return None
+    return entry["species"] + "".join(mark for key, mark in NAME_MARKS if entry.get(key) is True)
+
+
 def _move_label(move: dict | None) -> str | None:
     return f"{move['name']}{move.get('marker') or ''}" if move else None
 
@@ -91,8 +104,9 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
         charged = moves.get("charged") or []
         candidates = level.get("candidates") or []
         pokemon_rows.append([
-            entry["code"], entry.get("species"), entry.get("dex"),
+            entry["code"], _display_name(entry), entry.get("species"), entry.get("dex"),
             entry.get("form_name") or (entry.get("form") if entry.get("form") != "Normal" else None),
+            _flag(entry.get("shiny")), _flag(entry.get("lucky")), _flag(entry.get("background")),
             entry.get("cp"), entry.get("max_hp"),
             level.get("value"), LEVEL_STATUS.get(level.get("status"), level.get("status")),
             ", ".join(f"{value:g}" for value in candidates) if len(candidates) > 1 else None,
@@ -113,12 +127,13 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
                                   move.get("move_id"), move.get("marker") or None, move.get("reason")])
 
     _sheet(workbook, "포켓몬 목록",
-           ["관리 번호", "종", "도감 번호", "모습", "CP", "최대 HP", "레벨", "레벨 판정", "레벨 후보",
+           ["관리 번호", "이름 표시", "종", "도감 번호", "모습", "이로치", "반짝반짝", "배경",
+            "CP", "최대 HP", "레벨", "레벨 판정", "레벨 후보",
             "IV 공격", "IV 방어", "IV HP", "IV %", "노말어택", "스페셜어택 1", "스페셜어택 2",
             "처음 저장", "마지막 갱신", "revision", "UUID"],
            pokemon_rows,
-           [10, 14, 9, 10, 8, 8, 7, 14, 12, 8, 8, 8, 8, 16, 18, 18, 17, 17, 9, 38],
-           {13: "0%"}, first=True)
+           [10, 16, 14, 9, 10, 8, 9, 7, 8, 8, 7, 14, 12, 8, 8, 8, 8, 16, 18, 18, 17, 17, 9, 38],
+           {17: "0%"}, first=True)
     _sheet(workbook, "기술", ["관리 번호", "종", "슬롯", "기술", "기술 ID", "표시", "표시 이유"],
            move_rows, [10, 14, 10, 18, 24, 6, 48])
     notes = [
@@ -130,6 +145,7 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
         ["* 표시", "대단한 기술머신으로만 배울 수 있는 기술(커뮤니티 데이·이벤트·예전 기술), "
                    "그림자 포켓몬·정화된 포켓몬 전용 기술, 지금 배울 수 있는 기술 목록에 없는 기술"],
         ["모습", "기본 모습은 빈칸입니다. 알로라의 모습 등 다른 모습만 적습니다."],
+        ["이름 표시", "종 이름 뒤에 이로치 *, 반짝반짝 포켓몬 ♣, 배경 ◆를 붙입니다."],
         ["빈칸", "읽지 못했거나 확인하지 않은 값입니다. 0으로 채우지 않습니다."],
         ["포함하지 않은 정보", "영상, 프레임, 파일 이름, 촬영 시각 등 촬영 정보"],
         ["주의", "이 파일은 보기용입니다. 박스 복원에는 별도 백업을 사용하세요."],
