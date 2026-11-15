@@ -9,6 +9,7 @@ from pathlib import Path
 
 import uvicorn
 
+from . import ocr
 from .api import create_app
 from .store import JobStore
 from .video import run_next
@@ -24,6 +25,8 @@ def main() -> None:
     worker = commands.add_parser("worker")
     worker.add_argument("--once", action="store_true")
     commands.add_parser("doctor")
+    analyze = commands.add_parser("analyze", help="실험: 추출한 스캔에 OCR·IV 판독 실행")
+    analyze.add_argument("scan_id")
     args = parser.parse_args()
     if args.command == "serve":
         host = "127.0.0.1"
@@ -45,11 +48,24 @@ def main() -> None:
         print(f"OS: {platform.platform()}")
         print(f"Python: {platform.python_version()}")
         print(f"FFmpeg: {ffmpeg or '없음 (Mac: brew install ffmpeg)'}")
+        print(f"Swift (Apple Vision OCR): {ocr.swiftc() or '없음 (Mac: xcode-select --install)'}")
         print(f"Data directory: {args.data_dir.resolve()}")
         raise SystemExit(0 if ffmpeg else 1)
     if not ffmpeg:
-        worker.error("FFmpeg가 필요합니다. doctor 명령으로 환경을 확인하세요.")
+        parser.error("FFmpeg가 필요합니다. doctor 명령으로 환경을 확인하세요.")
     store = JobStore(args.data_dir)
+    if args.command == "analyze":
+        from .analysis import RESULT, analyze_scan, summary_lines
+        if not ocr.swiftc():
+            analyze.error("Apple Vision OCR에는 Xcode 명령줄 도구가 설치된 Mac이 필요합니다.")
+        try:
+            result = analyze_scan(store, args.scan_id, ffmpeg)
+        except ValueError as error:
+            analyze.error(str(error))
+        print("\n".join(summary_lines(result)))
+        print(f"후보 결과: {store.root / args.scan_id / RESULT}")
+        print("자동 판독 후보입니다. 원본 프레임과 비교한 뒤 사용하세요.")
+        return
     print(f"Watching {store.root}", flush=True)
     try:
         while True:
