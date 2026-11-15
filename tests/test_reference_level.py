@@ -1,4 +1,5 @@
 import json
+import math
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,23 +8,47 @@ from boxscan import level, reference
 from boxscan.reference import BaseStats, Reference
 
 # Synthetic values only. Real game data is downloaded locally and never used in tests.
-LEVELS = [1 + step / 2 for step in range(0, 99)]  # 1.0 ... 50.0
-CPM = {value: round(0.1 + 0.014 * (value - 1), 6) for value in LEVELS}
+WHOLE = [round(0.1 + 0.014 * (level - 1), 6) for level in range(1, 81)]  # game master lists 80
 IV = {"attack": 10, "defense": 5, "stamina": 12}
 
 
-def synthetic_files(count=120, cpm=CPM) -> dict[str, bytes]:
-    stats = [{"pokemon_id": n, "pokemon_name": f"Mon{n}", "form": "Normal",
-              "base_attack": 100 + n, "base_defense": 90 + n, "base_stamina": 120 + n}
-             for n in range(1, count + 1)]
-    stats.append({"pokemon_id": 2, "pokemon_name": "Mon2", "form": "Other",
-                  "base_attack": 300, "base_defense": 50, "base_stamina": 60})
+def master(count: int, whole=WHOLE) -> list[dict]:
+    items = [{"templateId": "PLAYER_LEVEL_SETTINGS",
+              "data": {"playerLevel": {"cpMultiplier": whole}}},
+             {"templateId": "ITEM_POTION", "data": {"itemSettings": {}}}]
+
+    def pokemon(number, suffix, form, attack, defense, stamina):
+        template = f"V{number:04d}_POKEMON_MON{number}{suffix}"
+        settings = {"pokemonId": f"MON{number}",
+                    "stats": {"baseAttack": attack, "baseDefense": defense, "baseStamina": stamina}}
+        if form:
+            settings["form"] = form
+        return {"templateId": template, "data": {"pokemonSettings": settings}}
+
+    for n in range(1, count + 1):
+        items.append(pokemon(n, "", None, 100 + n, 90 + n, 120 + n))
+        items.append(pokemon(n, "_NORMAL", f"MON{n}_NORMAL", 100 + n, 90 + n, 120 + n))
+    items.append(pokemon(2, "_COSTUME_2020", "MON2_COSTUME_2020", 102, 92, 122))  # same stats
+    items.append(pokemon(2, "_OTHER", "MON2_OTHER", 300, 50, 60))
+    return items
+
+
+def synthetic_files(count=120, whole=WHOLE, check=None) -> dict[str, bytes]:
+    game_master = master(count, whole)
+    if check is None:
+        derived = reference._master_cpm(game_master)
+        check = {level: value for level, value in derived.items() if level <= 45}
+    fallback = [{"pokemon_id": count + 1, "pokemon_name": "Late", "form": "Normal",
+                 "base_attack": 150, "base_defense": 150, "base_stamina": 150},
+                {"pokemon_id": 1, "pokemon_name": "Mon1", "form": "Normal",
+                 "base_attack": 1, "base_defense": 1, "base_stamina": 1}]  # ignored: game master wins
     names = ["pokemon_species_id,local_language_id,name,genus"]
-    names += [f"{n},3,테스트몬{n},종류" for n in range(1, count + 1)]
-    names += [f"{n},9,Mon{n},Kind" for n in range(1, count + 1)]
+    names += [f"{n},3,테스트몬{n},종류" for n in range(1, count + 2)]
+    names += [f"{n},9,Mon{n},Kind" for n in range(1, count + 2)]
     return {
-        "pokemon_stats.json": json.dumps(stats).encode(),
-        "cp_multiplier.json": json.dumps([{"level": k, "multiplier": v} for k, v in cpm.items()]).encode(),
+        "game_master.json": json.dumps(game_master).encode(),
+        "pokemon_stats.json": json.dumps(fallback).encode(),
+        "cp_multiplier.json": json.dumps([{"level": k, "multiplier": v} for k, v in check.items()]).encode(),
         "pokemon_species_names.csv": "\n".join(names).encode(),
     }
 
@@ -32,20 +57,35 @@ def synthetic_reference() -> Reference:
     return reference.parse(synthetic_files(), "test", "2026-01-01T00:00:00+00:00")
 
 
+CPM = synthetic_reference().cpm
+
+
 class ReferenceTests(unittest.TestCase):
-    def test_parse_maps_korean_names_to_forms(self):
+    def test_parse_combines_sources_and_merges_identical_forms(self):
         data = synthetic_reference()
         self.assertEqual([f.form for f in data.forms("테스트몬2")], ["Normal", "Other"])
+        self.assertEqual(data.forms("테스트몬1")[0].attack, 101)
+        self.assertEqual(data.forms("테스트몬121")[0].name, "Late")
+        self.assertEqual(data.notes["stats_from_pogoapi"], 1)
         self.assertEqual(data.forms("Mon2"), [])
         self.assertEqual(data.forms("없는몬"), [])
 
-    def test_parse_rejects_incomplete_data(self):
+    def test_half_levels_follow_the_game_rules(self):
+        low, high = WHOLE[0], WHOLE[1]
+        self.assertAlmostEqual(CPM[1.5], math.sqrt((low ** 2 + high ** 2) / 2))
+        low, high = WHOLE[39], WHOLE[40]
+        self.assertAlmostEqual(CPM[40.5], (low + high) / 2)
+        self.assertEqual(max(CPM), 55.0)
+
+    def test_parse_rejects_incomplete_or_inconsistent_data(self):
         with self.assertRaises(ValueError):
             reference.parse(synthetic_files(count=5))
         with self.assertRaises(ValueError):
-            reference.parse(synthetic_files(cpm={1.0: 0.1}))
+            reference.parse(synthetic_files(whole=WHOLE[:30]))
+        with self.assertRaises(ValueError):
+            reference.parse(synthetic_files(check={level: 0.5 for level in range(1, 41)}))
         broken = synthetic_files()
-        broken["pokemon_stats.json"] = b'[{"pokemon_id": 1}]'
+        broken["game_master.json"] = b'[{"templateId": "PLAYER_LEVEL_SETTINGS"}]'
         with self.assertRaises(ValueError):
             reference.parse(broken)
 
@@ -58,7 +98,10 @@ class ReferenceTests(unittest.TestCase):
             folder = reference.root(data_dir) / manifest["version"]
             self.assertEqual(json.loads((folder / "manifest.json").read_text())["version"],
                              manifest["version"])
-            self.assertEqual(len(manifest["files"]["pokemon_stats.json"]["sha256"]), 64)
+            self.assertEqual(len(manifest["files"]["game_master.json"]["sha256"]), 64)
+            loaded = reference.load(data_dir)
+            self.assertEqual(loaded.cpm, CPM)
+            self.assertEqual(loaded.forms("테스트몬2"), synthetic_reference().forms("테스트몬2"))
             with self.assertRaises(ValueError):
                 reference.update(data_dir, fetch=lambda url: b"not json")
             self.assertEqual(reference.load(data_dir).version, manifest["version"])
@@ -81,6 +124,14 @@ class LevelTests(unittest.TestCase):
         self.assertEqual(result["levels"], [27.5])
         self.assertEqual(result["form"], "Normal")
         self.assertTrue(result["used_max_hp"])
+
+    def test_levels_above_45_and_up_to_50_are_checked(self):
+        for at_level in (45.5, 47.5, 50.0):
+            with self.subTest(level=at_level):
+                cp, hp = self.observed(at_level)
+                result = level.estimate(self.data, "테스트몬40", IV, cp, hp)
+                self.assertEqual(result["levels"], [at_level])
+        self.assertEqual(result["max_level_checked"], 50.0)
 
     def test_wrong_iv_is_reported_as_conflict(self):
         cp, hp = self.observed(27.5)
