@@ -166,6 +166,7 @@ def _analysis(folder: Path, scan_id: str, status: str | None, error: str | None)
             "cp": individual["cp"],
             "max_hp": individual["max_hp"],
             "appraisals": [appraisal(w) for w in individual.get("appraisals", [])],
+            "level": individual.get("level"),
         })
     summary["unassigned"] = len(result.get("unassigned_appraisals", []))
     summary["recognizer"] = result.get("recognizer")

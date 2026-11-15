@@ -63,3 +63,7 @@ dd span { color: #3f5953; font-size: .75rem; }
     linear-gradient(90deg, transparent calc(33.33% - 1px), white calc(33.33% - 1px) 33.33%, transparent 33.33% calc(66.66% - 1px), white calc(66.66% - 1px) 66.66%, transparent 66.66%),
     #cf6676; }
 .iv.empty p { color: #7a3d14; margin: 0; font-size: .9rem; }
+.level { margin-top: .8rem; padding-top: .7rem; border-top: 1px solid #e3eae6; }
+.level h4 { margin: 0; font-size: 1.05rem; }
+.level p { margin: .2rem 0 0; color: #3f5953; font-size: .85rem; }
+.level.warn h4 { color: #8a3b12; }

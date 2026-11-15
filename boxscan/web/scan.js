@@ -72,6 +72,41 @@ function ivBlock(appraisals) {
   );
 }
 
+const MISSING = { species: "종", iv: "IV", cp: "CP" };
+
+function levelBlock(level) {
+  if (!level) return null;
+  const levels = level.levels.map(value => String(value));
+  const max = level.max_level_checked;
+  const views = {
+    RESOLVED_BY_CONSTRAINTS: [`레벨 ${levels[0]}`,
+      `CP·${level.used_max_hp ? "최대 HP·" : ""}IV로 하나로 정해졌습니다.`],
+    AMBIGUOUS: [`레벨 ${levels.join(" 또는 ")}`,
+      "같은 값이 나오는 레벨이 여러 개입니다. 다음 강화 비용으로 좁힐 예정입니다."],
+    CONFLICT: ["맞는 레벨 없음",
+      `레벨 ${max} 이하에서 이 CP·HP·IV 조합이 나오지 않습니다. 판독 값을 원본과 비교하세요. ` +
+      `메가진화·베스트 파트너·특수 폼이거나 레벨 ${max}보다 높을 수도 있습니다.`],
+    MISSING_INPUT: ["레벨 계산 안 함",
+      `${(level.missing ?? []).map(key => MISSING[key] ?? key).join(", ")} 값이 없습니다.`],
+    NO_REFERENCE: ["레벨 계산 안 함",
+      "기준 데이터가 없습니다. Mac에서 reference update 명령을 실행하세요."],
+    UNKNOWN_SPECIES: ["레벨 계산 안 함", "기준 데이터에서 이 종 이름을 찾지 못했습니다."],
+  };
+  const [title, detail] = views[level.status] ?? ["레벨", level.status];
+  const notes = [detail];
+  if (level.form && level.form !== "Normal") notes.push(`${level.form} 폼 종족값 기준입니다.`);
+  const others = Object.entries(level.other_forms ?? {});
+  if (others.length) {
+    notes.push("다른 폼으로도 맞습니다: " +
+      others.map(([form, found]) => `${form} 레벨 ${found.join("/")}`).join(", "));
+  }
+  const warn = ["CONFLICT", "AMBIGUOUS"].includes(level.status);
+  return element("div", { class: warn ? "level warn" : "level" },
+    element("h4", {}, title),
+    element("p", {}, notes.join(" ")),
+  );
+}
+
 function card(individual, index) {
   const species = individual.species?.value ?? "종 미확인";
   const appraisal = individual.appraisals.filter(item => item.evidence).at(-1);
@@ -94,6 +129,7 @@ function card(individual, index) {
       reading("종(조사 문구)", individual.species),
     ),
     ivBlock(individual.appraisals),
+    levelBlock(individual.level),
     element("p", { class: "muted" }, `프레임 ${first}–${last} · ${start}–${end}초`),
   );
 }

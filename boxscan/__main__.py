@@ -10,7 +10,7 @@ from pathlib import Path
 
 import uvicorn
 
-from . import ocr
+from . import ocr, reference
 from .api import create_app
 from .store import JobStore
 from .video import record_analysis, run_next
@@ -28,6 +28,8 @@ def main() -> None:
     commands.add_parser("doctor")
     analyze = commands.add_parser("analyze", help="실험: 추출한 스캔에 OCR·IV 판독 실행")
     analyze.add_argument("scan_id")
+    ref = commands.add_parser("reference", help="레벨 계산용 기준 데이터 관리")
+    ref.add_argument("action", choices=["update", "show"])
     args = parser.parse_args()
     if args.command == "serve":
         host = "127.0.0.1"
@@ -42,6 +44,24 @@ def main() -> None:
                 serve.error("접속 암호는 12자 이상이어야 합니다.")
         uvicorn.run(create_app(args.data_dir, host, password), host=host, port=args.port,
                     proxy_headers=False)
+        return
+
+    if args.command == "reference":
+        if args.action == "update":
+            print("기준 데이터를 내려받습니다:")
+            for name, url in reference.SOURCES.items():
+                print(f"  {name} ← {url}")
+            try:
+                manifest = reference.update(args.data_dir)
+            except (OSError, ValueError) as error:
+                raise SystemExit(f"갱신하지 못했습니다. 기존 데이터를 유지합니다: {error}")
+            print(f"버전 {manifest['version']} ({manifest['fetched_at']})")
+        data = reference.load(args.data_dir)
+        if data is None:
+            raise SystemExit("기준 데이터가 없습니다. `reference update`를 실행하세요.")
+        print(f"현재 버전 {data.version} · 받은 시각 {data.fetched_at} · "
+              f"포켓몬 {len(data.stats)}종 · 한국어 이름 {len(data.korean_names)}개 · "
+              f"최대 레벨 {max(data.cpm)}")
         return
 
     ffmpeg = shutil.which(os.environ.get("BOXSCAN_FFMPEG", "ffmpeg"))

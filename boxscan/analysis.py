@@ -9,7 +9,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import ivbars, ocr
+from . import ivbars, level, ocr, reference
 from .fields import group_frames, parse_frame
 from .store import JobStore
 from .video import MAX_VIDEO_SECONDS, SAMPLE_SECONDS
@@ -45,12 +45,23 @@ def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None =
         target = _overlapping(individuals, window)
         if target is not None:
             target.setdefault("appraisals", []).append(window)
+    data = _reference(store.root)
+    for individual in individuals:
+        ivs = [a["iv"] for a in individual.get("appraisals", []) if a["iv"]]
+        individual["level"] = level.estimate(
+            data,
+            (individual["species"] or {}).get("value"),
+            ivs[-1] if ivs else None,
+            (individual["cp"] or {}).get("value"),
+            (individual["max_hp"] or {}).get("value"),
+        )
     result = {
         "scan_id": scan_id,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "recognizer": {
             "ocr": ocr.recognizer_version(),
             "iv": f"ivbars/{ivbars.REFERENCE_WIDTH}px-{ivbars.FPS}fps",
+            "reference": data.version if data else None,
         },
         "status": "candidate",
         "individuals": individuals,
@@ -63,6 +74,14 @@ def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None =
     partial.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     partial.replace(output)
     return result
+
+
+def _reference(data_dir: Path) -> reference.Reference | None:
+    try:
+        return reference.load(data_dir)
+    except (OSError, ValueError, KeyError) as error:
+        print(f"기준 데이터를 읽지 못해 레벨 계산을 건너뜁니다: {error}", flush=True)
+        return None
 
 
 def make_analyzer(store: JobStore, ffmpeg: str) -> tuple[Callable[[str], dict] | None, str]:
@@ -104,8 +123,11 @@ def summary_lines(result: dict) -> list[str]:
         ivs = [a["iv"] for a in individual.get("appraisals", []) if a["iv"]]
         iv = "/".join(str(v) for v in ivs[-1].values()) if ivs else "-"
         frames = individual["frames"]
+        found = individual.get("level") or {}
+        levels = ", ".join(f"{value:g}" for value in found.get("levels", []))
         lines.append(
             f"{number}. 프레임 {frames[0]}-{frames[-1]} · 종 {show('species')} · CP {show('cp')} "
-            f"· 최대 HP {show('max_hp')} · IV 공/방/체 {iv}"
+            f"· 최대 HP {show('max_hp')} · IV 공/방/체 {iv} · 레벨 {levels or '-'} "
+            f"({found.get('status', '-')})"
         )
     return lines
