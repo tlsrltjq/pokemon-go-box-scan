@@ -2,23 +2,43 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+# queued → running → done | failed; skipped when this Mac cannot run the local OCR.
+ANALYSIS_STATUSES = {"queued", "running", "done", "failed", "skipped"}
+
 
 class JobStore:
     def __init__(self, root: Path):
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.database = self.root / "scans.sqlite3"
-        with closing(sqlite3.connect(self.database)) as db, db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS scans (
-                    id TEXT PRIMARY KEY,
-                    filename TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK (
-                        status IN ('queued', 'running', 'ready', 'failed')
-                    ),
-                    error TEXT
-                )
-            """)
+        # The server and the worker may start at the same time. Take the write lock before
+        # inspecting the schema so only one of them adds the new columns.
+        with closing(sqlite3.connect(self.database, isolation_level=None, timeout=10)) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                self._migrate(db)
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+            db.execute("COMMIT")
+
+    @staticmethod
+    def _migrate(db: sqlite3.Connection) -> None:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS scans (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (
+                    status IN ('queued', 'running', 'ready', 'failed')
+                ),
+                error TEXT
+            )
+        """)
+        # Added after the first release; existing local databases gain the columns here.
+        columns = {row[1] for row in db.execute("PRAGMA table_info(scans)")}
+        for column in ("analysis_status", "analysis_error"):
+            if column not in columns:
+                db.execute(f"ALTER TABLE scans ADD COLUMN {column} TEXT")
 
     def create(self, scan_id: str, filename: str) -> None:
         with closing(sqlite3.connect(self.database)) as db, db:
@@ -50,6 +70,15 @@ class JobStore:
             db.execute(
                 "UPDATE scans SET status = ?, error = ? WHERE id = ? AND status = 'running'",
                 ("failed" if error else "ready", error, scan_id),
+            )
+
+    def set_analysis(self, scan_id: str, status: str, error: str | None = None) -> None:
+        if status not in ANALYSIS_STATUSES:
+            raise ValueError(status)
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute(
+                "UPDATE scans SET analysis_status = ?, analysis_error = ? WHERE id = ?",
+                (status, error, scan_id),
             )
 
     def frames(self, scan_id: str) -> list[Path]:

@@ -1,6 +1,7 @@
 import argparse
 import getpass
 import ipaddress
+import json
 import os
 import platform
 import shutil
@@ -12,7 +13,7 @@ import uvicorn
 from . import ocr
 from .api import create_app
 from .store import JobStore
-from .video import run_next
+from .video import record_analysis, run_next
 
 
 def main() -> None:
@@ -58,18 +59,25 @@ def main() -> None:
         from .analysis import RESULT, analyze_scan, summary_lines
         if not ocr.swiftc():
             analyze.error("Apple Vision OCR에는 Xcode 명령줄 도구가 설치된 Mac이 필요합니다.")
-        try:
-            result = analyze_scan(store, args.scan_id, ffmpeg)
-        except ValueError as error:
-            analyze.error(str(error))
+        job = store.get(args.scan_id)
+        if job is None or job["status"] != "ready":
+            analyze.error("프레임 추출을 마친 스캔만 분석할 수 있습니다.")
+        record_analysis(store, args.scan_id, lambda scan_id: analyze_scan(store, scan_id, ffmpeg))
+        job = store.get(args.scan_id)
+        if job["analysis_status"] != "done":
+            raise SystemExit(job["analysis_error"])
+        result = json.loads((store.root / args.scan_id / RESULT).read_text(encoding="utf-8"))
         print("\n".join(summary_lines(result)))
         print(f"후보 결과: {store.root / args.scan_id / RESULT}")
         print("자동 판독 후보입니다. 원본 프레임과 비교한 뒤 사용하세요.")
         return
+    from .analysis import make_analyzer
+    analyzer, message = make_analyzer(store, ffmpeg)
     print(f"Watching {store.root}", flush=True)
+    print(message, flush=True)
     try:
         while True:
-            processed = run_next(store, ffmpeg)
+            processed = run_next(store, ffmpeg, analyzer)
             if args.once:
                 break
             if not processed:

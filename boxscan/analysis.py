@@ -5,6 +5,7 @@ It does not create or change approved box entries.
 """
 import json
 import subprocess
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,7 +35,9 @@ def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None =
             **parse_frame(lines),
             "ocr": lines,
         })
-    individuals = group_frames(frames)
+    # Drop stretches without any reading (for example transitions or other screens).
+    individuals = [group for group in group_frames(frames)
+                   if group["cp"] or group["max_hp"] or group["species"]]
     windows = ivbars.read_video(ffmpeg, folder / "source", MAX_VIDEO_SECONDS)
     for number, window in enumerate(windows, 1):
         if window["evidence_seconds"] is not None:
@@ -60,6 +63,17 @@ def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None =
     partial.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     partial.replace(output)
     return result
+
+
+def make_analyzer(store: JobStore, ffmpeg: str) -> tuple[Callable[[str], dict] | None, str]:
+    """Prepare the worker's analyzer once. Returns (analyzer or None, message for the log)."""
+    if ocr.swiftc() is None:
+        return None, "Apple Vision OCR을 사용할 수 없어 프레임 추출만 실행합니다."
+    try:
+        tool = ocr.build_tool()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        return None, f"Apple Vision 도구를 준비하지 못해 프레임 추출만 실행합니다: {error}"
+    return (lambda scan_id: analyze_scan(store, scan_id, ffmpeg, tool)), "OCR·IV 분석을 함께 실행합니다."
 
 
 def _overlapping(individuals: list[dict], window: dict) -> dict | None:

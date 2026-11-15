@@ -32,3 +32,34 @@ section { margin-top: 2rem; }
 figure { margin: 0; }
 figure img { display: block; width: 100%; border-radius: .55rem; }
 figcaption { margin-top: .3rem; color: #3f5953; font-size: .9rem; }
+#status { margin-top: 1.5rem; font-weight: 600; }
+.muted { color: #3f5953; font-size: .9rem; margin: .5rem 0 0; }
+#individuals { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 1rem; }
+.card { background: white; border: 1px solid #c9d5d0; border-radius: 1rem; padding: 1rem 1.1rem 1.1rem; }
+.card header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: 0; }
+.card h3 { margin: 0; font-size: 1.25rem; }
+.badge { flex: none; font-size: .78rem; font-weight: 700; color: #7a3d14; background: #fbe8d9; border-radius: 99rem; padding: .15rem .6rem; }
+.evidence { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem; margin: .8rem 0; }
+.evidence img { display: block; width: 100%; aspect-ratio: 332 / 360; object-fit: cover; object-position: top; border-radius: .5rem; border: 1px solid #dfe7e3; }
+.evidence a:nth-child(2) img { object-position: bottom; }
+dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin: 0 0 .8rem; }
+dt { color: #3f5953; font-size: .8rem; }
+dd { margin: 0; }
+dd strong { display: block; font-size: 1.1rem; }
+dd span { color: #3f5953; font-size: .75rem; }
+.iv h4 { margin: 0 0 .35rem; font-size: 1rem; }
+.iv-row { display: grid; grid-template-columns: 2.4rem 1fr 1.6rem; align-items: center; gap: .5rem; margin: .25rem 0; }
+.iv-label { font-size: .85rem; color: #3f5953; }
+.iv-row strong { text-align: right; }
+.bar {
+  --fill: 0%;
+  height: .6rem;
+  border-radius: 99rem;
+  background:
+    linear-gradient(90deg, transparent calc(33.33% - 1px), white calc(33.33% - 1px) 33.33%, transparent 33.33% calc(66.66% - 1px), white calc(66.66% - 1px) 66.66%, transparent 66.66%),
+    linear-gradient(90deg, #e0973f var(--fill), #dfe2e0 var(--fill));
+}
+.bar.full { background:
+    linear-gradient(90deg, transparent calc(33.33% - 1px), white calc(33.33% - 1px) 33.33%, transparent 33.33% calc(66.66% - 1px), white calc(66.66% - 1px) 66.66%, transparent 66.66%),
+    #cf6676; }
+.iv.empty p { color: #7a3d14; margin: 0; font-size: .9rem; }

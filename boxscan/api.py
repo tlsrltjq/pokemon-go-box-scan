@@ -1,5 +1,6 @@
 import base64
 import binascii
+import json
 import secrets
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -9,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
+from .analysis import RESULT
 from .store import JobStore
 from .video import MAX_FRAMES
 
@@ -108,7 +110,17 @@ def create_app(
                 f"/api/scans/{scan_id}/frames/{int(path.stem.split('-')[-1])}"
                 for path in store.frames(str(scan_id))
             ]
+        job["analysis"] = _analysis(store.root / str(scan_id), str(scan_id),
+                                    job.pop("analysis_status"), job.pop("analysis_error"))
         return job
+
+    @app.get("/api/scans/{scan_id}/evidence/{number}")
+    def evidence(scan_id: UUID, number: int):
+        job = store.get(str(scan_id))
+        path = store.root / str(scan_id) / f"iv-{number:02d}.jpg"
+        if not job or job["status"] != "ready" or not 1 <= number <= 99 or not path.is_file():
+            raise HTTPException(404, "판독 근거 프레임을 찾을 수 없습니다.")
+        return FileResponse(path, media_type="image/jpeg")
 
     @app.get("/api/scans/{scan_id}/frames/{number}")
     def frame(scan_id: UUID, number: int):
@@ -119,3 +131,42 @@ def create_app(
         return FileResponse(path, media_type="image/jpeg")
 
     return app
+
+
+def _analysis(folder: Path, scan_id: str, status: str | None, error: str | None) -> dict:
+    """Summarize analysis.json for the browser. Raw OCR text stays on disk."""
+    result_path = folder / RESULT
+    if status is None:  # scans from before automatic analysis
+        status = "done" if result_path.is_file() else "none"
+    summary = {"status": status, "error": error, "individuals": [], "unassigned": 0}
+    if status != "done" or not result_path.is_file():
+        return summary
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    readings = {frame["frame"]: frame for frame in result.get("frames", [])}
+    base = f"/api/scans/{scan_id}"
+
+    def appraisal(window: dict) -> dict:
+        evidence = window.get("evidence")
+        return {
+            "iv": window["iv"],
+            "stable_seconds": window["stable_seconds"],
+            "start_seconds": window["start_seconds"],
+            "evidence": f"{base}/evidence/{int(evidence[3:5])}" if evidence else None,
+        }
+
+    for individual in result["individuals"]:
+        frames = individual["frames"]
+        detail = next((n for n in frames if "cp" in readings.get(n, {})
+                       and "hp" in readings.get(n, {})), frames[0])
+        summary["individuals"].append({
+            "frames": [frames[0], frames[-1]],
+            "seconds": [individual["start_seconds"], individual["end_seconds"]],
+            "detail_frame": f"{base}/frames/{detail}",
+            "species": individual["species"],
+            "cp": individual["cp"],
+            "max_hp": individual["max_hp"],
+            "appraisals": [appraisal(w) for w in individual.get("appraisals", [])],
+        })
+    summary["unassigned"] = len(result.get("unassigned_appraisals", []))
+    summary["recognizer"] = result.get("recognizer")
+    return summary

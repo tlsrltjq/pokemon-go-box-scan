@@ -1,5 +1,7 @@
 import subprocess
-from pathlib import Path
+import sys
+import traceback
+from collections.abc import Callable
 
 from .store import JobStore
 
@@ -8,7 +10,16 @@ SAMPLE_SECONDS = 1
 MAX_FRAMES = MAX_VIDEO_SECONDS // SAMPLE_SECONDS
 
 
-def run_next(store: JobStore, ffmpeg: str) -> bool:
+Analyzer = Callable[[str], object]
+SKIPPED = "이 Mac에서 Apple Vision OCR을 실행할 수 없어 분석을 건너뛰었습니다. doctor 명령으로 swiftc를 확인하세요."
+
+
+def run_next(store: JobStore, ffmpeg: str, analyzer: Analyzer | None = None) -> bool:
+    """Extract review frames for the next queued scan, then analyze them if possible.
+
+    The scan becomes ready as soon as the frames exist, so the browser can show them while
+    the slower OCR and IV analysis continues. An analysis failure never hides the frames.
+    """
     scan_id = store.claim()
     if scan_id is None:
         return False
@@ -44,4 +55,20 @@ def run_next(store: JobStore, ffmpeg: str) -> bool:
         for path in store.frames(scan_id):
             path.unlink(missing_ok=True)
     store.finish(scan_id, error)
+    if not error:
+        record_analysis(store, scan_id, analyzer)
     return True
+
+
+def record_analysis(store: JobStore, scan_id: str, analyzer: Analyzer | None) -> None:
+    if analyzer is None:
+        store.set_analysis(scan_id, "skipped", SKIPPED)
+        return
+    store.set_analysis(scan_id, "running")
+    try:
+        analyzer(scan_id)
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        store.set_analysis(scan_id, "failed", "분석 중 오류가 발생했습니다. 워커 로그를 확인하세요.")
+    else:
+        store.set_analysis(scan_id, "done")
