@@ -66,14 +66,19 @@ def parse_moves(lines: list[dict], width: int | None) -> list[dict]:
                      if 0 < centre(other) - centre(line) <= max(30, h * 2.2)]
             boost_kind = ("mega" if any("메가" in text for text in below)
                           else "weather" if any("날씨" in text for text in below) else None)
-        rows.append({"name": name, "power": int(powers[0][1]),
+        # "마지막일침+" with "메가진화 보너스" below: an additional charged attack that only a mega
+        # evolved Pokémon has. It is not one of the regular move slots.
+        plus = bool(re.search(r"[가-힣]\s*\+", line["text"])) or boost_kind == "mega"
+        rows.append({"name": name, "power": int(powers[0][1]), "mega_plus": plus,
                      "boost": int(powers[0][2]) if powers[0][2] else None, "boost_kind": boost_kind,
                      "y": centre(line), "height": h})
     rows.sort(key=lambda row: row["y"])
     for index, row in enumerate(rows):
         # The fast move sits right under the tab header; a first row further down means the
         # fast move was not read in this frame.
-        if header is None:
+        if row.pop("mega_plus"):
+            row["role"] = "mega_plus"
+        elif header is None:
             row["role"] = "unknown"
         elif index == 0 and row["y"] - header <= 3 * row["height"]:
             row["role"] = "fast"
@@ -277,6 +282,7 @@ def _moves(group: list[dict]) -> dict:
         found = [row for row in rows if row["name"] == name]
         return vote([(row["power"], row["boost"], row["boost_kind"]) for row in found])["value"]
 
-    for item in ([fast] if fast else []) + charged:
+    mega_plus = vote([row["name"] for row in rows if row["role"] == "mega_plus"])
+    for item in ([fast] if fast else []) + charged + ([mega_plus] if mega_plus else []):
         item["power"], item["boost"], item["boost_kind"] = power(item["value"])
-    return {"fast": fast, "charged": charged, "source": "ocr"}
+    return {"fast": fast, "charged": charged, "mega_plus": mega_plus, "source": "ocr"}

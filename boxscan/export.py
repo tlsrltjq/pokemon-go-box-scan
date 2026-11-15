@@ -62,10 +62,6 @@ def _fusion(entry: dict) -> str | None:
                      else (f.get("target_name") or f["target"]) for f in entry.get("fusion") or []) or None
 
 
-def _flag(value) -> str | None:
-    return "예" if value is True else "아니요" if value is False else None
-
-
 def _display_name(entry: dict) -> str | None:
     if not entry.get("species"):
         return None
@@ -116,9 +112,8 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
         charged = moves.get("charged") or []
         candidates = level.get("candidates") or []
         pokemon_rows.append([
-            entry["code"], _display_name(entry), entry.get("species"), entry.get("dex"),
+            entry["code"], _display_name(entry), entry.get("dex"),
             entry.get("form_name") or (entry.get("form") if entry.get("form") != "Normal" else None),
-            _flag(entry.get("shiny")), _flag(entry.get("lucky")), _flag(entry.get("background")),
             MAX_NAMES.get(entry.get("max_state")),
             entry.get("cp"), entry.get("max_hp"),
             "계산값" if entry.get("cp_source") == "calculated" else None,
@@ -134,27 +129,32 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
             _local(entry.get("created_at")), _local(entry.get("updated_at")),
             entry["revision"], entry["id"],
         ])
+        name = _display_name(entry)
         slots = [("노말어택", moves.get("fast"))] + [
             (f"스페셜어택 {index}" if len(charged) > 1 else "스페셜어택", move)
             for index, move in enumerate(charged, 1)]
         for slot, move in slots:
             if move:
-                move_rows.append([entry["code"], entry.get("species"), slot, move.get("name"),
+                move_rows.append([entry["code"], name, slot, move.get("name"),
                                   move.get("move_id"), move.get("marker") or None, move.get("reason")])
+        if entry.get("mega_move"):
+            mega = entry["mega_move"]
+            move_rows.append([entry["code"], name, "메가진화 추가 스페셜어택", mega.get("name"),
+                              mega.get("move_id"), None, mega.get("reason")])
         for move in entry.get("max_moves") or []:
             state = f"레벨 {move['level']}" if move.get("level") else "잠김" if move.get("locked") else None
-            move_rows.append([entry["code"], entry.get("species"), "맥스기술", move["name"], None, None, state])
+            move_rows.append([entry["code"], name, "맥스기술", move["name"], None, None, state])
 
     _sheet(workbook, "포켓몬 목록",
-           ["관리 번호", "이름 표시", "종", "도감 번호", "모습", "이로치", "반짝반짝", "배경", "다이맥스",
+           ["관리 번호", "종", "도감 번호", "모습", "다이맥스",
             "CP", "최대 HP", "CP 출처", "레벨", "레벨 판정", "레벨 후보",
             "IV 공격", "IV 방어", "IV HP", "IV %", "노말어택", "스페셜어택 1", "스페셜어택 2",
             "맥스기술", "합체·모습 변화", "메가진화 중 CP",
             "처음 저장", "마지막 갱신", "revision", "UUID"],
            pokemon_rows,
-           [10, 16, 14, 9, 10, 8, 9, 7, 10, 8, 8, 9, 7, 14, 12, 8, 8, 8, 8, 16, 18, 18,
+           [10, 16, 9, 10, 10, 8, 8, 9, 7, 14, 12, 8, 8, 8, 8, 16, 18, 18,
             34, 30, 12, 17, 17, 9, 38],
-           {19: "0%"}, first=True)
+           {16: "0%"}, first=True)
     _sheet(workbook, "기술", ["관리 번호", "종", "슬롯", "기술", "기술 ID", "표시", "표시 이유"],
            move_rows, [10, 14, 10, 18, 24, 6, 48])
     notes = [
@@ -166,7 +166,7 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
         ["* 표시", "대단한 기술머신으로만 배울 수 있는 기술(커뮤니티 데이·이벤트·예전 기술), "
                    "그림자 포켓몬·정화된 포켓몬 전용 기술, 지금 배울 수 있는 기술 목록에 없는 기술"],
         ["모습", "기본 모습은 빈칸입니다. 알로라의 모습 등 다른 모습만 적습니다."],
-        ["이름 표시", "종 이름 뒤에 이로치 *, 반짝반짝 포켓몬 ♣, 배경 ◆를 붙입니다."],
+        ["종", "이름 뒤 기호: * 이로치, ♣ 반짝반짝 포켓몬, ◆ 배경 (예: 마기라스*♣◆)"],
         ["CP 출처", "계산값: 메가진화 중에 찍은 개체라 화면 CP 대신 레벨로 계산한 기본 모습 CP입니다."],
         ["빈칸", "읽지 못했거나 확인하지 않은 값입니다. 0으로 채우지 않습니다."],
         ["포함하지 않은 정보", "영상, 프레임, 파일 이름, 촬영 시각 등 촬영 정보"],

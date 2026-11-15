@@ -124,6 +124,8 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual((values["species"], values["cp_source"]), ("테스트몬5", "calculated"))
         self.assertEqual(values["cp"], level.cp(regular, IV, multiplier))
         self.assertEqual(values["temp_observation"]["cp"], raw["cp"])
+        with_plus = review.normalize({**raw, "mega_move": "기술12번+"}, self.data)
+        self.assertEqual((with_plus["mega_move"]["name"], with_plus["moves"]["charged"]), ("기술12번+", []))
         unresolved = review.normalize({**raw, "cp": 11}, self.data)
         self.assertIsNone(unresolved["cp"])  # never store a mega CP as the regular CP
         self.assertEqual(unresolved["temp_observation"]["cp"], 11)

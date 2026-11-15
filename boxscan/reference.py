@@ -38,6 +38,8 @@ DERIVED = "reference.json"
 KOREAN = "3"  # PokeAPI local_language_id for Korean
 ENGLISH = "9"
 MOVE_TEMPLATE = re.compile(r"^V(\d{4})_MOVE_(.+)$")
+# Additional charged attacks of mega evolutions ("마지막일침+"), one template per species and state.
+MEGA_MOVE_TEMPLATE = re.compile(r"^VM_MOVE_TEMP_EVOLUTION_(MEGA(?:_X|_Y)?|PRIMAL)_V(\d{4})_POKEMON_")
 MOVE_ALIASES = {"VICEGRIP": "VISEGRIP"}  # renamed in the main series
 LEARNSET_KEYS = {"quickMoves": "fast", "cinematicMoves": "charged",
                  "eliteQuickMove": "elite_fast", "eliteCinematicMove": "elite_charged"}
@@ -75,6 +77,8 @@ class Reference:
     # {"target": form, "type": "FUSE" | "CHANGE", "component": Korean name | None,
     #  "existing_moves": [...], "replacement_moves": [...]}
     form_changes: dict[int, list[dict]] | None = None
+    # pokemon id -> {"MEGA" | "MEGA_X" | ...: {"move_id", "base_move", "name", "power"}}
+    mega_moves: dict[int, dict[str, dict]] | None = None
 
     def forms(self, korean_name: str) -> list[BaseStats]:
         pokemon_id = self.korean_names.get(korean_name.strip())
@@ -134,8 +138,28 @@ def parse(files: dict[str, bytes], version: str = "", fetched_at: str = "") -> R
             change["component"] = korean_by_id.get(enum_ids.get(component)) if component else None
             for key in ("existing_moves", "replacement_moves"):
                 change[key] = sorted({numbers.get(m, m) for m in change[key]})
+    mega_moves = _mega_moves(master, move_names)
+    notes["mega_moves"] = sum(len(v) for v in mega_moves.values())
     return Reference(version, fetched_at, stats, cpm, names, notes, move_names, move_power, learnsets,
-                     temp_stats, form_changes)
+                     temp_stats, form_changes, mega_moves)
+
+
+def _mega_moves(master: list[dict], move_names: dict[str, str]) -> dict[int, dict[str, dict]]:
+    """Map VM_MOVE_TEMP_EVOLUTION_* templates to species. The Korean name is the base move's name
+    (from the animation name, e.g. fell_stinger -> FELL_STINGER -> 마지막일침) followed by "+"."""
+    found: dict[int, dict[str, dict]] = {}
+    for item in master:
+        match = MEGA_MOVE_TEMPLATE.match(item["templateId"])
+        settings = item.get("data", {}).get("moveSettings")
+        if not match or settings is None:
+            continue
+        base = str(settings.get("vfxName") or "").upper()
+        name = move_names.get(base) or move_names.get(f"{base}_FAST")
+        found.setdefault(int(match[2]), {})[match[1]] = {
+            "move_id": item["templateId"], "base_move": base or None,
+            "name": f"{name}+" if name else None, "power": float(settings.get("power", 0.0)),
+        }
+    return found
 
 
 def _form_code(name: str, form: str | None) -> str:
@@ -320,6 +344,7 @@ def to_json(reference: Reference) -> dict:
         "temp_stats": [{"kind": kind, **asdict(stats)}
                        for forms in (reference.temp_stats or {}).values() for kind, stats in forms.items()],
         "form_changes": {str(k): v for k, v in (reference.form_changes or {}).items()},
+        "mega_moves": {str(k): v for k, v in (reference.mega_moves or {}).items()},
     }
 
 
@@ -335,7 +360,8 @@ def from_json(data: dict) -> Reference:
                      {float(level): value for level, value in data["cpm"].items()},
                      data["korean_names"], data.get("notes"), data.get("move_names"),
                      data.get("move_power"), data.get("learnsets"), temp_stats,
-                     {int(k): v for k, v in (data.get("form_changes") or {}).items()})
+                     {int(k): v for k, v in (data.get("form_changes") or {}).items()},
+                     {int(k): v for k, v in (data.get("mega_moves") or {}).items()})
 
 
 def rebuild(data_dir: Path) -> dict:

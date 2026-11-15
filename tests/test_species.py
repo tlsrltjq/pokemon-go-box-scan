@@ -43,6 +43,17 @@ class SpeciesNameTests(unittest.TestCase):
         self.assertEqual(species.fusion_options(data, "큐레무"), [
             {"type": "FUSE", "component": "제크로무", "target": "Black", "target_name": "블랙큐레무"}])
 
+    def test_mega_plus_move_matches_species_data_or_stays_as_read(self):
+        data = synthetic_reference()
+        moves = {"fast": None, "charged": [], "mega_plus": {"value": "기술12번", "votes": 1, "observations": 1, "power": 140}}
+        annotate(moves, data, "테스트몬5")
+        plus = moves["mega_plus"]
+        self.assertEqual((plus["name"], plus["temp_evolution"], plus["reference_power"]), ("기술12번+", "MEGA", 140.0))
+        unknown = {"fast": None, "charged": [], "mega_plus": {"value": "새기술", "votes": 1, "observations": 1, "power": 140}}
+        annotate(unknown, data, "테스트몬5")
+        self.assertEqual((unknown["mega_plus"]["name"], unknown["mega_plus"]["match"]), ("새기술+", "none"))
+        self.assertIn("아직 없는", unknown["mega_plus"]["reason"])
+
     def test_fusion_replacement_move_gets_a_fusion_reason(self):
         data = synthetic_reference()
         moves = {"fast": None, "charged": [{"value": "기술20번", "votes": 1, "observations": 1, "power": 20}]}

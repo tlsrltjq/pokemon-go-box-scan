@@ -116,6 +116,22 @@ function moveRow(label, move) {
   );
 }
 
+function megaPlusRow(move) {
+  const boost = move.boost ? ` +${move.boost}` : "";
+  const notes = [`${move.observations}장 중 ${move.votes}장`];
+  if (move.boost) notes.push(`+${move.boost}은 메가진화 보너스(메가 레벨)`);
+  if (move.reference_power != null && move.power != null && move.reference_power !== move.power) {
+    notes.push(`기준 데이터 위력 ${move.reference_power}와 다름`);
+  }
+  return element("div", { class: "move" },
+    element("span", { class: "move-role" }, "메가진화 추가"),
+    element("strong", {}, move.name ?? `${move.value}+`),
+    element("span", { class: "move-power" }, move.power == null ? "" : `위력 ${move.power}${boost}`),
+    element("span", { class: "move-reason neutral" }, move.reason ?? "메가진화 중에만 쓰는 추가 스페셜어택"),
+    element("span", { class: "move-votes" }, notes.join(" · ")),
+  );
+}
+
 function movesBlock(moves) {
   if (!moves || (!moves.fast && !moves.charged.length)) {
     return element("div", { class: "moves empty" }, element("h4", {}, "기술"),
@@ -125,6 +141,7 @@ function movesBlock(moves) {
   if (moves.fast) rows.push(moveRow("노말어택", moves.fast));
   else rows.push(element("p", { class: "muted" }, "노말어택을 읽지 못했습니다."));
   moves.charged.forEach((move, i) => rows.push(moveRow(moves.charged.length > 1 ? `스페셜어택 ${i + 1}` : "스페셜어택", move)));
+  if (moves.mega_plus) rows.push(megaPlusRow(moves.mega_plus));
   const boosted = [moves.fast, ...moves.charged].some(move => move?.boost && move.boost_kind !== "mega");
   return element("div", { class: "moves" },
     element("h4", {}, "기술"),
@@ -159,6 +176,7 @@ function candidateValues(individual) {
     max_state: individual.max_state?.value ?? "",
     temp_evolution: individual.state?.temp_evolution ?? null,
     max_moves: individual.max_moves ?? [],
+    mega_move: individual.moves?.mega_plus ? (individual.moves.mega_plus.name ?? `${individual.moves.mega_plus.value}+`) : null,
   };
 }
 
@@ -218,6 +236,7 @@ function readForm(formNode) {
     max_state: formNode.elements.max_state.value || null,
     temp_evolution: formNode.dataset.temp || null,
     max_moves: JSON.parse(formNode.dataset.maxMoves || "[]"),
+    mega_move: formNode.dataset.megaMove || null,
   };
 }
 
@@ -286,12 +305,14 @@ function saveBlock(individual, index) {
         element("option", { value: "" }, "해당 없음"),
         element("option", { value: "dynamax", selected: values.max_state === "dynamax" ? "" : null }, "다이맥스"),
         element("option", { value: "gigantamax", selected: values.max_state === "gigantamax" ? "" : null }, "거다이맥스"))),
-    element("p", { class: "muted" }, "반짝반짝 포켓몬·배경·다이맥스는 화면 글자로 미리 채웁니다. 이로치는 직접 체크하세요." +
+    element("p", { class: "muted" }, "반짝반짝 포켓몬·배경·다이맥스는 화면 글자로 미리 채웁니다. 이로치는 직접 체크하면 이름 뒤에 *가 붙습니다." +
+      (values.mega_move ? ` 메가진화 추가 스페셜어택 ${values.mega_move}도 함께 저장합니다.` : "") +
       (values.temp_evolution ? " 메가진화 중이라 기본 모습 CP·최대 HP는 레벨로 계산해 저장하고, 화면 값은 메가진화 기록으로 따로 남깁니다." : "")),
     element("label", { class: "field wide" }, element("span", {}, "저장 방식"), target),
     compare, message, submit);
   if (values.temp_evolution) formNode.dataset.temp = values.temp_evolution;
   formNode.dataset.maxMoves = JSON.stringify(values.max_moves);
+  if (values.mega_move) formNode.dataset.megaMove = values.mega_move;
   const existing = new Map();
   let acknowledge = false;
 

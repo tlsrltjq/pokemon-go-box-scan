@@ -90,6 +90,7 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
     if max_state is not None and max_state not in MAX_STATES:
         raise ValueError("다이맥스 값이 올바르지 않습니다.")
     max_moves = _max_moves(raw.get("max_moves"))
+    mega_move_name = _text(raw.get("mega_move"), "메가진화 추가 스페셜어택")
     temp = raw.get("temp_evolution") or None
     if temp is not None and temp not in species_names.TEMP_NAMES:
         raise ValueError("메가진화 값이 올바르지 않습니다.")
@@ -105,6 +106,8 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
         "fast": {"value": fast, "votes": 1, "observations": 1, "power": None} if fast else None,
         "charged": [{"value": name, "votes": 1, "observations": 1, "power": None} for name in charged],
     }
+    if mega_move_name:
+        voted["mega_plus"] = {"value": mega_move_name, "votes": 1, "observations": 1, "power": None}
     move_dictionary.annotate(voted, reference, species, estimated.get("form"))
 
     def move(item):
@@ -150,6 +153,9 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
             "fast": move(voted["fast"]) if voted["fast"] else None,
             "charged": [move(item) for item in voted["charged"]],
         },
+        # Additional charged attack while mega evolved; not one of the regular slots.
+        "mega_move": ({key: voted["mega_plus"].get(key) for key in ("name", "move_id", "reason")}
+                      if voted.get("mega_plus") else None),
     }
 
 

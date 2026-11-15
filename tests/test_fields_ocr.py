@@ -123,7 +123,10 @@ class SpecialStateParserTests(unittest.TestCase):
         moves = parse_frame(lines, 332)["moves"]
         self.assertEqual([(m["name"], m["role"], m["boost"], m["boost_kind"]) for m in moves], [
             ("벌레먹기", "fast", None, None), ("시저크로스", "charged", None, None),
-            ("마지막일침", "charged", 14, "mega")])
+            ("마지막일침", "mega_plus", 14, "mega")])
+        (group,) = group_frames([{"frame": 1, "seconds": 0, "duration": 1, "cp": 700, "moves": moves}])
+        self.assertEqual([m["value"] for m in group["moves"]["charged"]], ["시저크로스"])
+        self.assertEqual((group["moves"]["mega_plus"]["value"], group["moves"]["mega_plus"]["boost"]), ("마지막일침", 14))
 
     def test_max_state_moves_background_and_mega_timer(self):
         lines = boxed(("CP1714", 120, 10, 60, 20), ("드래곤 / 강철", 140, 200, 60, 12),

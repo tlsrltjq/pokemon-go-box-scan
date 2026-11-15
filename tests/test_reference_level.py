@@ -51,6 +51,8 @@ def master(count: int, whole=WHOLE) -> list[dict]:
             "moveReassignment": {"cinematicMoves": [{"existingMoves": ["MOVE_11"], "replacementMoves": ["MOVE_20"]}]}}
     items[-1 - 2 * (count - 6) - 2]["data"]["pokemonSettings"]["formChange"] = [fuse, dict(fuse)]
     items.append(pokemon(6, "_FUSED", "MON6_FUSED", 200, 180, 160))
+    items.append({"templateId": "VM_MOVE_TEMP_EVOLUTION_MEGA_V0005_POKEMON_MON5",
+                  "data": {"moveSettings": {"movementId": 900, "power": 140.0, "vfxName": "move_12"}}})
     return items
 
 
@@ -113,6 +115,9 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual((change["target"], change["type"], change["component"], change["stats"]),
                          ("Fused", "FUSE", "테스트몬7", [200, 180, 160]))
         self.assertEqual((change["existing_moves"], change["replacement_moves"]), (["MOVE_11"], ["MOVE_20"]))
+        self.assertEqual(data.mega_moves[5]["MEGA"], {
+            "move_id": "VM_MOVE_TEMP_EVOLUTION_MEGA_V0005_POKEMON_MON5", "base_move": "MOVE_12",
+            "name": "기술12번+", "power": 140.0})
 
     def test_half_levels_follow_the_game_rules(self):
         low, high = WHOLE[0], WHOLE[1]

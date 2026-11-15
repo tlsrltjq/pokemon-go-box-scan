@@ -73,6 +73,7 @@ function entryCard(entry) {
     element("div", { class: "moves" },
       moveLine("노말어택", moves.fast),
       ...(moves.charged ?? []).map((move, i, all) => moveLine(all.length > 1 ? `스페셜어택 ${i + 1}` : "스페셜어택", move))),
+    entry.mega_move ? element("p", {}, element("span", { class: "muted" }, "메가진화 추가 "), entry.mega_move.name) : null,
     entry.max_moves?.length ? element("p", {}, element("span", { class: "muted" }, "맥스기술 "),
       entry.max_moves.map(m => `${m.name} ${m.level ? `레벨 ${m.level}` : m.locked ? "잠김" : ""}`.trim()).join(", ")) : null,
     element("p", { class: "muted" }, `마지막 갱신 ${new Date(entry.updated_at).toLocaleString("ko-KR")}`),

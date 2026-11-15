@@ -51,7 +51,25 @@ def annotate(moves: dict, reference: Reference | None, species: str | None,
     moves["dictionary"] = "species" if learnset else "all"
     for item in items:
         item.update(_match(item, reference, learnset, species))
+    if moves.get("mega_plus"):
+        moves["mega_plus"].update(_mega_plus(moves["mega_plus"], reference, species))
     return moves
+
+
+MEGA_PLUS_REASON = "메가진화 중에만 쓰는 추가 스페셜어택 (메가 레벨에 따라 위력이 오름)"
+
+
+def _mega_plus(item: dict, reference: Reference, species: str | None) -> dict:
+    """Match a "+" move to the species' mega move data; keep the screen name when data is missing."""
+    pokemon_id = reference.korean_names.get(species.strip()) if species else None
+    options = (reference.mega_moves or {}).get(pokemon_id, {})
+    text = item["value"].rstrip("+")
+    for kind, data in options.items():
+        if data.get("name") and data["name"].rstrip("+") == text:
+            return {"name": data["name"], "move_id": data["move_id"], "temp_evolution": kind,
+                    "reference_power": data["power"], "match": "exact", "reason": MEGA_PLUS_REASON}
+    return {"name": f"{text}+", "move_id": None, "match": "none",
+            "reason": MEGA_PLUS_REASON + " · 기준 데이터(게임 마스터)에 아직 없는 기술"}
 
 
 def _learnset(reference: Reference, species: str | None, form: str | None) -> dict[str, list[str]]:
