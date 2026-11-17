@@ -85,6 +85,7 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
     # are checked by the user because they are not read from video yet.
     shiny = _flag(raw.get("shiny"), "이로치")
     lucky = _flag(raw.get("lucky"), "반짝반짝 포켓몬")
+    shadow = _flag(raw.get("shadow"), "그림자")
     background = _flag(raw.get("background"), "배경")
     max_state = raw.get("max_state") or None
     if max_state is not None and max_state not in MAX_STATES:
@@ -139,6 +140,7 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
         "fusion": species_names.fusion_options(reference, species) or None,
         "shiny": shiny,
         "lucky": lucky,
+        "shadow": shadow,
         "background": background,
         "cp": cp,
         "max_hp": max_hp,

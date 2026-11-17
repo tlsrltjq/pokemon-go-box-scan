@@ -110,6 +110,10 @@ class MoveParserTests(unittest.TestCase):
 
 
 class SpecialStateParserTests(unittest.TestCase):
+    def test_purify_button_is_a_shadow_hint(self):
+        self.assertTrue(parse_frame(lines("CP1000", "정화", "강화"))["purify_button"])
+        self.assertNotIn("purify_button", parse_frame(lines("CP1000", "정화된 포켓몬", "강화")))
+
     def test_kyurem_fusion_buttons_are_not_moves(self):
         lines = list(MOVE_SCREEN) + boxed(("합체", 63, 300, 24, 12), ("30", 290, 300, 16, 12))
         self.assertNotIn("합체", [m["name"] for m in parse_frame(lines, 332)["moves"]])

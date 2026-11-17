@@ -12,6 +12,9 @@ SPECIES = re.compile(r"이\s+(\S.*?)\s*\((?:을|를)\)(?:를|을)?\s*잡은")
 APPRAISAL_LABELS = {"공격", "방어", "방에", "HP", "Hp"}
 # "반짝반짝 포켓몬" under the name marks a lucky Pokémon; OCR sometimes garbles the last word.
 LUCKY = re.compile(r"반짝반짝\s*포")
+# Shadow Pokémon have a "정화" (purify) button on the detail screen. Not yet checked against a
+# real shadow recording, so it only prefills the checkbox.
+PURIFY_BUTTON = re.compile(r"^정화$")
 # Detail screen labels under the type row, and the special background note on the moves screen.
 DYNAMAX = re.compile(r"^다이맥스$")
 GIGANTAMAX = re.compile(r"^거다이맥")
@@ -132,6 +135,8 @@ def parse_frame(lines: list[dict], width: int | None = None) -> dict:
             found["species"] = match[1]
         if LUCKY.search(text):
             found["lucky"] = True
+        if PURIFY_BUTTON.match(text):
+            found["purify_button"] = True
         if GIGANTAMAX.match(text):
             found["max_state"] = "gigantamax"
         elif DYNAMAX.match(text) and found.get("max_state") != "gigantamax":
@@ -209,6 +214,7 @@ def _summarize(group: list[dict]) -> dict:
         "max_hp": vote([f["hp"]["max"] for f in group if "hp" in f]),
         "species": vote([f["species"] for f in group if "species" in f]),
         "lucky": _lucky(group),
+        "purify_button": _seen(group, "purify_button"),
         "moves": _moves(group),
         "max_state": _max_state(group),
         "max_moves": _max_moves(group),

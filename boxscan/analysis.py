@@ -95,6 +95,14 @@ def apply_reference(individual: dict, data: reference.Reference | None) -> None:
         temp, resolved["form"])
     move_dictionary.annotate(individual["moves"], data, resolved["species"],
                              resolved["form"] or individual["level"].get("form"))
+    # Shadow candidate: the purify button, or the shadow-only charged attack (화풀이).
+    moves = individual["moves"]
+    evidence = []
+    if (individual.get("purify_button") or {}).get("votes"):
+        evidence.append("정화 버튼")
+    if any(m and m.get("marker_kind") == "shadow" for m in [moves.get("fast"), *moves.get("charged", [])]):
+        evidence.append("그림자 전용 기술")
+    individual["shadow"] = {"value": True if evidence else None, "evidence": evidence}
 
 
 def _reference(data_dir: Path) -> reference.Reference | None:

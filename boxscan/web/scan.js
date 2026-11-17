@@ -168,6 +168,8 @@ function candidateValues(individual) {
     charged_moves: (moves.charged ?? []).map(name),
     lucky: individual.lucky?.value === true,
     background: individual.background?.value === true,
+    shadow: individual.shadow?.value === true,
+    shadow_evidence: individual.shadow?.evidence ?? [],
     max_state: individual.max_state?.value ?? "",
     temp_evolution: individual.state?.temp_evolution ?? null,
     max_moves: individual.max_moves ?? [],
@@ -187,6 +189,7 @@ function stateBadges(individual) {
     badges.push([`${state.temp_name ?? "메가진화"} 중${name}`, "mega"]);
   }
   if (individual.background?.value) badges.push(["배경 ◆", "plain"]);
+  if (individual.shadow?.value) badges.push(["그림자 (확인 필요)", "shadow"]);
   if (state.fusion?.length) badges.push([state.fusion.some(f => f.type === "FUSE") ? "합체 가능" : "모습 변화 가능", "plain"]);
   if (!badges.length) return null;
   return element("div", { class: "badges" }, ...badges.map(([text, kind]) => element("span", { class: `badge state ${kind}` }, text)));
@@ -223,6 +226,7 @@ function readForm(formNode) {
     shiny: formNode.elements.shiny.checked,
     lucky: formNode.elements.lucky.checked,
     background: formNode.elements.background.checked,
+    shadow: formNode.elements.shadow.checked,
     max_state: formNode.elements.max_state.value || null,
     temp_evolution: formNode.dataset.temp || null,
     max_moves: JSON.parse(formNode.dataset.maxMoves || "[]"),
@@ -244,6 +248,7 @@ function previewValues(values, individual) {
     shiny: values.shiny,
     lucky: values.lucky,
     background: values.background,
+    shadow: values.shadow,
     max_state: values.max_state,
     cp: number(values.cp),
     max_hp: number(values.max_hp),
@@ -289,7 +294,10 @@ function saveBlock(individual, index) {
     element("div", { class: "checks" },
       checkbox("이로치 *", "shiny", false),
       checkbox("반짝반짝 포켓몬 ♣", "lucky", values.lucky),
-      checkbox("배경 ◆", "background", values.background)),
+      checkbox("배경 ◆", "background", values.background),
+      checkbox("그림자", "shadow", values.shadow)),
+    values.shadow_evidence.length ? element("p", { class: "muted" },
+      `그림자로 보이는 단서: ${values.shadow_evidence.join(", ")}. 실제 그림자 개체 영상으로는 아직 확인하지 않은 판독이라 직접 확인하세요.`) : null,
     element("label", { class: "field wide" }, element("span", {}, "다이맥스"),
       element("select", { name: "max_state" },
         element("option", { value: "" }, "해당 없음"),
@@ -311,6 +319,7 @@ function saveBlock(individual, index) {
     const entry = existing.get(target.value);
     formNode.elements.shiny.checked = entry?.shiny === true;
     formNode.elements.background.checked = entry?.background === true || values.background;
+    formNode.elements.shadow.checked = entry?.shadow === true || values.shadow;
     formNode.elements.lucky.checked = entry?.lucky === true || values.lucky;
     formNode.elements.max_state.value = values.max_state || entry?.max_state || "";
   };

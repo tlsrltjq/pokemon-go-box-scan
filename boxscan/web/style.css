@@ -127,3 +127,4 @@ a.button { display: inline-flex; align-items: center; min-height: 2.75rem; paddi
 .warn-text { color: #8a3b12; font-weight: 600; }
 .assumptions { padding-left: 1.2rem; font-size: .9rem; color: #3f5953; }
 #scenarios { background: white; border-radius: .6rem; }
+.badge.state.shadow { color: #f3e8ff; background: #4b2a6b; }

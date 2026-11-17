@@ -156,9 +156,15 @@ def attacker(reference: Reference, entry: dict) -> tuple[Fighter | None, str | N
     # Fused or other forms show their own name (블랙큐레무), like the box does.
     name = (entry.get("form_name") if form != "Normal" and entry.get("form_name") else species) + "".join(
         mark for key, mark in (("shiny", "*"), ("lucky", "♣"), ("background", "◆")) if entry.get(key) is True)
-    return Fighter(entry["id"], name, (stats.attack + iv["attack"]) * cpm, (stats.defense + iv["defense"]) * cpm,
-                   int(hp), _types(reference, stats.pokemon_id, form), fast, charged,
-                   {"code": entry.get("code"), "revision": entry.get("revision"), "level": lvl, "iv": iv}), None
+    attack, defense = (stats.attack + iv["attack"]) * cpm, (stats.defense + iv["defense"]) * cpm
+    shadow = entry.get("shadow") is True
+    if shadow:  # shadow bonus from the game's battle settings: more attack, less defense
+        attack *= reference.battle.get("shadowPokemonAttackBonusMultiplier", 1.2)
+        defense *= reference.battle.get("shadowPokemonDefenseBonusMultiplier", 0.8333333)
+        name += " (그림자)"
+    return Fighter(entry["id"], name, attack, defense, int(hp), _types(reference, stats.pokemon_id, form), fast,
+                   charged, {"code": entry.get("code"), "revision": entry.get("revision"), "level": lvl, "iv": iv,
+                             "shadow": shadow}), None
 
 
 def damage(reference: Reference, move: Move, attack: float, defense: float, attacker_types: list[str],
@@ -364,6 +370,17 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
                    shortfall=len(candidates) < PARTY_SIZE)
 
 
+def compare_weather(reference: Reference, entries: list[dict], species: str, tier: str, **options) -> list[dict]:
+    """The same request in every weather, strongest first, with the party each weather picks."""
+    rows = []
+    for weather, name in WEATHER_NAMES.items():
+        result = recommend(reference, entries, species, tier, **{**options, "weather": weather})
+        if result["result"]:
+            rows.append({"weather": weather, "name": name, "damage": result["result"]["damage"],
+                         "party": [member["name"] for member in result["party"]]})
+    return sorted(rows, key=lambda row: row["damage"]["avg"], reverse=True)
+
+
 def _theoretical_dps(reference: Reference, fighter: Fighter, choice: int, foe: dict, weather: str) -> float:
     """Damage per second of one fast/charged cycle against the boss, ignoring the boss's attacks."""
     weather_types = (reference.weather or {}).get(weather, []) if weather else []
@@ -429,7 +446,9 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
             "보스 기술을 정하지 않으면 가능한 조합을 모두 계산해 같은 비중으로 평균합니다. 실제 확률이 아닙니다.",
             ("재입장 없음: 6마리가 모두 기절하면 내 피해는 거기서 끝납니다." if rejoin_delay_s is None
              else f"재입장: 모두 기절하면 {rejoin_delay_s:g}초 뒤 같은 파티로 다시 들어갑니다(사용자가 정한 값)."),
-            "친구·파티 파워·다른 트레이너의 메가 보너스는 넣지 않았습니다. 그림자 개체 여부는 박스에 없어 일반 개체로 계산합니다.",
+            "날씨 보너스는 내 기술과 보스 기술 모두에 같은 규칙(해당 타입 ×1.2)으로 적용합니다.",
+            "박스에 그림자로 표시한 개체는 공격 ×1.2, 방어 ×0.833(게임 전투 설정 값)을 적용합니다. 표시하지 않은 개체는 일반 개체로 계산합니다.",
+            "친구·파티 파워·다른 트레이너의 메가 보너스는 넣지 않았습니다.",
             f"보스 HP·CP 배율은 {RULESET['version']} 표를 쓰고, 제한 시간 기본값은 앱이 정한 시나리오 값입니다.",
         ],
     }

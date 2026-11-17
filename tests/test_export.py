@@ -15,7 +15,7 @@ from test_reference_level import synthetic_reference
 
 FULL = {
     "species": "하나몬", "dex": 1, "form": "Normal", "cp": 1500, "max_hp": 120,
-    "shiny": True, "lucky": False, "background": True, "max_state": "gigantamax",
+    "shiny": True, "lucky": False, "background": True, "shadow": True, "max_state": "gigantamax",
     "max_moves": [{"name": "거다이감쇠", "level": 1, "locked": False}, {"name": "다이월", "level": None, "locked": True}],
     "fusion": [{"type": "FUSE", "component": "두나몬", "target": "Fused", "target_name": "합체몬"}],
     "cp_source": "calculated", "temp_observation": {"temp_evolution": "MEGA", "cp": 2100},
@@ -49,7 +49,7 @@ class ExportTests(unittest.TestCase):
         sheet = book["포켓몬 목록"]
         headers = [cell.value for cell in sheet[1]]
         row = dict(zip(headers, [cell.value for cell in sheet[2]]))
-        self.assertEqual((row["관리 번호"], row["종"], row["CP"], row["레벨"]), ("PK0001", "하나몬*◆", 1500, 30.5))
+        self.assertEqual((row["관리 번호"], row["종"], row["CP"], row["레벨"]), ("PK0001", "하나몬*◆ (그림자)", 1500, 30.5))
         for removed in ("이름 표시", "이로치", "반짝반짝", "배경"):
             self.assertNotIn(removed, headers)
         self.assertEqual((row["IV 공격"], row["IV 방어"], row["IV HP"]), (15, 12, 15))
@@ -76,7 +76,7 @@ class ExportTests(unittest.TestCase):
         book, _ = self.workbook(synthetic_reference())
         moves = [[cell.value for cell in row] for row in book["기술"].iter_rows(min_row=2)]
         self.assertEqual(moves[0][2], "노말어택")
-        self.assertEqual(moves[1], ["PK0001", "하나몬*◆", "스페셜어택 1", "기술13번", "MOVE_13", "*", "레거시"])
+        self.assertEqual(moves[1], ["PK0001", "하나몬*◆ (그림자)", "스페셜어택 1", "기술13번", "MOVE_13", "*", "레거시"])
         self.assertEqual(len(moves), 6)
         self.assertEqual(moves[3][2:4], ["메가진화 추가 스페셜어택", "기술99번+"])
         self.assertEqual(moves[4][2:4] + [moves[4][6]], ["맥스기술", "거다이감쇠", "레벨 1"])

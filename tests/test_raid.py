@@ -116,6 +116,38 @@ class SimulationTests(unittest.TestCase):
         self.assertGreater(again["damage"], once["damage"])
 
 
+class ShadowAndWeatherTests(unittest.TestCase):
+    def setUp(self):
+        self.data = reference()
+        self.foe = raid.boss(self.data, "불꽃몬", "5")
+
+    def test_shadow_attacks_harder_and_takes_more_damage(self):
+        plain, _ = raid.attacker(self.data, entry(1, "물몬"))
+        shadow, _ = raid.attacker(self.data, entry(2, "물몬", shadow=True))
+        self.assertAlmostEqual(shadow.attack, plain.attack * 1.2)
+        self.assertAlmostEqual(shadow.defense, plain.defense * 0.8333333)
+        self.assertTrue(shadow.name.endswith("(그림자)"))
+        args = (self.foe, raid._move(self.data, "EMBER_FAST"), raid._move(self.data, "BLAST"), 300)
+        normal_run = raid.simulate(self.data, [(plain, 0)], *args)
+        shadow_run = raid.simulate(self.data, [(shadow, 0)], *args)
+        normal_dps = normal_run["damage"] / normal_run["members"][0]["time_ms"]
+        shadow_dps = shadow_run["damage"] / shadow_run["members"][0]["time_ms"]
+        self.assertGreater(shadow_dps, normal_dps)
+        self.assertLess(shadow_run["members"][0]["time_ms"], normal_run["members"][0]["time_ms"])
+
+    def test_weather_boosts_both_sides_and_every_weather_is_compared(self):
+        fighter, _ = raid.attacker(self.data, entry(1, "물몬"))
+        ember = raid._move(self.data, "EMBER_FAST")
+        sunny = raid.damage(self.data, ember, self.foe["attack"], fighter.defense, ["FIRE"], ["WATER"], ["FIRE"])
+        plain = raid.damage(self.data, ember, self.foe["attack"], fighter.defense, ["FIRE"], ["WATER"], [])
+        self.assertGreaterEqual(sunny, plain)  # the boss's fire attack is boosted in clear weather
+        rows = raid.compare_weather(self.data, [entry(1, "물몬"), entry(2, "풀몬", fast="LEAF_FAST", charged=("BLADE",))],
+                                    "불꽃몬", "5")
+        self.assertEqual(len(rows), len(raid.WEATHER_NAMES))
+        self.assertEqual(rows[0]["weather"], "RAINY")  # water attackers gain the most in rain
+        self.assertEqual([r["damage"]["avg"] for r in rows], sorted((r["damage"]["avg"] for r in rows), reverse=True))
+
+
 class RecommendTests(unittest.TestCase):
     def setUp(self):
         self.data = reference()
@@ -205,6 +237,9 @@ class RaidApiTests(unittest.TestCase):
         self.assertEqual([p["name"] for p in body["party"]], ["물몬", "풀몬"])
         self.assertEqual(body["party"][0]["code"], "PK0001")
         self.assertEqual(body["weather_name"], "비")
+        compared = self.client.post("/api/raid/recommend", json={"species": "불꽃몬", "tier": "3",
+                                                                 "compare_weather": True}).json()
+        self.assertEqual(len(compared["weather_comparison"]), 8)
         self.assertEqual(self.client.post("/api/raid/recommend", json={"species": ""}).status_code, 422)
         self.assertEqual(self.client.post("/api/raid/recommend", json={"species": "불꽃몬", "include_mega": True}).status_code, 422)
         self.assertEqual(self.client.get("/raid").status_code, 200)

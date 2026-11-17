@@ -9,7 +9,8 @@ function nameMarks(values) {
 
 function displayName(values) {
   const form = values?.form_name ? ` (${values.form_name})` : "";
-  return `${values?.species ?? "종 미확인"}${nameMarks(values)}${form}`;
+  const shadow = values?.shadow === true ? " (그림자)" : "";
+  return `${values?.species ?? "종 미확인"}${nameMarks(values)}${form}${shadow}`;
 }
 
 // 제크로무와 / …과: choose 와 or 과 by the last syllable's final consonant.
@@ -100,6 +101,7 @@ const BOX_FIELDS = [
   ["shiny", "이로치 *", formatFlag],
   ["lucky", "반짝반짝 ♣", formatFlag],
   ["background", "배경 ◆", formatFlag],
+  ["shadow", "그림자", formatFlag],
   ["max_state", "다이맥스", formatMaxState],
   ["cp", "CP", value => value ?? "-"],
   ["max_hp", "최대 HP", value => value ?? "-"],

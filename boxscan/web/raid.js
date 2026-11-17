@@ -47,7 +47,8 @@ function memberCard(member) {
     element("header", {},
       element("h3", {}, `${member.order}. ${member.name}`),
       element("span", { class: "badge neutral" }, member.code ?? "")),
-    element("p", { class: "muted" }, `레벨 ${member.level} · IV ${formatIv(member.iv)} · ${member.types.join("/")}`),
+    element("p", { class: "muted" }, `레벨 ${member.level} · IV ${formatIv(member.iv)} · ${member.types.join("/")}` +
+      (member.shadow ? " · 그림자 보정 공격 ×1.2·방어 ×0.833" : "")),
     element("div", { class: "move" }, element("span", { class: "move-role" }, "노말어택"), element("strong", {}, member.fast)),
     element("div", { class: "move" }, element("span", { class: "move-role" }, "스페셜어택"),
       element("strong", {}, member.charged), element("span", { class: "move-power" }, member.charged_type ?? "")),
@@ -84,6 +85,14 @@ function showResult(result) {
     ].filter(Boolean));
   }
   document.querySelector("#party").replaceChildren(...result.party.map(memberCard));
+  const weather = document.querySelector("#weather-compare");
+  weather.replaceChildren(...(result.weather_comparison ? [
+    element("h3", {}, "날씨별 비교"),
+    element("table", { class: "compare" },
+      element("thead", {}, element("tr", {}, ...["날씨", "예상 피해", "추천 파티"].map(t => element("th", { scope: "col" }, t)))),
+      element("tbody", {}, ...result.weather_comparison.map(row => element("tr",
+        { class: row.weather === result.weather ? "changed" : null },
+        element("td", {}, row.name), element("td", {}, range(row.damage)), element("td", {}, row.party.join(" → "))))))] : []));
   document.querySelector("#scenarios").replaceChildren(
     element("thead", {}, element("tr", {}, ...["보스 노말어택", "보스 스페셜어택", "예상 피해", "전투 시간"].map(t => element("th", { scope: "col" }, t)))),
     element("tbody", {}, ...result.by_scenario.map(s => element("tr", {},
@@ -124,6 +133,7 @@ form.addEventListener("submit", async event => {
         rejoin_delay_s: form.elements.rejoin.checked ? form.elements.rejoin_delay_s.value : null,
         boss_fast: form.elements.boss_fast.value || null,
         boss_charged: form.elements.boss_charged.value || null,
+        compare_weather: form.elements.compare_weather.checked,
       }),
     }));
     status.textContent = "";

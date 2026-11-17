@@ -65,7 +65,8 @@ def _fusion(entry: dict) -> str | None:
 def _display_name(entry: dict) -> str | None:
     if not entry.get("species"):
         return None
-    return entry["species"] + "".join(mark for key, mark in NAME_MARKS if entry.get(key) is True)
+    marks = "".join(mark for key, mark in NAME_MARKS if entry.get(key) is True)
+    return entry["species"] + marks + (" (그림자)" if entry.get("shadow") is True else "")
 
 
 def _move_label(move: dict | None) -> str | None:
@@ -166,7 +167,7 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
         ["* 표시", "대단한 기술머신으로만 배울 수 있는 기술(커뮤니티 데이·이벤트·예전 기술), "
                    "그림자 포켓몬·정화된 포켓몬 전용 기술, 지금 배울 수 있는 기술 목록에 없는 기술"],
         ["모습", "기본 모습은 빈칸입니다. 알로라의 모습 등 다른 모습만 적습니다."],
-        ["종", "이름 뒤 기호: * 이로치, ♣ 반짝반짝 포켓몬, ◆ 배경 (예: 마기라스*♣◆)"],
+        ["종", "이름 뒤 기호: * 이로치, ♣ 반짝반짝 포켓몬, ◆ 배경 (예: 마기라스*♣◆). 그림자 포켓몬은 (그림자)"],
         ["CP 출처", "계산값: 메가진화 중에 찍은 개체라 화면 CP 대신 레벨로 계산한 기본 모습 CP입니다. "
                     "직접 입력: 내 박스에서 직접 고친 CP입니다. 빈칸은 화면에서 읽은 값입니다."],
         ["빈칸", "읽지 못했거나 확인하지 않은 값입니다. 0으로 채우지 않습니다."],

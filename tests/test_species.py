@@ -54,6 +54,19 @@ class SpeciesNameTests(unittest.TestCase):
         self.assertEqual((unknown["mega_plus"]["name"], unknown["mega_plus"]["match"]), ("새기술+", "none"))
         self.assertIn("아직 없는", unknown["mega_plus"]["reason"])
 
+    def test_shadow_only_move_marks_a_shadow_candidate(self):
+        from boxscan.analysis import apply_reference
+        data = synthetic_reference()
+        individual = {"species": {"value": "테스트몬2", "votes": 1, "observations": 1},
+                      "cp": None, "max_hp": None, "appraisals": [], "purify_button": {"value": None, "votes": 0},
+                      "moves": {"fast": None, "charged": [{"value": "기술15번", "votes": 1, "observations": 1, "power": 15}]}}
+        apply_reference(individual, data)
+        self.assertEqual(individual["shadow"], {"value": True, "evidence": ["그림자 전용 기술"]})
+        individual["moves"]["charged"] = []
+        individual["purify_button"] = {"value": True, "votes": 2}
+        apply_reference(individual, data)
+        self.assertEqual(individual["shadow"]["evidence"], ["정화 버튼"])
+
     def test_fusion_replacement_move_gets_a_fusion_reason(self):
         data = synthetic_reference()
         moves = {"fast": None, "charged": [{"value": "기술20번", "votes": 1, "observations": 1, "power": 20}]}

@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS approvals (
 
 # Fields the box page edits directly. They are replaced as a whole, so the user can clear a wrong
 # value; other fields (mega record, max moves, approval history) stay as they are.
-EDITABLE = ("species", "dex", "form", "form_name", "shiny", "lucky", "background", "max_state",
+EDITABLE = ("species", "dex", "form", "form_name", "shiny", "lucky", "background", "shadow", "max_state",
             "cp", "max_hp", "cp_source", "iv", "level", "moves", "fusion")
 
 

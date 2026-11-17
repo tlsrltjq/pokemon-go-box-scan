@@ -31,6 +31,7 @@
       <div class="checks">
         <label class="check"><input type="checkbox" name="rejoin"><span>모두 기절하면 같은 파티로 재입장</span></label>
         <label class="field inline"><span>재입장 지연(초)</span><input name="rejoin_delay_s" inputmode="numeric" value="10"></label>
+        <label class="check"><input type="checkbox" name="compare_weather"><span>모든 날씨와 비교</span></label>
       </div>
       <p class="muted">제한 시간과 재입장 지연은 계산용 시나리오 값입니다. 메가진화 포함 추천은 아직 지원하지 않습니다.</p>
       <datalist id="species-list"></datalist>
@@ -41,6 +42,7 @@
       <h2 id="result-title">추천 결과</h2>
       <div id="summary" class="card summary"></div>
       <div id="party" class="grid"></div>
+      <div id="weather-compare"></div>
       <h3>보스 기술별 결과</h3>
       <table id="scenarios" class="compare"></table>
       <div id="excluded"></div>

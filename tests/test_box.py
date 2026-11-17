@@ -140,8 +140,9 @@ class ReviewTests(unittest.TestCase):
                 review.normalize(bad, self.data)
 
     def test_flags_are_strict_booleans(self):
-        values = review.normalize({"cp": 100, "shiny": True, "lucky": False}, self.data)
-        self.assertEqual((values["shiny"], values["lucky"], values["background"]), (True, False, None))
+        values = review.normalize({"cp": 100, "shiny": True, "lucky": False, "shadow": True}, self.data)
+        self.assertEqual((values["shiny"], values["lucky"], values["background"], values["shadow"]),
+                         (True, False, None, True))
 
     def test_normalize_rejects_bad_input(self):
         for raw in ({"cp": 5}, {"iv": {"attack": 1}}, {"iv": {"attack": 16, "defense": 1, "stamina": 1}},
