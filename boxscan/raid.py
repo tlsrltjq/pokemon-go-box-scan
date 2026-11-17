@@ -153,8 +153,9 @@ def attacker(reference: Reference, entry: dict) -> tuple[Fighter | None, str | N
     if cpm is None:
         return None, "레벨의 CP 배율이 없음"
     hp = entry.get("max_hp") or max(10, math.floor((stats.stamina + iv["stamina"]) * cpm))
-    name = species + "".join(mark for key, mark in (("shiny", "*"), ("lucky", "♣"), ("background", "◆"))
-                             if entry.get(key) is True)
+    # Fused or other forms show their own name (블랙큐레무), like the box does.
+    name = (entry.get("form_name") if form != "Normal" and entry.get("form_name") else species) + "".join(
+        mark for key, mark in (("shiny", "*"), ("lucky", "♣"), ("background", "◆")) if entry.get(key) is True)
     return Fighter(entry["id"], name, (stats.attack + iv["attack"]) * cpm, (stats.defense + iv["defense"]) * cpm,
                    int(hp), _types(reference, stats.pokemon_id, form), fast, charged,
                    {"code": entry.get("code"), "revision": entry.get("revision"), "level": lvl, "iv": iv}), None
