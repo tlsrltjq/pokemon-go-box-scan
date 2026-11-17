@@ -269,6 +269,8 @@ API 요청 처리 중 영상 전체 분석을 기다리지 않는다. 업로드 
 
 일반 레이드와 다른 시간 경과·격앙·종료 규칙을 검증해야 한다. 데이터가 없는 동안 임의의 일반 레이드 시간 제한으로 대체하지 않는다. 일반 DPS 순위만 출력한 상태는 맥스배틀 지원 완료가 아니다.
 
+구현 상태(2026-11-17, `max-sim/1`, `max-ruleset/2026-11-17`): `boxscan/max_battle.py`가 참가 자격(박스의 다이맥스·거다이맥스 상태), 3마리 출전 순서, 일반 단계(노말어택·스페셜어택 정책 비교), 맥스 게이지(피해 기반 충전·에너지 구슬), 맥스 단계(3초 대기, 맥스 기술 3번, 보스 공격 중지), 맥스어택·거다이맥스 기술·다이월·다이리커버리의 레벨과 해금, 기절·교체·종료를 계산한다. 맥스어택 타입과 거다이맥스 고유 기술은 게임 마스터(`BREAD_MOVE_MAPPING_SETTINGS`, `SOURDOUGH_MOVE_MAPPING_SETTINGS`)에서 읽는다. 등급 HP·CP 배율·게이지 배율·보스 공격 간격·제한 시간은 커뮤니티 자료 값이며 결과에 버전과 가정을 표시한다. 동료 기여는 0으로 두고, 선택한 트레이너 수만큼 노림 공격 피해를 나누는 시나리오를 제공한다. 격앙, 보스별 예외 수치, 외부 계산기 대조는 남았다.
+
 ## 9. 기준 데이터와 버전
 
 PoGo API를 첫 수치 공급원 후보로 사용하고 로컬 정규화 스냅샷으로 저장한다. 이는 Pokémon GO의 공식 계정 API가 아니며 최신성·정확성·재배포 조건을 별도 확인한다.
@@ -413,6 +415,7 @@ Excel `.xlsx` 내보내기는 이번 완성 범위다. 시트는 포켓몬 목�
 - [공식: 메가진화](https://scopelyexplore.helpshift.com/hc/en/5-pokemon-go/faq/1197-what-is-mega-evolution/) — 일시적 폼 변경·특정 추가 기술·메가레벨 보정. 모든 종의 상세 규칙 확보를 뜻하지 않음.
 - [Pokémon 공식: 맥스배틀 안내](https://www.pokemon.com/us/features/the-great-pokemon-go-guide-to-winning-max-battles-and-catching-gigantamax-pokemon) — 맥스 공격·가드·회복의 구분. 정밀 수치·종료 규칙은 추가 검증.
 - [Pokémon GO 공식: 맥스 포켓몬](https://pokemongo.com/en/max-pokemon-battle) — 맥스배틀 기본 안내.
+- [Bulbapedia: Max Battle](https://bulbapedia.bulbagarden.net/wiki/Max_Battle) · [PokéChespin 변경 기록](https://pokechespin.net/whatsnew) · [Matt Simplified: Max Battles](https://mattsimplified.com/guide/max-battles/) — 등급 HP·CP 배율, 게이지 충전식, 보스 공격 간격, 맥스 기술 위력·보호막·회복량(2026-11-17 확인, 커뮤니티 자료).
 - [Apple Vision 텍스트 인식](https://developer.apple.com/documentation/vision/recognizing-text-in-images) — 로컬 OCR 후보; 현재 기기에서 언어·revision 지원 여부 확인 필요.
 - [FastAPI Background Tasks](https://fastapi.tiangolo.com/tutorial/background-tasks/) — 무거운 계산의 별도 처리 고려.
 - [uv 프로젝트 관리](https://docs.astral.sh/uv/guides/projects/) — 환경·잠금 파일.

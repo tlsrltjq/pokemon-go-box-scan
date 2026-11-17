@@ -87,6 +87,10 @@ class Reference:
     type_chart: dict[str, dict[str, float]] | None = None  # attacking type -> defending type -> scalar
     weather: dict[str, list[str]] | None = None  # weather -> boosted types
     battle: dict | None = None  # BATTLE_SETTINGS subset
+    # Max battles: VN_BM_* max moves -> {"type", "kind": attack|gmax|guard|spirit, "name"}
+    max_moves: dict[str, dict] | None = None
+    max_move_by_type: dict[str, str] | None = None  # fast move type -> Max Attack move id
+    species_max_moves: dict[str, str] | None = None  # "id|form" ("*" = any form) -> G-Max or special move id
 
     def forms(self, korean_name: str) -> list[BaseStats]:
         pokemon_id = self.korean_names.get(korean_name.strip())
@@ -149,10 +153,50 @@ def parse(files: dict[str, bytes], version: str = "", fetched_at: str = "") -> R
     mega_moves = _mega_moves(master, move_names)
     notes["mega_moves"] = sum(len(v) for v in mega_moves.values())
     types, move_stats, type_chart, weather, battle = _battle_data(master)
+    max_moves, max_move_by_type, species_max_moves = _max_data(master, files["move_names.csv"])
     if len(type_chart) != 18 or not move_stats or "energyDeltaPerHealthLost" not in battle:
         raise ValueError("전투 계산용 데이터(상성·기술·전투 설정)를 읽지 못했습니다.")
     return Reference(version, fetched_at, stats, cpm, names, notes, move_names, move_power, learnsets,
-                     temp_stats, form_changes, mega_moves, types, move_stats, type_chart, weather, battle)
+                     temp_stats, form_changes, mega_moves, types, move_stats, type_chart, weather, battle,
+                     max_moves, max_move_by_type, species_max_moves)
+
+
+# Max Guard keeps the main-series name 다이월; Max Spirit exists only in GO and is shown as 다이리커버리.
+MAX_KINDS = {"MAX_SHIELD": ("guard", "다이월"), "MAX_HEAL": ("spirit", "다이리커버리")}
+
+
+def _max_data(master: list[dict], move_names_csv: bytes) -> tuple[dict, dict, dict]:
+    """Max moves (VN_BM_*), the Max Attack for each fast move type, and each Gigantamax species'
+    own move (SOURDOUGH_MOVE_MAPPING_SETTINGS)."""
+    korean = {}
+    for row in csv.DictReader(io.StringIO(move_names_csv.decode("utf-8"))):
+        korean.setdefault(row["move_id"], {})[row["local_language_id"]] = row["name"].strip()
+    english = {_move_key(n[ENGLISH]): n.get(KOREAN) for n in korean.values() if ENGLISH in n}
+    moves, by_type, species, enum_ids, mappings = {}, {}, {}, {}, []
+    for item in master:
+        template, data = item["templateId"], item.get("data", {})
+        match = TEMPLATE.match(template)
+        if match and data.get("pokemonSettings"):
+            enum_ids.setdefault(data["pokemonSettings"]["pokemonId"], int(match[1]))
+        settings = data.get("moveSettings")
+        if template.startswith("VN_BM_") and settings:
+            vfx = str(settings.get("vfxName") or "").upper()
+            if vfx in MAX_KINDS:
+                kind, name = MAX_KINDS[vfx]
+            else:
+                kind = "gmax" if vfx.startswith("GMAX_") else "attack"
+                name = english.get(_move_key(vfx))
+            moves[template] = {"type": _type(settings.get("pokemonType")), "kind": kind, "name": name, "vfx": vfx.lower()}
+        if "breadMoveMappings" in data:
+            by_type = {_type(m["type"]): m["move"] for m in data["breadMoveMappings"].get("mappings", [])}
+        if "sourdoughMoveMappingSettings" in data:
+            mappings = data["sourdoughMoveMappingSettings"].get("mappings", [])
+    for mapping in mappings:
+        pokemon_id = enum_ids.get(mapping.get("pokemonId"))
+        if pokemon_id and mapping.get("move") in moves:
+            form = _form_code(mapping["pokemonId"], mapping["form"]) if mapping.get("form") else "*"
+            species[f"{pokemon_id}|{form}"] = mapping["move"]
+    return moves, by_type, species
 
 
 # Order of POKEMON_TYPE_* in the game data; typeEffective.attackScalar follows it.
@@ -413,6 +457,9 @@ def to_json(reference: Reference) -> dict:
         "type_chart": reference.type_chart,
         "weather": reference.weather,
         "battle": reference.battle,
+        "max_moves": reference.max_moves,
+        "max_move_by_type": reference.max_move_by_type,
+        "species_max_moves": reference.species_max_moves,
     }
 
 
@@ -431,7 +478,8 @@ def from_json(data: dict) -> Reference:
                      {int(k): v for k, v in (data.get("form_changes") or {}).items()},
                      {int(k): v for k, v in (data.get("mega_moves") or {}).items()},
                      data.get("types"), data.get("move_stats"), data.get("type_chart"),
-                     data.get("weather"), data.get("battle"))
+                     data.get("weather"), data.get("battle"), data.get("max_moves"),
+                     data.get("max_move_by_type"), data.get("species_max_moves"))
 
 
 def rebuild(data_dir: Path) -> dict:

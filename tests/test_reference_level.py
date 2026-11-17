@@ -63,6 +63,17 @@ def master(count: int, whole=WHOLE) -> list[dict]:
     items.append(pokemon(6, "_FUSED", "MON6_FUSED", 200, 180, 160))
     items.append({"templateId": "VM_MOVE_TEMP_EVOLUTION_MEGA_V0005_POKEMON_MON5",
                   "data": {"moveSettings": {"movementId": 900, "power": 140.0, "vfxName": "move_12"}}})
+    # Max moves: a Max Attack, a G-Max move for MON3, Max Guard and Max Spirit, and their mappings.
+    for template, kind, vfx in (("VN_BM_001", "FIRE", "max_flare"), ("VN_BM_019", "FIRE", "gmax_wildfire"),
+                                ("VN_BM_052", "NORMAL", "max_shield"), ("VN_BM_053", "NORMAL", "max_heal")):
+        items.append({"templateId": template, "data": {"moveSettings": {
+            "movementId": template, "pokemonType": f"POKEMON_TYPE_{kind}", "vfxName": vfx}}})
+    items.append({"templateId": "BREAD_MOVE_MAPPING_SETTINGS", "data": {"breadMoveMappings": {
+        "mappings": [{"type": "POKEMON_TYPE_FIRE", "move": "VN_BM_001"}]}}})
+    items.append({"templateId": "SOURDOUGH_MOVE_MAPPING_SETTINGS", "data": {"sourdoughMoveMappingSettings": {
+        "mappings": [{"pokemonId": "MON3", "move": "VN_BM_019"},
+                     {"pokemonId": "MON4", "form": "MON4_NORMAL", "move": "VN_BM_019"},
+                     {"pokemonId": "UNKNOWN", "move": "VN_BM_019"}]}}})
     return items
 
 
@@ -82,6 +93,7 @@ def synthetic_files(count=120, whole=WHOLE, check=None) -> dict[str, bytes]:
     moves += [f"{n},9,Move {n}" for n in range(1, MOVE_COUNT + 1)]
     moves += [f"{n},3,기술{n}번" for n in range(1, MOVE_COUNT + 1)]
     moves += ["999,9,Special Beam", "999,3,특수광선"]
+    moves += ["2000,9,Max Flare", "2000,3,다이번"]
     return {
         "game_master.json": json.dumps(game_master).encode(),
         "pokemon_stats.json": json.dumps(fallback).encode(),
@@ -136,6 +148,18 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(data.battle["swapDurationMs"], 1000)
         self.assertEqual(data.move_stats["MOVE_11"], {"type": "NORMAL", "power": 11.0, "energy": -50,
                                                       "duration_ms": 1000, "damage_start_ms": 500})
+
+    def test_max_moves_and_mappings_are_read(self):
+        data = synthetic_reference()
+        self.assertEqual(data.max_moves["VN_BM_001"], {"type": "FIRE", "kind": "attack", "name": "다이번",
+                                                       "vfx": "max_flare"})
+        self.assertEqual((data.max_moves["VN_BM_019"]["kind"], data.max_moves["VN_BM_019"]["name"]), ("gmax", None))
+        self.assertEqual(data.max_moves["VN_BM_052"]["name"], "다이월")
+        self.assertEqual(data.max_moves["VN_BM_053"]["kind"], "spirit")
+        self.assertEqual(data.max_move_by_type, {"FIRE": "VN_BM_001"})
+        self.assertEqual(data.species_max_moves, {"3|*": "VN_BM_019", "4|Normal": "VN_BM_019"})
+        restored = reference.from_json(json.loads(json.dumps(reference.to_json(data))))
+        self.assertEqual(restored.species_max_moves, data.species_max_moves)
 
     def test_half_levels_follow_the_game_rules(self):
         low, high = WHOLE[0], WHOLE[1]

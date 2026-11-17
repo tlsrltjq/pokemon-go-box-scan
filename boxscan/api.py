@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from . import backup, export, raid, reference, review
+from . import backup, export, max_battle, raid, reference, review
 from .forms import display_name
 from .species import TEMP_NAMES
 from .analysis import RESULT
@@ -89,6 +89,10 @@ def create_app(
     def raid_page():
         return FileResponse(WEB / "raid.html")
 
+    @app.get("/max")
+    def max_page():
+        return FileResponse(WEB / "max.html")
+
     def load_reference():
         try:
             data = reference.load(store.root)
@@ -158,6 +162,60 @@ def create_app(
             raise HTTPException(422, str(error)) from None
         result["boss"]["temp_name"] = TEMP_NAMES.get(result["boss"]["temp"])
         return result
+
+    @app.get("/api/max/options")
+    def max_options(species: str | None = None):
+        data = load_reference()
+        options = {
+            "species": sorted(name for name, pokemon_id in data.korean_names.items() if pokemon_id in data.stats),
+            "tiers": [{"id": key, "name": rule["name"], "hp": rule["hp"], "time_limit": rule["time_limit"]}
+                      for key, rule in max_battle.RULESET["tiers"].items()],
+            "weather": [{"id": key, "name": name} for key, name in raid.WEATHER_NAMES.items()],
+            "ruleset": max_battle.RULESET["version"],
+        }
+        if species:
+            forms = data.forms(species)
+            if not forms:
+                raise HTTPException(404, "기준 데이터에서 그 종을 찾지 못했습니다.")
+            pokemon_id = forms[0].pokemon_id
+            learnset = (data.learnsets or {}).get(f"{pokemon_id}|Normal") or {}
+            options["boss"] = {
+                "forms": [{"id": f.form, "name": display_name(pokemon_id, f.form) or "기본 모습"} for f in forms],
+                "charged": [{"id": m, "name": data.move_names.get(m, m)} for m in learnset.get("charged", [])],
+            }
+        return options
+
+    @app.post("/api/max/recommend")
+    async def max_recommend(request: Request):
+        payload = await _json_body(request)
+        data = load_reference()
+
+        def text(key):
+            value = payload.get(key)
+            return value.strip() or None if isinstance(value, str) else None
+
+        def number(key):
+            value = payload.get(key)
+            if value in (None, ""):
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                raise HTTPException(422, "숫자 입력을 확인하세요.") from None
+
+        species = text("species")
+        if not species:
+            raise HTTPException(422, "보스 이름을 입력하세요.")
+        trainers = number("trainers") or 1
+        if trainers != int(trainers):
+            raise HTTPException(422, "함께하는 트레이너 수는 1~4명입니다.")
+        try:
+            return max_battle.recommend(
+                data, box.list(), species, text("tier") or "1", form=text("form"),
+                weather=text("weather") or "", time_limit_s=number("time_limit_s"),
+                boss_charged=text("boss_charged"), orbs=payload.get("orbs") is not False, trainers=int(trainers))
+        except raid.RaidError as error:
+            raise HTTPException(422, str(error)) from None
 
     @app.get("/api/health")
     def health():
