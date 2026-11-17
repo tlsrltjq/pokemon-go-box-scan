@@ -92,6 +92,7 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
         raise ValueError("다이맥스 값이 올바르지 않습니다.")
     max_moves = _max_moves(raw.get("max_moves"))
     mega_move_name = _text(raw.get("mega_move"), "메가진화 추가 스페셜어택")
+    nickname = _text(raw.get("nickname"), "게임 별명")
     temp = raw.get("temp_evolution") or None
     if temp is not None and temp not in species_names.TEMP_NAMES:
         raise ValueError("메가진화 값이 올바르지 않습니다.")
@@ -133,6 +134,7 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
         "dex": pokemon_id,
         "form": form,
         "form_name": display_name(pokemon_id, form),
+        "nickname": nickname,
         "cp_source": cp_source,
         "temp_observation": temp_observation,
         "max_state": max_state,

@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from boxscan import max_battle, raid
-from tests.test_raid import entry, reference as raid_reference
+from test_raid import entry, reference as raid_reference
 
 MAX_MOVES = {
     "VN_BM_009": {"type": "WATER", "kind": "attack", "name": "다이스트림", "vfx": "max_geyser"},

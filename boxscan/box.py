@@ -6,6 +6,7 @@ its UUID and management code, bumps the revision and stores the previous values.
 new observation did not read keep their previous values instead of being cleared.
 """
 import json
+import re
 import sqlite3
 import uuid
 from contextlib import closing, contextmanager
@@ -46,7 +47,7 @@ CREATE TABLE IF NOT EXISTS approvals (
 
 # Fields the box page edits directly. They are replaced as a whole, so the user can clear a wrong
 # value; other fields (mega record, max moves, approval history) stay as they are.
-EDITABLE = ("species", "dex", "form", "form_name", "shiny", "lucky", "background", "shadow", "max_state",
+EDITABLE = ("species", "dex", "form", "form_name", "nickname", "shiny", "lucky", "background", "shadow", "max_state",
             "cp", "max_hp", "cp_source", "iv", "level", "moves", "fusion")
 
 
@@ -180,6 +181,17 @@ class BoxStore:
         if species:
             entries = [entry for entry in entries if entry.get("species") == species]
         return entries
+
+    def by_code(self, code: str) -> dict | None:
+        """The entry a management code was given to, including removed ones (codes are never reused)."""
+        match = re.fullmatch(r"PK(\d{4,6})", code or "")
+        if match is None:
+            return None
+        with self._read() as db:
+            row = db.execute("SELECT * FROM pokemon WHERE seq = ?", (int(match[1]),)).fetchone()
+        if row is None:
+            return None
+        return {**self._entry(row), "deleted": row["deleted_at"] is not None}
 
     def get(self, pokemon_id: str) -> dict | None:
         with self._read() as db:

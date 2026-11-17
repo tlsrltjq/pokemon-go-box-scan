@@ -64,6 +64,24 @@ class FieldParserTests(unittest.TestCase):
         self.assertEqual(second["max_hp"]["value"], 150)
         self.assertEqual((second["start_seconds"], second["end_seconds"]), (4, 7))
 
+    def test_management_code_and_nickname(self):
+        detail = boxed(("CP3818", 122, 44, 42, 19), ("2019", 290, 261, 31, 11),
+                       ("R마기PK0042", 117, 295, 98, 20), ("반짝반짝 포컷몬", 129, 321, 72, 14),
+                       ("188 / 188 HP", 137, 351, 56, 10), ("바위 / 악", 155, 451, 38, 10))
+        found = parse_frame(detail)
+        self.assertEqual((found["nickname"], found["code"]), ("R마기PK0042", "PK0042"))
+        self.assertEqual(parse_frame(lines("pk 0042"))["code"], "PK0042")
+        self.assertEqual(parse_frame(lines("PK12345"))["code"], "PK12345")
+        for text in ("APK0042", "PK42", "PKO042", "PK0042 PK0043"):  # no guessing, no ambiguity
+            self.assertNotIn("code", parse_frame(lines(text)), text)
+        self.assertNotIn("nickname", parse_frame(lines("CP1000")))
+
+    def test_a_different_code_starts_a_new_individual(self):
+        frames = [frame(n, "CP1000", code) for n, code in ((1, "PK0001"), (2, "PK0001"), (3, "PK0002"), (4, "PK0002"))]
+        first, second = group_frames(frames)
+        self.assertEqual((first["frames"], first["code"]["value"]), ([1, 2], "PK0001"))
+        self.assertEqual((second["frames"], second["code"]["value"]), ([3, 4], "PK0002"))
+
 
 def boxed(*items):
     """OCR lines with explicit boxes: (text, x, y, w, h). Layout mimics a 332 px wide frame."""

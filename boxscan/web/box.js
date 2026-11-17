@@ -45,7 +45,8 @@ function editForm(entry, onDone) {
       field("IV HP", "iv_stamina", iv.stamina, numeric),
       field("노말어택", "fast_move", moves.fast?.name, { maxlength: "30" }),
       field("스페셜어택 1", "charged_1", charged[0]?.name, { maxlength: "30" }),
-      field("스페셜어택 2", "charged_2", charged[1]?.name, { maxlength: "30" })),
+      field("스페셜어택 2", "charged_2", charged[1]?.name, { maxlength: "30" }),
+      field("게임 별명", "nickname", entry.nickname, { maxlength: "30" })),
     element("div", { class: "checks" },
       checkbox("이로치 *", "shiny", entry.shiny === true),
       checkbox("반짝반짝 포켓몬 ♣", "lucky", entry.lucky === true),
@@ -82,6 +83,7 @@ function editForm(entry, onDone) {
             background: form.elements.background.checked,
             shadow: form.elements.shadow.checked,
             max_state: form.elements.max_state.value || null,
+            nickname: get("nickname") || null,
           },
         }),
       }));
@@ -153,6 +155,9 @@ function entryCard(entry) {
       element("div", {}, element("dt", {}, "레벨"), element("dd", {}, element("strong", {}, formatLevel(entry.level)))),
     ),
     element("p", {}, element("span", { class: "muted" }, "IV 공/방/체 "), element("strong", {}, formatIv(entry.iv))),
+    entry.nickname ? element("p", {}, element("span", { class: "muted" }, "게임 별명 "), entry.nickname) : null,
+    (entry.nickname ?? "").toUpperCase().includes(entry.code) ? null : element("p", { class: "muted" },
+      `게임 별명에 ${entry.code}을(를) 넣으면 다음 스캔 때 이 개체를 자동으로 고릅니다.`),
     entry.cp_source === "calculated" ? element("p", { class: "muted" },
       "CP·최대 HP는 메가진화 중 기록과 레벨로 계산한 기본 모습 값입니다.") : null,
     temp ? element("p", { class: "muted" },
@@ -172,7 +177,9 @@ function entryCard(entry) {
 
 function render() {
   const query = search.value.trim();
-  const shown = entries.filter(entry => !query || (entry.species ?? "").includes(query));
+  const upper = query.toUpperCase();
+  const shown = entries.filter(entry => !query || (entry.species ?? "").includes(query)
+    || entry.code.includes(upper) || (entry.nickname ?? "").toUpperCase().includes(upper));
   status.textContent = entries.length
     ? `${entries.length}개체 중 ${shown.length}개체를 보여줍니다.`
     : "아직 저장한 개체가 없습니다. 스캔 화면의 판독 카드에서 저장하세요.";

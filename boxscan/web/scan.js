@@ -174,6 +174,7 @@ function candidateValues(individual) {
     temp_evolution: individual.state?.temp_evolution ?? null,
     max_moves: individual.max_moves ?? [],
     mega_move: individual.moves?.mega_plus ? (individual.moves.mega_plus.name ?? `${individual.moves.mega_plus.value}+`) : null,
+    nickname: individual.nickname?.value ?? "",
   };
 }
 
@@ -231,6 +232,7 @@ function readForm(formNode) {
     temp_evolution: formNode.dataset.temp || null,
     max_moves: JSON.parse(formNode.dataset.maxMoves || "[]"),
     mega_move: formNode.dataset.megaMove || null,
+    nickname: get("nickname") || null,
   };
 }
 
@@ -259,6 +261,7 @@ function previewValues(values, individual) {
       status: level.status,
     },
     moves: { fast: move(values.fast_move), charged: values.charged_moves.map(move) },
+    nickname: values.nickname,
   };
 }
 
@@ -267,8 +270,17 @@ function savedNote(approval, duplicate = false) {
     element("h4", {}, approval.deleted ? `${approval.code} · 박스에서 제거됨` : `${approval.code}(으)로 저장됨`),
     element("p", {},
       duplicate ? "이미 저장한 후보입니다. " : "",
-      element("a", { href: `/box#${approval.pokemon_id}` }, "내 박스에서 보기")));
+      element("a", { href: `/box#${approval.pokemon_id}` }, "내 박스에서 보기")),
+    approval.deleted ? null : element("p", { class: "muted" },
+      `게임에서 이 포켓몬의 별명에 ${approval.code}을(를) 넣어 두면 다음 스캔 때 이 개체를 자동으로 고릅니다.`));
 }
+
+const CODE_NOTES = {
+  not_found: match => `별명에서 ${match.code}을(를) 읽었지만 박스에 없는 관리번호입니다. 새 개체로 저장하거나 직접 고르세요.`,
+  deleted: match => `별명의 ${match.code}은(는) 박스에서 제거한 개체(${match.species ?? "종 미확인"})의 번호라 자동으로 고르지 않았습니다.`,
+  species_conflict: match => `별명의 ${match.code}은(는) 박스에서 ${match.species}입니다. 판독한 종과 달라 자동으로 고르지 않았습니다. 별명이나 종을 확인하세요.`,
+  match: match => `별명에서 관리번호 ${match.code}을(를) 읽어 기존 개체를 골랐습니다. 다른 개체면 저장 방식을 바꾸세요.`,
+};
 
 function saveBlock(individual, index) {
   if (individual.approval) return savedNote(individual.approval);
@@ -290,6 +302,7 @@ function saveBlock(individual, index) {
       field("노말어택", "fast_move", values.fast_move, { maxlength: "30" }),
       field("스페셜어택 1", "charged_1", values.charged_moves[0], { maxlength: "30" }),
       field("스페셜어택 2", "charged_2", values.charged_moves[1], { maxlength: "30" }),
+      field("게임 별명", "nickname", values.nickname, { maxlength: "30" }),
     ),
     element("div", { class: "checks" },
       checkbox("이로치 *", "shiny", false),
@@ -307,6 +320,8 @@ function saveBlock(individual, index) {
       (values.mega_move ? ` 메가진화 추가 스페셜어택 ${values.mega_move}도 함께 저장합니다.` : "") +
       (values.temp_evolution ? " 메가진화 중이라 기본 모습 CP·최대 HP는 레벨로 계산해 저장하고, 화면 값은 메가진화 기록으로 따로 남깁니다." : "")),
     element("label", { class: "field wide" }, element("span", {}, "저장 방식"), target),
+    individual.code_match ? element("p", { class: individual.code_match.status === "match" ? "muted" : "warn-text" },
+      CODE_NOTES[individual.code_match.status](individual.code_match)) : null,
     compare, message, submit);
   if (values.temp_evolution) formNode.dataset.temp = values.temp_evolution;
   formNode.dataset.maxMoves = JSON.stringify(values.max_moves);
@@ -336,16 +351,25 @@ function saveBlock(individual, index) {
     submit.textContent = entry ? `${entry.code} 갱신` : "박스에 저장";
   };
 
-  if (values.species) {
-    fetch(`/api/pokemon?species=${encodeURIComponent(values.species)}`).then(jsonResponse).then(({ pokemon }) => {
-      for (const entry of pokemon) {
-        existing.set(entry.id, entry);
-        const same = values.iv && entry.iv && STATS.every(([key]) => entry.iv[key] === values.iv[key]);
-        target.append(element("option", { value: entry.id },
-          `${entry.code} 갱신 · CP ${entry.cp ?? "-"} · IV ${formatIv(entry.iv)}${same ? " · IV 일치" : ""}`));
-      }
-    }).catch(() => {});
-  }
+  const match = individual.code_match?.status === "match" ? individual.code_match : null;
+  const addOption = entry => {
+    existing.set(entry.id, entry);
+    const same = values.iv && entry.iv && STATS.every(([key]) => entry.iv[key] === values.iv[key]);
+    target.append(element("option", { value: entry.id },
+      `${entry.code} 갱신 · CP ${entry.cp ?? "-"} · IV ${formatIv(entry.iv)}${same ? " · IV 일치" : ""}` +
+      (entry.id === match?.pokemon_id ? " · 별명 관리번호 일치" : "")));
+  };
+  const listed = values.species
+    ? fetch(`/api/pokemon?species=${encodeURIComponent(values.species)}`).then(jsonResponse)
+      .then(({ pokemon }) => pokemon.forEach(addOption))
+    : Promise.resolve();
+  listed.then(async () => {
+    if (!match) return;
+    if (!existing.has(match.pokemon_id)) addOption(await jsonResponse(await fetch(`/api/pokemon/${match.pokemon_id}`)));
+    target.value = match.pokemon_id;
+    syncFlags();
+    refresh();
+  }).catch(() => {});
   target.addEventListener("change", () => { syncFlags(); refresh(); });
   formNode.addEventListener("input", event => { if (event.target !== target) refresh(); });
   formNode.addEventListener("submit", async event => {

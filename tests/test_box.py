@@ -86,6 +86,14 @@ class BoxStoreTests(unittest.TestCase):
             return error
         return None
 
+    def test_by_code_finds_current_and_removed_entries(self):
+        first = self.box.approve("scan", 0, {"species": "하나몬"}, {"scan_id": "scan", "individual": 0})
+        self.assertEqual(self.box.by_code("PK0001")["id"], first["id"])
+        self.box.delete(first["id"], first["revision"])
+        self.assertTrue(self.box.by_code("PK0001")["deleted"])
+        for code in ("PK0002", "pk0001", "PK1", None):
+            self.assertIsNone(self.box.by_code(code))
+
     def test_merge_ignores_empty_values(self):
         self.assertEqual(merge({"cp": 1, "iv": {"attack": 1}}, {"cp": None, "iv": {}}),
                          {"cp": 1, "iv": {"attack": 1}})
@@ -209,6 +217,39 @@ class ApprovalApiTests(unittest.TestCase):
         self.assertEqual((updated["id"], updated["revision"], updated["cp"]), (entry["id"], 2, 150))
         detail = self.client.get(f"/api/pokemon/{entry['id']}").json()
         self.assertEqual(detail["revisions"][0]["source"]["filename"], "합성.mp4")
+
+    def test_code_in_nickname_suggests_the_entry_and_warns_on_mismatch(self):
+        entry = self.approve(0, {"values": {"species": "하나몬", "cp": 100, "nickname": "하나PK0001"}}).json()
+        self.assertEqual(entry["nickname"], "하나PK0001")
+        base = {"frames": [1], "start_seconds": 0, "end_seconds": 1, "cp": None, "max_hp": None}
+
+        def candidate(species, code):
+            return {**base, "species": {"value": species, "votes": 1, "observations": 1},
+                    "code": {"value": code, "votes": 1, "observations": 1} if code else None}
+
+        path = self.store.root / self.scan_id / "analysis.json"
+        result = json.loads(path.read_text(encoding="utf-8"))
+        result["individuals"] = [result["individuals"][0], candidate("하나몬", "PK0001"),
+                                 candidate("두나몬", "PK0001"), candidate("하나몬", "PK0009")]
+        path.write_text(json.dumps(result), encoding="utf-8")
+        found = [i["code_match"] for i in self.client.get(f"/api/scans/{self.scan_id}").json()["analysis"]["individuals"]]
+        self.assertIsNone(found[0])
+        self.assertEqual((found[1]["status"], found[1]["pokemon_id"]), ("match", entry["id"]))
+        self.assertEqual((found[2]["status"], found[2]["species"]), ("species_conflict", "하나몬"))
+        self.assertEqual(found[3], {"code": "PK0009", "status": "not_found"})
+
+        other = self.approve(3, {"values": {"species": "하나몬", "cp": 100}}).json()  # PK0002
+        warned = self.approve(1, {"values": {"species": "하나몬", "cp": 100}, "target": other["id"],
+                                  "expected_revision": 1})
+        self.assertEqual(warned.status_code, 409)
+        self.assertIn("관리번호는 PK0001", warned.json()["warnings"][0])
+        matched = self.approve(1, {"values": {"species": "하나몬", "cp": 120}, "target": entry["id"],
+                                   "expected_revision": 1})
+        self.assertEqual(matched.status_code, 200, matched.text)
+        self.assertEqual(matched.json()["nickname"], "하나PK0001")  # blank nickname keeps the saved one
+        self.client.delete(f"/api/pokemon/{entry['id']}", params={"revision": 2})
+        found = self.client.get(f"/api/scans/{self.scan_id}").json()["analysis"]["individuals"][2]["code_match"]
+        self.assertEqual(found["status"], "deleted")
 
     def test_rejects_invalid_requests(self):
         self.assertEqual(self.approve(5, {"values": {"cp": 100}}).status_code, 404)

@@ -98,6 +98,7 @@ function formatMoves(moves) {
 
 const BOX_FIELDS = [
   ["species", "종", value => value ?? "-"],
+  ["nickname", "게임 별명", value => value ?? "-"],
   ["shiny", "이로치 *", formatFlag],
   ["lucky", "반짝반짝 ♣", formatFlag],
   ["background", "배경 ◆", formatFlag],

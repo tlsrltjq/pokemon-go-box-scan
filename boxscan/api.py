@@ -268,7 +268,23 @@ def create_app(
                                     job.pop("analysis_status"), job.pop("analysis_error"))
         for index, individual in enumerate(job["analysis"]["individuals"]):
             individual["approval"] = box.approval(str(scan_id), index)
+            individual["code_match"] = _code_match(individual)
         return job
+
+    def _code_match(individual: dict) -> dict | None:
+        """Spec 6.3: an exact management code from the nickname suggests the entry to update.
+        A removed entry or a different species is shown, not selected."""
+        code = (individual.get("code") or {}).get("value")
+        if not code:
+            return None
+        entry = box.by_code(code)
+        if entry is None:
+            return {"code": code, "status": "not_found"}
+        species = (individual.get("species") or {}).get("value")
+        status = ("deleted" if entry["deleted"] else
+                  "species_conflict" if species and entry.get("species") and species != entry["species"] else "match")
+        return {"code": code, "status": status, "pokemon_id": entry["id"], "species": entry.get("species"),
+                "cp": entry.get("cp"), "revision": entry["revision"]}
 
     @app.post("/api/scans/{scan_id}/individuals/{index}/approve")
     async def approve(scan_id: UUID, index: int, request: Request):
@@ -305,6 +321,9 @@ def create_app(
             if existing is None:
                 raise HTTPException(409, "갱신할 개체가 박스에 없습니다.")
             found = review.warnings(existing, values)
+            read_code = (result["individuals"][index].get("code") or {}).get("value")
+            if read_code and read_code != existing["code"]:
+                found.append(f"별명에서 읽은 관리번호는 {read_code}인데 {existing['code']}을(를) 갱신하려고 합니다.")
             if found and payload.get("acknowledge") is not True:
                 return JSONResponse({"detail": "기존 개체와 다른 점이 있습니다.", "warnings": found},
                                     status_code=409)
@@ -510,6 +529,8 @@ def _analysis(folder: Path, scan_id: str, status: str | None, error: str | None)
             "appraisals": [appraisal(w) for w in individual.get("appraisals", [])],
             "level": individual.get("level"),
             "moves": individual.get("moves"),
+            "code": individual.get("code"),
+            "nickname": individual.get("nickname"),
         })
     summary["unassigned"] = len(result.get("unassigned_appraisals", []))
     summary["recognizer"] = result.get("recognizer")

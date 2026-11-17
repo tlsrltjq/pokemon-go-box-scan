@@ -20,6 +20,9 @@ DYNAMAX = re.compile(r"^다이맥스$")
 GIGANTAMAX = re.compile(r"^거다이맥")
 BACKGROUND = re.compile(r"배경은")
 MEGA_TIMER = re.compile(r"남은\s*시간")
+# Management code the user typed into the in-game nickname (spec 6.3), such as "PK0042" or
+# "마기PK0042". Only an exact letters-and-digits reading counts; OCR guesses are not repaired.
+CODE = re.compile(r"(?<![A-Za-z0-9])[Pp][Kk]\s?(\d{4,6})(?!\d)")
 # 맥스기술: names start with 다이 or 거다이; the row above shows "레벨 N" or LOCKED per move.
 MAX_HEADER = re.compile(r"맥스기술")
 MAX_MOVE = re.compile(r"^(?:거다이|다이)[가-힣]{1,8}$")
@@ -117,6 +120,32 @@ def parse_max_moves(lines: list[dict]) -> list[dict]:
     return moves
 
 
+def parse_nickname(lines: list[dict]) -> str | None:
+    """The name line on the detail screen: centred right above the HP line, skipping the
+    "반짝반짝 포켓몬" label. It shows the nickname when one is set, otherwise the species."""
+    hp = next((line for line in lines if HP.search(line["text"])), None)
+    if hp is None:
+        return None
+    x, top, w, h = hp["box"]
+    centre = x + w / 2
+
+    def fits(line):
+        lx, ly, lw, lh = line["box"]
+        gap = top - (ly + lh)
+        return (line is not hp and -2 <= gap <= 8 * max(h, 1) and abs(lx + lw / 2 - centre) <= max(40, lw / 2)
+                and not LUCKY.search(line["text"]) and re.search(r"[가-힣A-Za-z]", line["text"]))
+
+    candidates = [line for line in lines if fits(line)]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda line: line["box"][1])["text"].strip() or None
+
+
+def parse_code(texts: list[str]) -> str | None:
+    codes = {f"PK{int(match[1]):04d}" for text in texts for match in CODE.finditer(text)}
+    return codes.pop() if len(codes) == 1 else None
+
+
 def parse_frame(lines: list[dict], width: int | None = None) -> dict:
     texts = [line["text"].strip() for line in lines]
     found: dict = {"screen": "UNKNOWN"}
@@ -124,6 +153,10 @@ def parse_frame(lines: list[dict], width: int | None = None) -> dict:
         found["moves"] = moves
     if max_moves := parse_max_moves(lines):
         found["max_moves"] = max_moves
+    if code := parse_code(texts):
+        found["code"] = code
+    if nickname := parse_nickname(lines):
+        found["nickname"] = nickname
     for text in texts:
         if "cp" not in found and (match := CP.search(text)):
             found["cp"] = int(match[1])
@@ -183,7 +216,7 @@ def group_frames(frames: list[dict]) -> list[dict]:
 
 def _confirmed(group: list[dict], following: list[dict]) -> bool:
     for frame in following:
-        if any(_value(frame, key) is not None for key in ("cp", "max_hp", "species")):
+        if any(_value(frame, key) is not None for key in ("cp", "max_hp", "species", "code")):
             return _conflicts(group, frame)
     return False
 
@@ -194,9 +227,12 @@ def _conflicts(group: list[dict], frame: dict) -> bool:
         seen = vote([v for f in group if (v := _value(f, key)) is not None])
         if value is not None and seen and seen["votes"] >= 2 and value != seen["value"]:
             return True
-    species = frame.get("species")
-    seen_species = {f["species"] for f in group if "species" in f}
-    return bool(species and seen_species and species not in seen_species)
+    for key in ("species", "code"):  # a different management code is a different individual
+        value = frame.get(key)
+        seen = {f[key] for f in group if key in f}
+        if value and seen and value not in seen:
+            return True
+    return False
 
 
 def _value(frame: dict, key: str):
@@ -220,6 +256,8 @@ def _summarize(group: list[dict]) -> dict:
         "max_moves": _max_moves(group),
         "background": _seen(group, "background"),
         "mega_timer": _seen(group, "mega_timer"),
+        "code": vote([f["code"] for f in group if "code" in f]),
+        "nickname": vote([f["nickname"] for f in group if "nickname" in f]),
     }
 
 
