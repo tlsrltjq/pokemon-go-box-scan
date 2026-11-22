@@ -1,6 +1,7 @@
 const list = document.querySelector("#pokemon");
 const status = document.querySelector("#status");
 const search = document.querySelector("#search");
+const sort = document.querySelector("#sort");
 const CHANGES = { created: "새로 저장", updated: "갱신", deleted: "박스에서 제거" };
 let entries = [];
 
@@ -10,7 +11,7 @@ function moveLine(label, move) {
     element("span", { class: "move-role" }, label),
     element("strong", {}, move.name, move.marker ? element("span", { class: "marker", title: move.reason }, move.marker) : null),
     element("span", {}, ""),
-    move.marker ? element("span", { class: "move-reason" }, `* ${move.reason}`) : null,
+    move.marker ? element("span", { class: "move-reason neutral" }, `* ${move.reason}`) : null,
   );
 }
 
@@ -21,7 +22,7 @@ function revisionItem(revision) {
     : source?.filename ? ` · ${source.filename} 프레임 ${source.frames[0]}–${source.frames.at(-1)}` : "";
   const label = manual ? "직접 수정" : CHANGES[revision.change];
   const item = element("li", {},
-    element("p", {}, element("strong", {}, `rev ${revision.revision} · ${label}`),
+    element("p", {}, element("strong", {}, `${revision.revision}번째 기록 · ${label}`),
       ` · ${new Date(revision.created_at).toLocaleString("ko-KR")}${origin}`));
   if (revision.change !== "deleted") item.append(comparisonTable(revision.before, revision.after));
   return item;
@@ -145,8 +146,8 @@ function entryCard(entry) {
   const temp = entry.temp_observation;
   return element("article", { class: "card", id: entry.id },
     element("header", {},
-      element("h3", {}, `${entry.code} · ${displayName(entry)}`),
-      element("span", { class: "badge neutral" }, `rev ${entry.revision}`)),
+      element("h3", { class: "card-title" }, displayName(entry), element("span", { class: "code-chip" }, entry.code ?? "번호 없음")),
+      entry.iv ? element("span", { class: "badge neutral" }, `IV ${ivPercent(entry.iv)}%`) : null),
     badges.length ? element("div", { class: "badges" },
       ...badges.map(([text, kind]) => element("span", { class: `badge state ${kind}` }, text))) : null,
     element("dl", {},
@@ -156,8 +157,8 @@ function entryCard(entry) {
     ),
     element("p", {}, element("span", { class: "muted" }, "IV 공/방/체 "), element("strong", {}, formatIv(entry.iv))),
     entry.nickname ? element("p", {}, element("span", { class: "muted" }, "게임 별명 "), entry.nickname) : null,
-    hasCode(entry) ? null : element("p", { class: "muted" },
-      `게임 별명에 ${entry.code}을(를) 넣으면 다음 스캔 때 이 개체를 자동으로 고릅니다. 번호는 종마다 따로 셉니다.`),
+    hasCode(entry) ? null : element("span", { class: "hint-chip", title: "게임 별명에 넣으면 다음 스캔 때 자동으로 고릅니다" },
+      `별명에 ${entry.code} 넣기 전`),
     entry.cp_source === "calculated" ? element("p", { class: "muted" },
       "CP·최대 HP는 메가진화 중 기록과 레벨로 계산한 기본 모습 값입니다.") : null,
     temp ? element("p", { class: "muted" },
@@ -189,9 +190,20 @@ function matches(entry, word) {
     || (entry.nickname ?? "").toUpperCase().includes(upper);
 }
 
+function ivPercent(iv) {
+  return Math.round(((iv.attack + iv.defense + iv.stamina) / 45) * 100);
+}
+
+const SORTS = {
+  recent: (a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""),
+  cp: (a, b) => (b.cp ?? -1) - (a.cp ?? -1),
+  iv: (a, b) => (b.iv ? ivPercent(b.iv) : -1) - (a.iv ? ivPercent(a.iv) : -1) || (b.cp ?? -1) - (a.cp ?? -1),
+  species: (a, b) => (a.species ?? "").localeCompare(b.species ?? "", "ko") || (a.code ?? "").localeCompare(b.code ?? "", "ko", { numeric: true }),
+};
+
 function render() {
   const words = search.value.trim().split(/\s+/).filter(Boolean);
-  const shown = entries.filter(entry => words.every(word => matches(entry, word)));
+  const shown = entries.filter(entry => words.every(word => matches(entry, word))).sort(SORTS[sort.value] ?? SORTS.recent);
   status.textContent = entries.length
     ? `${entries.length}개체 중 ${shown.length}개체를 보여줍니다.`
     : "아직 저장한 개체가 없습니다. 스캔 화면의 판독 카드에서 저장하세요.";
@@ -286,4 +298,9 @@ restoreInput.addEventListener("change", async () => {
 
 loadBackups().catch(error => { backupStatus.textContent = error.message; });
 search.addEventListener("input", render);
+try { sort.value = localStorage.getItem("boxscan-box-sort") || "recent"; } catch { /* storage blocked */ }
+sort.addEventListener("change", () => {
+  try { localStorage.setItem("boxscan-box-sort", sort.value); } catch { /* storage blocked */ }
+  render();
+});
 load().catch(error => { status.textContent = error.message; });

@@ -59,9 +59,9 @@ def frame_entry(path: Path, item: dict) -> dict:
 def assemble(scan_id: str, frames: list[dict], windows: list[dict], data: reference.Reference | None,
              iv_recognizer: str) -> dict:
     """Group frames into individuals, attach appraisal windows, and resolve species and level."""
-    # Drop stretches without any reading (for example transitions or other screens).
-    individuals = [group for group in group_frames(frames)
-                   if group["cp"] or group["max_hp"] or group["species"]]
+    # Drop stretches without a Pokémon of their own: transitions, other screens, and the box list,
+    # whose grid shows many CPs but no HP or species. A detail screen always shows the max HP.
+    individuals = [group for group in group_frames(frames) if group["max_hp"] or group["species"]]
     for window in windows:
         target = _overlapping(individuals, window)
         if target is not None:

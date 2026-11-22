@@ -9,16 +9,27 @@
   <script src="/assets/box.js" defer></script>
 </head>
 <body>
-  <main>
+  <div class="appbar"><div class="appbar-inner"><a class="brand" href="/">포켓몬 GO 박스 스캔</a>
     <nav aria-label="주요 화면"><a href="/">스캔</a><a href="/box" aria-current="page">내 박스</a><a href="/raid">레이드 추천</a><a href="/max">맥스배틀 추천</a></nav>
-    <header>
-      <p class="eyebrow">POKÉMON GO · 개인 박스</p>
+  </div></div>
+  <main>
+    <header class="page-head">
       <h1>내 박스</h1>
       <p>승인해 저장한 개체입니다. 갱신할 때마다 이전 값이 이력에 남습니다.</p>
     </header>
+    <p class="info">게임 별명에 관리 번호를 넣어 두면(예: 마기라스 PK2 → 별명 <strong>마기PK2</strong>) 다음 스캔 때 그 개체를 자동으로 고릅니다. 번호는 종마다 따로 셉니다.</p>
     <div class="toolbar">
-      <label class="field search" for="search"><span>종·관리번호·별명으로 찾기</span>
-        <input id="search" type="search" autocomplete="off" placeholder="예: 마기라스 PK2"></label>
+      <div class="toolbar-left">
+        <label class="field search" for="search"><span>종·관리번호·별명으로 찾기</span>
+          <input id="search" type="search" autocomplete="off" placeholder="예: 마기라스 PK2"></label>
+        <label class="field sort" for="sort"><span>정렬</span>
+          <select id="sort">
+            <option value="recent">최근 갱신순</option>
+            <option value="cp">CP 높은순</option>
+            <option value="iv">IV 높은순</option>
+            <option value="species">종 이름순</option>
+          </select></label>
+      </div>
       <a class="button" href="/api/exports/box.xlsx" download>Excel로 내보내기</a>
     </div>
     <details class="backup">

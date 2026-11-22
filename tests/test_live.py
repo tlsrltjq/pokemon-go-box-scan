@@ -178,6 +178,15 @@ class ProgressTests(Fixture):
         self.assertEqual(session._windows(closed_only=True), [])
 
 
+class AssembleTests(unittest.TestCase):
+    def test_box_list_screens_are_not_candidates(self):
+        box_list = [{"frame": n, "seconds": n - 1, "duration": 1, "screen": "DETAIL", "cp": 3598} for n in (1, 2)]
+        detail = [{"frame": n, "seconds": n - 1, "duration": 1, "screen": "DETAIL", "cp": 1234,
+                   "hp": {"current": 120, "max": 120}} for n in (3, 4)]
+        result = analysis.assemble("s", box_list + detail, [], None, "x")
+        self.assertEqual([i["frames"] for i in result["individuals"]], [[3, 4]])
+
+
 class CpCorrectionTests(unittest.TestCase):
     def test_a_cp_that_fits_hp_and_iv_replaces_a_glitchy_vote(self):
         from boxscan import level

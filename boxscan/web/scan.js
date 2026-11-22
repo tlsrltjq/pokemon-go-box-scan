@@ -422,7 +422,9 @@ function card(individual, index) {
   return element("article", { class: "card" },
     element("header", {},
       element("h3", {}, `${index + 1}. ${species}${lucky ? "♣" : ""}`),
-      element("span", { class: "badge" }, "자동 판독 후보"),
+      individual.approval && !individual.approval.deleted
+        ? element("span", { class: "badge neutral" }, `저장됨 · ${individual.approval.code ?? ""}`)
+        : element("span", { class: "badge" }, "저장 전"),
     ),
     stateBadges(individual),
     element("div", { class: "evidence" },
@@ -620,6 +622,7 @@ function showProgress(current, running) {
 
 function showLive(session) {
   const running = Boolean(session?.running);
+  if (running && document.querySelector("#tab-live").getAttribute("aria-selected") !== "true") selectTab("tab-live");
   liveStart.hidden = running;
   liveStop.hidden = !running;
   liveSelect.disabled = running;
@@ -759,3 +762,19 @@ async function loadScans(updateSummary = true) {
 }
 
 loadScans();
+
+// Tabs: live capture or video upload. The last choice is remembered on this browser.
+const tabs = [...document.querySelectorAll('.tabs [role="tab"]')];
+
+function selectTab(id) {
+  tabs.forEach(tab => {
+    const selected = tab.id === id;
+    tab.setAttribute("aria-selected", String(selected));
+    document.getElementById(tab.getAttribute("aria-controls")).hidden = !selected;
+  });
+  try { localStorage.setItem("boxscan-scan-tab", id); } catch { /* storage blocked */ }
+}
+
+tabs.forEach(tab => tab.addEventListener("click", () => selectTab(tab.id)));
+try { selectTab(localStorage.getItem("boxscan-scan-tab") === "tab-upload" ? "tab-upload" : "tab-live"); }
+catch { selectTab("tab-live"); }
