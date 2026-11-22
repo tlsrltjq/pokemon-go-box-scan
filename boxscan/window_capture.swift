@@ -7,7 +7,8 @@
 //   window_capture stream <window id> <folder> <fps> <max seconds> <bar width>
 //       Every 1/fps seconds the latest window image, with dark or transparent borders trimmed,
 //       is written to stdout as a binary PPM scaled to <bar width> pixels wide (for the IV bars).
-//       Once per second it is also saved as <folder>/frame-NNN.jpg, 720 px wide (for OCR).
+//       Once per second it is also saved as <folder>/frame-NNN.jpg, 720 px wide (for OCR), unless the
+//       screen has not changed since the last saved second (that number is then skipped).
 //       Stops after <max seconds>, when stdout closes, or on SIGTERM.
 import CoreImage
 import Foundation
@@ -103,12 +104,35 @@ func ppm(_ image: CGImage, width: Int) -> Data? {
     return data
 }
 
+/// A small grayscale copy for telling whether the screen changed between two seconds.
+func thumbnail(_ image: CGImage) -> [UInt8] {
+    let width = 90, height = max(1, Int(Double(image.height) * 90 / Double(image.width)))
+    var pixels = [UInt8](repeating: 0, count: width * height)
+    pixels.withUnsafeMutableBytes { buffer in
+        guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
+        context.interpolationQuality = .medium
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    }
+    return pixels
+}
+
+/// Same screen: fewer than 0.2 % of the thumbnail pixels moved by more than 24 levels. The IV bars
+/// filling in change about 1 % of them, so an appraisal that settles is still saved.
+func unchanged(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+    guard a.count == b.count, !a.isEmpty else { return false }
+    var moved = 0
+    for i in 0..<a.count where abs(Int(a[i]) - Int(b[i])) > 24 { moved += 1 }
+    return moved * 500 < a.count
+}
+
 func saveJPEG(_ image: CGImage, width: Int, to url: URL) {
     guard let (context, _) = scaled(image, width: width), let small = context.makeImage() else { return }
     let partial = url.appendingPathExtension("partial")
     guard let destination = CGImageDestinationCreateWithURL(partial as CFURL, UTType.jpeg.identifier as CFString, 1, nil)
     else { return }
-    CGImageDestinationAddImage(destination, small, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+    CGImageDestinationAddImage(destination, small, [kCGImageDestinationLossyCompressionQuality: 0.75] as CFDictionary)
     if CGImageDestinationFinalize(destination) {
         _ = try? FileManager.default.removeItem(at: url)
         try? FileManager.default.moveItem(at: partial, to: url)
@@ -169,6 +193,7 @@ func streamWindow(id: UInt32, folder: URL, fps: Int, maxSeconds: Int, barWidth: 
     signal(SIGPIPE, SIG_IGN)
     let ticks = fps * maxSeconds
     var crop: CGRect?
+    var lastSaved: [UInt8] = []
     var tick = 0
     let start = DispatchTime.now().uptimeNanoseconds
     while tick < ticks {
@@ -188,7 +213,11 @@ func streamWindow(id: UInt32, folder: URL, fps: Int, maxSeconds: Int, barWidth: 
         let frame = image.cropping(to: crop!) ?? image
         if tick % fps == 0 {
             let number = tick / fps + 1
-            saveJPEG(frame, width: 720, to: folder.appendingPathComponent(String(format: "frame-%03d.jpg", number)))
+            let small = thumbnail(frame)
+            if !unchanged(small, lastSaved) {
+                saveJPEG(frame, width: 720, to: folder.appendingPathComponent(String(format: "frame-%03d.jpg", number)))
+                lastSaved = small
+            }
         }
         guard let data = ppm(frame, width: barWidth) else { tick += 1; continue }
         do {

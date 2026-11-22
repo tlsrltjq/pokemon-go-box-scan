@@ -84,6 +84,12 @@ def assemble(scan_id: str, frames: list[dict], windows: list[dict], data: refere
     }
 
 
+def detail_frame(individual: dict, readings: dict[int, dict]) -> int:
+    """The frame the candidate card shows: the first with both CP and HP, else the first frame."""
+    frames = individual["frames"]
+    return next((n for n in frames if "cp" in readings.get(n, {}) and "hp" in readings.get(n, {})), frames[0])
+
+
 def write_result(folder: Path, result: dict, name: str = RESULT) -> None:
     output = folder / name
     partial = output.with_suffix(".partial")

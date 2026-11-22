@@ -155,11 +155,15 @@ class Session:
             analysis.write_result(self.folder, result)
 
     def _evidence(self, number: int, seconds: float) -> str | None:
-        """The once-a-second JPEG nearest to the settled bars (no video is kept for an exact frame)."""
+        """The saved second showing the settled bars (no video is kept for an exact frame). Seconds
+        whose screen did not change are not saved, so the last saved one at or before it shows them."""
         if number not in self.evidence:
-            source = self.folder / f"frame-{round(seconds) + 1:03d}.jpg"
-            if not source.is_file():
+            wanted = round(seconds) + 1
+            saved = sorted(int(path.stem.split("-")[-1]) for path in self.store.frames(self.scan_id))
+            earlier = [n for n in saved if n <= wanted]
+            if not earlier:
                 return None
+            source = self.folder / f"frame-{earlier[-1]:03d}.jpg"
             name = f"iv-{number:02d}.jpg"
             shutil.copyfile(source, self.folder / name)
             self.evidence[number] = name

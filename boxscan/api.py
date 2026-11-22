@@ -11,10 +11,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from . import backup, export, live, max_battle, raid, reference, review
+from . import backup, cleanup, export, live, max_battle, raid, reference, review
 from .forms import display_name
 from .species import TEMP_NAMES
-from .analysis import LIVE_FILE, RESULT
+from .analysis import LIVE_FILE, RESULT, detail_frame
 from .box import BoxStore, Conflict
 from .store import JobStore
 from .video import MAX_FRAMES
@@ -294,6 +294,32 @@ def create_app(
             raise HTTPException(409, "실행 중인 실시간 캡처가 없습니다.")
         return session
 
+    @app.get("/api/scans")
+    def scan_list():
+        rows = cleanup.scans(store, box.saved_counts())
+        versions = cleanup.reference_versions(store.root)
+        return {"scans": rows, "bytes": sum(row["bytes"] for row in rows),
+                "reference": {"versions": versions, "bytes": sum(v["bytes"] for v in versions),
+                              "prunable": sum(v["bytes"] for v in versions if not v["keep"])}}
+
+    @app.post("/api/scans/{scan_id}/trim")
+    def scan_trim(scan_id: UUID):
+        try:
+            return {"freed": cleanup.trim(store, str(scan_id))}
+        except cleanup.CleanupError as error:
+            raise HTTPException(409, str(error)) from None
+
+    @app.delete("/api/scans/{scan_id}")
+    def scan_delete(scan_id: UUID):
+        try:
+            return {"freed": cleanup.delete(store, str(scan_id))}
+        except cleanup.CleanupError as error:
+            raise HTTPException(409, str(error)) from None
+
+    @app.post("/api/reference/prune")
+    def reference_prune():
+        return {"freed": cleanup.prune_reference(store.root)}
+
     @app.get("/api/scans/{scan_id}")
     def scan(scan_id: UUID):
         job = store.get(str(scan_id))
@@ -559,8 +585,7 @@ def _analysis(folder: Path, scan_id: str, status: str | None, error: str | None)
 
     for individual in result["individuals"]:
         frames = individual["frames"]
-        detail = next((n for n in frames if "cp" in readings.get(n, {})
-                       and "hp" in readings.get(n, {})), frames[0])
+        detail = detail_frame(individual, readings)
         summary["individuals"].append({
             "frames": [frames[0], frames[-1]],
             "seconds": [individual["start_seconds"], individual["end_seconds"]],

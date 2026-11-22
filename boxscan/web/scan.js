@@ -501,7 +501,10 @@ async function monitor(id) {
           || gallery.childElementCount !== shown.length) showFrames(shown);
       showAnalysis(scan.analysis);
       showLive(scan.live);
-      if (!["queued", "running", "live"].includes(scan.analysis.status)) return;
+      if (!["queued", "running", "live"].includes(scan.analysis.status)) {
+        loadScans();
+        return;
+      }
     } else {
       status.textContent = scan.status === "queued"
         ? "영상 저장 완료. 워커가 작업을 시작할 때까지 기다리는 중입니다."
@@ -575,7 +578,7 @@ async function loadWindows() {
   try {
     const { windows } = await jsonResponse(await fetch("/api/live/windows"));
     liveSelect.replaceChildren(...windows.map(w => element("option", { value: w.id },
-      `${w.suggested ? "★ " : ""}${w.app}${w.title ? ` · ${w.title}` : ""} (${w.width}×${w.height})`)));
+      `${w.suggested ? "★ " : ""}${w.app}${w.title && w.title !== w.app ? ` · ${w.title}` : ""} (${w.width}×${w.height})`)));
     liveStatus.textContent = windows.length
       ? (windows[0].suggested ? "★ 표시가 iPhone 화면으로 보이는 창입니다." : "iPhone 미러링이나 AirPlay 창을 열고 새로고침하세요.")
       : "캡처할 수 있는 창이 없습니다. iPhone 미러링이나 AirPlay 창을 열고 새로고침하세요.";
@@ -630,3 +633,67 @@ fetch("/api/live").then(jsonResponse).then(({ session }) => {
     run(() => monitor(session.scan_id));
   }
 }).catch(() => {});
+
+// Past scans and disk use. Nothing is removed without the user's confirmation.
+const scanList = document.querySelector("#scan-list");
+const storageSummary = document.querySelector("#storage-summary");
+const referenceCleanup = document.querySelector("#reference-cleanup");
+
+function formatBytes(bytes) {
+  return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)}GB`
+    : bytes >= 1024 ** 2 ? `${(bytes / 1024 ** 2).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
+
+async function cleanupAction(url, method, message) {
+  if (!confirm(message)) return;
+  try {
+    const { freed } = await jsonResponse(await fetch(url, { method }));
+    storageSummary.textContent = `${formatBytes(freed)}를 비웠습니다.`;
+    await loadScans(false);
+  } catch (error) {
+    storageSummary.textContent = error.message;
+  }
+}
+
+function scanItem(scan) {
+  const date = new Date(scan.created_at * 1000).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
+  const found = scan.individuals == null ? "판독 없음" : `${scan.individuals}개체 · 저장 ${scan.saved}`;
+  const kept = scan.trimmed ? "비운 스캔" : [scan.video ? "원본 영상" : null, scan.frames ? `프레임 ${scan.frames}장` : null]
+    .filter(Boolean).join(" · ") || "파일 없음";
+  const name = scan.filename;
+  const trim = element("button", { type: "button", class: "secondary" }, "비우기");
+  const remove = element("button", { type: "button", class: "danger" }, "삭제");
+  trim.hidden = scan.trimmed || (!scan.video && !scan.frames);
+  trim.disabled = remove.disabled = scan.busy;
+  trim.addEventListener("click", () => cleanupAction(`/api/scans/${scan.id}/trim`, "POST",
+    `${name}의 원본 영상과 프레임을 지울까요?\n판독 결과와 개체별 대표 이미지는 남고, 이 스캔은 다시 판독할 수 없습니다.`));
+  remove.addEventListener("click", () => cleanupAction(`/api/scans/${scan.id}`, "DELETE",
+    `${name} 스캔을 통째로 지울까요? 되돌릴 수 없습니다.` +
+    (scan.saved ? `\n박스에 저장한 ${scan.saved}개체의 값은 남지만, 이력의 출처 링크는 열리지 않습니다.` : "")));
+  return element("li", { class: scan.id === currentScan ? "current" : null },
+    element("div", { class: "scan-title" }, element("a", { href: `/?scan=${encodeURIComponent(scan.id)}` }, name)),
+    element("div", { class: "muted" }, `${date} · ${formatBytes(scan.bytes)} · ${found} · ${kept}` +
+      (scan.busy ? " · 처리 중" : "")),
+    element("div", { class: "actions" }, trim, remove));
+}
+
+async function loadScans(updateSummary = true) {
+  try {
+    const data = await jsonResponse(await fetch("/api/scans"));
+    if (updateSummary) {
+      storageSummary.textContent = `스캔 ${data.scans.length}개 ${formatBytes(data.bytes)} · 기준 데이터 ${formatBytes(data.reference.bytes)}`;
+    }
+    scanList.replaceChildren(...data.scans.map(scanItem));
+    const old = data.reference.versions.filter(v => !v.keep);
+    referenceCleanup.replaceChildren(...(old.length ? [
+      element("p", { class: "muted" }, `예전 기준 데이터 ${old.length}개(${formatBytes(data.reference.prunable)})는 쓰지 않습니다. 지금 쓰는 버전과 바로 전 버전은 남깁니다.`),
+      Object.assign(element("button", { type: "button", class: "secondary" }, "예전 기준 데이터 지우기"), {
+        onclick: () => cleanupAction("/api/reference/prune", "POST",
+          `예전 기준 데이터 ${old.length}개(${formatBytes(data.reference.prunable)})를 지울까요?`),
+      })] : []));
+  } catch (error) {
+    storageSummary.textContent = error.message;
+  }
+}
+
+loadScans();

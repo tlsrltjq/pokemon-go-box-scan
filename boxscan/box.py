@@ -165,6 +165,11 @@ class BoxStore:
             **json.loads(row["data"]),
         }
 
+    def saved_counts(self) -> dict[str, int]:
+        """How many candidates of each scan were saved to the box (removed entries included)."""
+        with self._read() as db:
+            return dict(db.execute("SELECT scan_id, COUNT(*) FROM approvals GROUP BY scan_id").fetchall())
+
     def approval(self, scan_id: str, individual: int) -> dict | None:
         with self._read() as db:
             row = db.execute(

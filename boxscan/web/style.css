@@ -123,6 +123,11 @@ a.button { display: inline-flex; align-items: center; min-height: 2.75rem; paddi
 .live-form { margin-bottom: 1rem; }
 .live-form h2, #upload h2 { margin: 0 0 .3rem; font-size: 1.15rem; }
 .live-window { grid-column: 1 / -1; }
+.scan-list { list-style: none; padding: 0; margin: .5rem 0; display: grid; gap: .5rem; }
+.scan-list li { background: white; border: 1px solid #c9d5d0; border-radius: .8rem; padding: .7rem .9rem; }
+.scan-list .scan-title { font-weight: 700; overflow-wrap: anywhere; }
+.scan-list .actions { margin-top: .4rem; }
+.scan-list .current { border-color: #236154; }
 .field.inline { flex-direction: row; align-items: center; gap: .4rem; }
 .field.inline input { width: 5rem; }
 .summary { margin-bottom: 1rem; }

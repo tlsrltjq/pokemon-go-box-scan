@@ -90,5 +90,14 @@ class JobStore:
                 (status, error, scan_id),
             )
 
+    def all(self) -> list[dict]:
+        with closing(sqlite3.connect(self.database)) as db:
+            db.row_factory = sqlite3.Row
+            return [dict(row) for row in db.execute("SELECT * FROM scans ORDER BY rowid")]
+
+    def delete(self, scan_id: str) -> None:
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
+
     def frames(self, scan_id: str) -> list[Path]:
         return sorted((self.root / scan_id).glob("frame-*.jpg"))
