@@ -187,7 +187,7 @@ def _temp_boosts(master: list[dict], enum_ids: dict[str, int]) -> dict:
 
 
 # Exclusive Max Attacks missing from the name list, as the Korean client shows them (user-checked).
-CLIENT_MAX_NAMES = {"MAX_BEHEMOTH_BLADE": "거수참", "MAX_BEHEMOTH_BASH": "거수탄"}
+CLIENT_MAX_NAMES = {"MAX_BEHEMOTH_BLADE": "거수참", "MAX_BEHEMOTH_BASH": "거수탄", "MAX_DYNAMAX_CANNON": "다이맥스포"}
 # Max Guard keeps the main-series name 다이월; Max Spirit exists only in GO and is shown as 다이리커버리.
 MAX_KINDS = {"MAX_SHIELD": ("guard", "다이월"), "MAX_HEAL": ("spirit", "다이리커버리")}
 
