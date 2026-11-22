@@ -35,41 +35,48 @@ func shareable() async -> SCShareableContent {
     }
 }
 
-/// Bounding box of pixels that are neither transparent nor near black, sampled every few pixels.
+/// The phone screen inside the window: trims the window's own frame (iPhone Mirroring's gray border
+/// and toolbar, AirPlay's black bars, transparent corners). The border colour is read at the
+/// left edge; scan lines at 35/50/65 % of the other axis move inward until the colour changes.
 func contentRect(_ image: CGImage) -> CGRect {
     let width = image.width, height = image.height
-    guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+    let full = CGRect(x: 0, y: 0, width: width, height: height)
+    guard width > 8, height > 8,
+          let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
                                   bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-        return CGRect(x: 0, y: 0, width: width, height: height)
-    }
-    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return full }
+    context.draw(image, in: full)
     let pixels = context.data!.bindMemory(to: UInt8.self, capacity: width * height * 4)
+    func pixel(_ x: Int, _ y: Int) -> (Int, Int, Int, Int) {
+        let i = (y * width + x) * 4  // rows run top to bottom in memory
+        return (Int(pixels[i]), Int(pixels[i + 1]), Int(pixels[i + 2]), Int(pixels[i + 3]))
+    }
+    let border = pixel(1, height / 2)
     func content(_ x: Int, _ y: Int) -> Bool {
-        let i = (y * width + x) * 4
-        return pixels[i + 3] > 200 && max(pixels[i], pixels[i + 1], pixels[i + 2]) > 24
+        let p = pixel(x, y)
+        if p.3 < 200 { return false }  // transparent counts as frame
+        if border.3 < 200 { return true }
+        return abs(p.0 - border.0) + abs(p.1 - border.1) + abs(p.2 - border.2) > 36
     }
-    let step = max(1, min(width, height) / 160)
-    func rowHas(_ y: Int) -> Bool {
-        var hits = 0
-        for x in stride(from: 0, to: width, by: step) where content(x, y) { hits += 1 }
-        return hits * step * 50 > width  // more than 2 % of the row
+    func inward(_ lines: [Int], _ limit: Int, _ at: (Int, Int) -> (Int, Int)) -> Int {
+        // The outermost edge over the scan lines; two content pixels in a row end a line.
+        lines.map { line in
+            var step = 0
+            while step < limit {
+                let (x, y) = at(line, step), (x2, y2) = at(line, step + 1)
+                if content(x, y) && content(x2, y2) { break }
+                step += 1
+            }
+            return step
+        }.min() ?? 0
     }
-    func columnHas(_ x: Int) -> Bool {
-        var hits = 0
-        for y in stride(from: 0, to: height, by: step) where content(x, y) { hits += 1 }
-        return hits * step * 50 > height
-    }
-    // The bitmap rows run top to bottom in memory.
-    var top = 0, bottom = height - 1, left = 0, right = width - 1
-    while top < bottom && !rowHas(top) { top += 1 }
-    while bottom > top && !rowHas(bottom) { bottom -= 1 }
-    while left < right && !columnHas(left) { left += 1 }
-    while right > left && !columnHas(right) { right -= 1 }
-    if right - left < width / 4 || bottom - top < height / 4 {
-        return CGRect(x: 0, y: 0, width: width, height: height)
-    }
-    return CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)
+    let rows = [35, 50, 65].map { height * $0 / 100 }, columns = [35, 50, 65].map { width * $0 / 100 }
+    let left = inward(rows, width / 3) { y, s in (s, y) }
+    let right = inward(rows, width / 3) { y, s in (width - 1 - s, y) }
+    let top = inward(columns, height / 3) { x, s in (x, s) }
+    let bottom = inward(columns, height / 3) { x, s in (x, height - 1 - s) }
+    let rect = CGRect(x: left, y: top, width: width - left - right, height: height - top - bottom)
+    return rect.width >= CGFloat(width) * 0.5 && rect.height >= CGFloat(height) * 0.5 ? rect : full
 }
 
 func scaled(_ image: CGImage, width: Int) -> (CGContext, Int)? {
