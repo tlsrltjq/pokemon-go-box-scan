@@ -118,9 +118,10 @@ def species_move(reference: Reference, pokemon_id: int, form: str | None) -> str
 
 
 def _max_kind(name: str) -> str:
-    if name == "다이월":
+    # Typed or read short ("월", "리커버리") they are still Max Guard and Max Spirit.
+    if name.endswith("월"):
         return "guard"
-    if name == "다이리커버리":
+    if "리커버리" in name:
         return "spirit"
     return "gmax" if name.startswith("거다이") else "attack"
 

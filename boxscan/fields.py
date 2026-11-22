@@ -32,9 +32,9 @@ CODE = re.compile(r"(?<![A-Za-z0-9])[Pp][Kk]\s?(\d{1,4})(?!\d)")
 NICKNAME_CODE = re.compile(r"(?<![0-9])(\d{2,3})$")
 # 맥스기술: names start with 다이 or 거다이; the row above shows "레벨 N" or LOCKED per move.
 MAX_HEADER = re.compile(r"맥스기술")
-# Crowned Zacian and Zamazenta use their own Max Attack (거대검돌격, 거대방패돌격; game master
-# max_behemoth_blade / max_behemoth_bash), whose names do not start with 다이. Eternatus's 다이맥스포 does.
-MAX_MOVE = re.compile(r"^(?:(?:거다이|다이)[가-힣]{1,8}|거대(?:검|방패)돌격)$")
+# Crowned Zacian and Zamazenta use their own Max Attack, 거수참 and 거수탄 in the Korean client (game
+# master max_behemoth_blade / max_behemoth_bash), whose names do not start with 다이.
+MAX_MOVE = re.compile(r"^(?:(?:거다이|다이)[가-힣]{1,8}|거수[참탄])$")
 MAX_LEVEL = re.compile(r"레벨\s*(\d)")
 # Move rows: a Korean name on the left and its power on the same row at the right, such as
 # "지진 … 140+28". The second number is a bonus: "기술 날씨 보너스" or "메가진화 보너스" on the

@@ -186,6 +186,8 @@ def _temp_boosts(master: list[dict], enum_ids: dict[str, int]) -> dict:
     return found
 
 
+# Exclusive Max Attacks missing from the name list, as the Korean client shows them (user-checked).
+CLIENT_MAX_NAMES = {"MAX_BEHEMOTH_BLADE": "거수참", "MAX_BEHEMOTH_BASH": "거수탄"}
 # Max Guard keeps the main-series name 다이월; Max Spirit exists only in GO and is shown as 다이리커버리.
 MAX_KINDS = {"MAX_SHIELD": ("guard", "다이월"), "MAX_HEAL": ("spirit", "다이리커버리")}
 
@@ -210,7 +212,7 @@ def _max_data(master: list[dict], move_names_csv: bytes) -> tuple[dict, dict, di
                 kind, name = MAX_KINDS[vfx]
             else:
                 kind = "gmax" if vfx.startswith("GMAX_") else "attack"
-                name = english.get(_move_key(vfx))
+                name = english.get(_move_key(vfx)) or CLIENT_MAX_NAMES.get(vfx)
             moves[template] = {"type": _type(settings.get("pokemonType")), "kind": kind, "name": name, "vfx": vfx.lower()}
         if "breadMoveMappings" in data:
             by_type = {_type(m["type"]): m["move"] for m in data["breadMoveMappings"].get("mappings", [])}

@@ -46,6 +46,11 @@ class FighterTests(unittest.TestCase):
         f, _ = max_battle.fighter(self.data, max_entry(1, max_moves=moves))
         self.assertEqual((f.max_attack["level"], f.max_attack["power"], f.guard, f.spirit), (3, 350, 2, None))
 
+    def test_short_guard_and_spirit_names_are_recognised(self):
+        moves = [{"name": "다이스트림", "level": 2}, {"name": "월", "level": 1}, {"name": "리커버리", "level": 2}]
+        f, _ = max_battle.fighter(self.data, max_entry(1, max_moves=moves))
+        self.assertEqual((f.max_attack["level"], f.guard, f.spirit), (2, 1, 2))
+
     def test_gigantamax_uses_the_species_move(self):
         f, _ = max_battle.fighter(self.data, max_entry(1, state="gigantamax",
                                                        max_moves=[{"name": "거다이포격", "level": 2}]))
