@@ -5,8 +5,8 @@ once, so a double click or retry cannot create a second entry. Updating an exist
 its UUID and management code, bumps the revision and stores the previous values. Fields that a
 new observation did not read keep their previous values instead of being cleared.
 
-Management codes count up within each species (마기라스 PK1, PK2, 망나뇽 PK1), so the number the
-user types into a nickname stays short. A number is never given out twice in the same species:
+Management codes count up within each species and are shown with two digits (마기라스 01, 02, 망나뇽
+01; 100 and up use three), so the nickname the user types stays short: 망나뇽01. A number is never given out twice in the same species:
 removed entries keep theirs, and an entry whose species is corrected gets the next number of the
 new species while the old number stays reserved.
 """
@@ -60,11 +60,17 @@ CREATE TABLE IF NOT EXISTS approvals (
 # Every read joins the entry's current code.
 SELECT = ("SELECT p.*, c.number AS code_number FROM pokemon p "
           "LEFT JOIN codes c ON c.pokemon_id = p.id AND c.current = 1")
-CODE = re.compile(r"PK([1-9][0-9]{0,3})")
+# "01", "1", "001", and the earlier "PK1" / "PK0001" all name number 1.
+CODE = re.compile(r"(?:PK)?\s?(\d{1,4})", re.IGNORECASE)
 
 
 def code(number: int | None) -> str | None:
-    return f"PK{number}" if number else None
+    return f"{number:02d}" if number else None
+
+
+def code_number(value: str | None) -> int | None:
+    match = CODE.fullmatch((value or "").strip())
+    return int(match[1]) if match and int(match[1]) > 0 else None
 
 
 # Fields the box page edits directly. They are replaced as a whole, so the user can clear a wrong
@@ -179,7 +185,7 @@ class BoxStore:
             ).fetchone()
         if row is None:
             return None
-        return {"pokemon_id": row["id"], "code": code(row["code_number"]),
+        return {"pokemon_id": row["id"], "code": code(row["code_number"]), "species": json.loads(row["data"]).get("species"),
                 "revision": row["approved_revision"], "deleted": row["deleted_at"] is not None}
 
     def approve(self, scan_id: str, individual: int, values: dict, source: dict,
@@ -242,11 +248,11 @@ class BoxStore:
 
     def by_code(self, species: str | None, value: str | None) -> dict | None:
         """The entry holding this code in this species, including removed ones (codes are never reused)."""
-        match = CODE.fullmatch(value or "")
-        if match is None or not species:
+        number = code_number(value)
+        if number is None or not species:
             return None
         with self._read() as db:
-            row = db.execute(f"{SELECT} WHERE c.species = ? AND c.number = ?", (species, int(match[1]))).fetchone()
+            row = db.execute(f"{SELECT} WHERE c.species = ? AND c.number = ?", (species, number)).fetchone()
         if row is None:
             return None
         return {**self._entry(row), "deleted": row["deleted_at"] is not None}

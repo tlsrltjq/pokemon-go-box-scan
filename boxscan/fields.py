@@ -24,11 +24,12 @@ DYNAMAX = re.compile(r"^다이맥스$")
 GIGANTAMAX = re.compile(r"^거다이맥")
 BACKGROUND = re.compile(r"배경은")
 MEGA_TIMER = re.compile(r"남은\s*시간")
-# Management code the user typed into the in-game nickname (spec 6.3), such as "PK2" or "마기PK2".
-# The number counts within the species, so the species read on screen picks the entry. Leading
-# zeros ("PK0002", from the earlier box-wide numbering) read as the same number. Only an exact
-# letters-and-digits reading counts; OCR guesses are not repaired.
+# Management code the user typed into the in-game nickname (spec 6.3): the species name with a
+# two- or three-digit number at the end ("망나뇽01", "망나뇽 001"). The number counts within the
+# species, so the species read on screen picks the entry. The earlier "PK2" form is still read.
+# Only an exact reading counts; OCR guesses ("망나뇽O1") are not repaired.
 CODE = re.compile(r"(?<![A-Za-z0-9])[Pp][Kk]\s?(\d{1,4})(?!\d)")
+NICKNAME_CODE = re.compile(r"(?<![0-9])(\d{2,3})$")
 # 맥스기술: names start with 다이 or 거다이; the row above shows "레벨 N" or LOCKED per move.
 MAX_HEADER = re.compile(r"맥스기술")
 MAX_MOVE = re.compile(r"^(?:거다이|다이)[가-힣]{1,8}$")
@@ -150,9 +151,25 @@ def parse_nickname(lines: list[dict]) -> str | None:
     return max(candidates, key=lambda line: line["box"][1])["text"].strip() or None
 
 
-def parse_code(texts: list[str]) -> str | None:
-    codes = {f"PK{int(match[1])}" for text in texts for match in CODE.finditer(text) if int(match[1])}
-    return codes.pop() if len(codes) == 1 else None
+def parse_code(texts: list[str], nickname: str | None = None) -> str | None:
+    codes = {int(match[1]) for text in texts for match in CODE.finditer(text) if int(match[1])}
+    if not codes and nickname:
+        codes = {number for number in [nickname_code(nickname)] if number}
+    return f"{codes.pop():02d}" if len(codes) == 1 else None
+
+
+def nickname_code(nickname: str, species: str | None = None) -> int | None:
+    """The number at the end of a nickname. With the species known, only what follows its name counts,
+    so a name that ends in a digit (폴리곤2) is not mistaken for a number."""
+    text = re.sub(r"^[^가-힣A-Za-z0-9]*R?(?=[가-힣])", "", nickname.strip())  # icon read as "R" or a symbol
+    if species:
+        if not text.startswith(species):
+            return None
+        text = text[len(species):]
+        match = re.fullmatch(r"\s*(\d{2,3})", text)
+    else:
+        match = NICKNAME_CODE.search(text)
+    return int(match[1]) if match and int(match[1]) > 0 else None
 
 
 def _cp_candidates(lines: list[dict], width: int | None) -> list[int]:
@@ -178,10 +195,11 @@ def parse_frame(lines: list[dict], width: int | None = None) -> dict:
         found["moves"] = moves
     if max_moves := parse_max_moves(lines):
         found["max_moves"] = max_moves
-    if code := parse_code(texts):
-        found["code"] = code
-    if nickname := parse_nickname(lines):
+    nickname = parse_nickname(lines)
+    if nickname:
         found["nickname"] = nickname
+    if code := parse_code(texts, nickname):
+        found["code"] = code
     if candidates := _cp_candidates(lines, width):
         found["cp_candidates"] = candidates
     for text in texts:

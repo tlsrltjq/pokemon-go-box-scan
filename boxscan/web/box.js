@@ -130,7 +130,7 @@ function entryCard(entry) {
     toggle.textContent = "이력 닫기";
   });
   remove.addEventListener("click", async () => {
-    const name = `${entry.code} ${displayName(entry)}`;
+    const name = `${displayName(entry)} ${entry.code ?? ""}`.trim();
     if (!confirm(`${name}을(를) 박스에서 제거할까요? 이력과 관리 번호는 남고, 번호는 다시 쓰지 않습니다.`)) return;
     try {
       await jsonResponse(await fetch(`/api/pokemon/${entry.id}?revision=${entry.revision}`, { method: "DELETE" }));
@@ -146,7 +146,7 @@ function entryCard(entry) {
   const temp = entry.temp_observation;
   return element("article", { class: "card", id: entry.id },
     element("header", {},
-      element("h3", { class: "card-title" }, displayName(entry), element("span", { class: "code-chip" }, entry.code ?? "번호 없음")),
+      element("h3", { class: "card-title" }, displayName(entry), element("span", { class: "code-chip" }, entry.code ? `${entry.code}번` : "번호 없음")),
       entry.iv ? element("span", { class: "badge neutral" }, `IV ${ivPercent(entry.iv)}%`) : null),
     badges.length ? element("div", { class: "badges" },
       ...badges.map(([text, kind]) => element("span", { class: `badge state ${kind}` }, text))) : null,
@@ -157,8 +157,8 @@ function entryCard(entry) {
     ),
     element("p", {}, element("span", { class: "muted" }, "IV 공/방/체 "), element("strong", {}, formatIv(entry.iv))),
     entry.nickname ? element("p", {}, element("span", { class: "muted" }, "게임 별명 "), entry.nickname) : null,
-    hasCode(entry) ? null : element("span", { class: "hint-chip", title: "게임 별명에 넣으면 다음 스캔 때 자동으로 고릅니다" },
-      `별명에 ${entry.code} 넣기 전`),
+    hasCode(entry) || !entry.code ? null : element("span", { class: "hint-chip", title: "게임 별명을 이렇게 바꾸면 다음 스캔 때 자동으로 고릅니다" },
+      `추천 별명 ${entry.species ?? ""}${entry.code}`),
     entry.cp_source === "calculated" ? element("p", { class: "muted" },
       "CP·최대 HP는 메가진화 중 기록과 레벨로 계산한 기본 모습 값입니다.") : null,
     temp ? element("p", { class: "muted" },
@@ -176,18 +176,27 @@ function entryCard(entry) {
   );
 }
 
-// The nickname holds this entry's code exactly (PK1, also PK0001), not just as part of PK12.
-function hasCode(entry) {
-  const number = entry.code?.slice(2);
-  return Boolean(number) && new RegExp(`PK\\s?0*${number}(?!\\d)`, "i").test(entry.nickname ?? "");
+// A management code as a number: "01", "1", "001" and the earlier "PK1" are all number 1.
+function codeNumber(value) {
+  const match = String(value ?? "").trim().match(/^(?:PK)?\s?0*([1-9]\d{0,3})$/i);
+  return match ? Number(match[1]) : null;
 }
 
-// Every word must match the species, the code (PK1 = PK0001) or the nickname: "마기라스 PK1".
+// The nickname already carries this entry's number: 망나뇽01 (or the earlier 망나뇽PK1).
+function hasCode(entry) {
+  const number = codeNumber(entry.code);
+  const nickname = (entry.nickname ?? "").replace(/\s+/g, "").replace(/^R(?=[가-힣])/, "");
+  // Only what follows the species name counts, so 폴리곤2 alone is not number 2.
+  const rest = entry.species && nickname.startsWith(entry.species) ? nickname.slice(entry.species.length) : null;
+  const tail = (rest ?? "").match(/^(?:PK)?0*([1-9]\d{0,3})$/i) ?? nickname.match(/PK0*([1-9]\d{0,3})$/i);
+  return Boolean(number) && Boolean(tail) && Number(tail[1]) === number;
+}
+
+// Every word must match the species, the number (02 = 2) or the nickname: "마기라스 02".
 function matches(entry, word) {
-  const upper = word.toUpperCase();
-  const code = upper.match(/^PK0*([1-9]\d*)$/);
-  return (entry.species ?? "").includes(word) || (code ? entry.code === `PK${code[1]}` : false)
-    || (entry.nickname ?? "").toUpperCase().includes(upper);
+  const number = codeNumber(word);
+  return (entry.species ?? "").includes(word) || (number !== null && codeNumber(entry.code) === number)
+    || (entry.nickname ?? "").toUpperCase().includes(word.toUpperCase());
 }
 
 function ivPercent(iv) {

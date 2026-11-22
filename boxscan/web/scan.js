@@ -273,18 +273,18 @@ function previewValues(values, individual) {
 
 function savedNote(approval, duplicate = false) {
   return element("div", { class: "save saved" },
-    element("h4", {}, approval.deleted ? `${approval.code} · 박스에서 제거됨` : `${approval.code}(으)로 저장됨`),
+    element("h4", {}, `${approval.species ?? ""} ${approval.code}` + (approval.deleted ? " · 박스에서 제거됨" : "(으)로 저장됨")),
     element("p", {},
       duplicate ? "이미 저장한 후보입니다. " : "",
       element("a", { href: `/box#${approval.pokemon_id}` }, "내 박스에서 보기")),
     approval.deleted ? null : element("p", { class: "muted" },
-      `게임에서 이 포켓몬의 별명에 ${approval.code}을(를) 넣어 두면 다음 스캔 때 이 개체를 자동으로 고릅니다. 번호는 종마다 따로 셉니다.`));
+      `게임에서 이 포켓몬의 별명을 ${approval.species ?? ""}${approval.code}(으)로 바꿔 두면 다음 스캔 때 이 개체를 자동으로 고릅니다. 번호는 종마다 따로 셉니다.`));
 }
 
 const CODE_NOTES = {
-  not_found: match => `별명에서 ${match.code}을(를) 읽었지만 박스의 ${match.species}에는 없는 관리번호입니다. 새 개체로 저장하거나 직접 고르세요.`,
+  not_found: match => `별명에서 번호 ${match.code}을(를) 읽었지만 박스의 ${match.species}에는 없는 관리번호입니다. 새 개체로 저장하거나 직접 고르세요.`,
   deleted: match => `별명의 ${match.species} ${match.code}은(는) 박스에서 제거한 개체의 번호라 자동으로 고르지 않았습니다.`,
-  species_unknown: match => `별명에서 ${match.code}을(를) 읽었지만 종을 읽지 못해 개체를 고르지 못했습니다. 관리번호는 종마다 따로 셉니다.`,
+  species_unknown: match => `별명에서 번호 ${match.code}을(를) 읽었지만 종을 읽지 못해 개체를 고르지 못했습니다. 관리번호는 종마다 따로 셉니다.`,
   match: match => `별명에서 ${match.species} ${match.code}을(를) 읽어 기존 개체를 골랐습니다. 다른 개체면 저장 방식을 바꾸세요.`,
 };
 
@@ -423,7 +423,7 @@ function card(individual, index) {
     element("header", {},
       element("h3", {}, `${index + 1}. ${species}${lucky ? "♣" : ""}`),
       individual.approval && !individual.approval.deleted
-        ? element("span", { class: "badge neutral" }, `저장됨 · ${individual.approval.code ?? ""}`)
+        ? element("span", { class: "badge neutral" }, `저장됨 · ${individual.approval.code ?? ""}번`)
         : element("span", { class: "badge" }, "저장 전"),
     ),
     stateBadges(individual),

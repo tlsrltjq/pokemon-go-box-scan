@@ -25,11 +25,11 @@ class BoxStoreTests(unittest.TestCase):
 
     def test_new_entry_gets_code_and_retry_returns_the_same_entry(self):
         first = self.box.approve("scan", 0, {"species": "하나몬", "cp": 100}, SOURCE)
-        self.assertEqual((first["code"], first["revision"], first["duplicate"]), ("PK1", 1, False))
+        self.assertEqual((first["code"], first["revision"], first["duplicate"]), ("01", 1, False))
         again = self.box.approve("scan", 0, {"species": "하나몬", "cp": 999}, SOURCE)
         self.assertEqual((again["id"], again["cp"], again["duplicate"]), (first["id"], 100, True))
         self.assertEqual(len(self.box.list()), 1)
-        self.assertEqual(self.box.approval("scan", 0)["code"], "PK1")
+        self.assertEqual(self.box.approval("scan", 0)["code"], "01")
         self.assertIsNone(self.box.approval("scan", 1))
 
     def test_update_keeps_identity_and_does_not_erase_unread_values(self):
@@ -39,7 +39,7 @@ class BoxStoreTests(unittest.TestCase):
         updated = self.box.approve("rescan", 0, {"species": None, "cp": 150, "max_hp": None,
                                                  "moves": {"fast": None, "charged": [{"name": "C"}]}},
                                    SOURCE, target=first["id"], expected_revision=1)
-        self.assertEqual((updated["id"], updated["code"], updated["revision"]), (first["id"], "PK1", 2))
+        self.assertEqual((updated["id"], updated["code"], updated["revision"]), (first["id"], "01", 2))
         self.assertEqual((updated["species"], updated["cp"], updated["max_hp"]), ("하나몬", 150, 50))
         self.assertEqual(updated["moves"], {"fast": {"name": "A"}, "charged": [{"name": "C"}]})
         detail = self.box.get(first["id"])
@@ -64,23 +64,23 @@ class BoxStoreTests(unittest.TestCase):
         self.assertIsNone(self.box.get(first["id"]))
         self.assertTrue(self.box.approval("scan", 0)["deleted"])
         second = self.box.approve("scan", 1, {"cp": 200}, SOURCE)
-        self.assertEqual(second["code"], "PK2")  # same (unknown) species: the removed PK1 stays reserved
+        self.assertEqual(second["code"], "02")  # same (unknown) species: the removed PK1 stays reserved
 
     def test_codes_count_within_each_species(self):
         def add(n, species):
             return self.box.approve("scan", n, {"species": species, "cp": 100}, SOURCE)
         first, other, second = add(0, "마기라스"), add(1, "망나뇽"), add(2, "마기라스")
-        self.assertEqual([first["code"], other["code"], second["code"]], ["PK1", "PK1", "PK2"])
+        self.assertEqual([first["code"], other["code"], second["code"]], ["01", "01", "02"])
         # A corrected species takes that species' next number; the old one is never handed out again.
         moved = self.box.edit(second["id"], {**second, "species": "망나뇽"}, second["revision"])
-        self.assertEqual(moved["code"], "PK2")
-        self.assertEqual(add(3, "마기라스")["code"], "PK3")
+        self.assertEqual(moved["code"], "02")
+        self.assertEqual(add(3, "마기라스")["code"], "03")
         back = self.box.edit(moved["id"], {**moved, "species": "마기라스"}, moved["revision"])
-        self.assertEqual(back["code"], "PK4")
+        self.assertEqual(back["code"], "04")
         # An update that only fills in the species of an unknown entry moves it the same way.
         unknown = self.box.approve("scan", 4, {"cp": 100}, SOURCE)
         named = self.box.approve("scan", 5, {"species": "망나뇽"}, SOURCE, target=unknown["id"])
-        self.assertEqual((unknown["code"], named["code"]), ("PK1", "PK3"))
+        self.assertEqual((unknown["code"], named["code"]), ("01", "03"))
 
     def test_box_from_before_per_species_codes_is_numbered_on_open(self):
         import sqlite3
@@ -90,7 +90,7 @@ class BoxStoreTests(unittest.TestCase):
             db.execute("DROP TABLE codes")  # like a box (or backup) made before this version
         reopened = BoxStore(self.root)
         self.assertEqual([(e["species"], e["code"]) for e in reopened.list()],
-                         [("마기라스", "PK1"), ("망나뇽", "PK1"), ("마기라스", "PK2")])
+                         [("마기라스", "01"), ("망나뇽", "01"), ("마기라스", "02")])
 
     def test_list_filters_by_species_and_store_opens_concurrently(self):
         self.box.approve("scan", 0, {"species": "하나몬"}, SOURCE)
@@ -114,11 +114,12 @@ class BoxStoreTests(unittest.TestCase):
 
     def test_by_code_finds_current_and_removed_entries(self):
         first = self.box.approve("scan", 0, {"species": "하나몬"}, {"scan_id": "scan", "individual": 0})
-        self.assertEqual(self.box.by_code("하나몬", "PK1")["id"], first["id"])
+        for value in ("01", "1", "001", "PK1", "pk0001"):  # the earlier PK form still names number 1
+            self.assertEqual(self.box.by_code("하나몬", value)["id"], first["id"], value)
         self.box.delete(first["id"], first["revision"])
-        self.assertTrue(self.box.by_code("하나몬", "PK1")["deleted"])
-        for species, code in (("하나몬", "PK2"), ("두나몬", "PK1"), ("하나몬", "pk1"), ("하나몬", "PK01"),
-                              (None, "PK1"), ("하나몬", None)):
+        self.assertTrue(self.box.by_code("하나몬", "01")["deleted"])
+        for species, code in (("하나몬", "02"), ("두나몬", "01"), ("하나몬", "0"), ("하나몬", "A1"),
+                              (None, "01"), ("하나몬", None)):
             self.assertIsNone(self.box.by_code(species, code))
 
     def test_merge_ignores_empty_values(self):
@@ -229,10 +230,10 @@ class ApprovalApiTests(unittest.TestCase):
         created = self.approve(0, {"values": values})
         self.assertEqual(created.status_code, 200, created.text)
         entry = created.json()
-        self.assertEqual(entry["code"], "PK1")
+        self.assertEqual(entry["code"], "01")
         self.assertEqual(entry["level"]["status"], "NO_REFERENCE")  # no reference data in this test
         scan = self.client.get(f"/api/scans/{self.scan_id}").json()
-        self.assertEqual(scan["analysis"]["individuals"][0]["approval"]["code"], "PK1")
+        self.assertEqual(scan["analysis"]["individuals"][0]["approval"]["code"], "01")
         self.assertIsNone(scan["analysis"]["individuals"][1]["approval"])
 
         changed = {**values, "cp": 150, "iv": {"attack": 1, "defense": 2, "stamina": 4}}
@@ -246,8 +247,8 @@ class ApprovalApiTests(unittest.TestCase):
         self.assertEqual(detail["revisions"][0]["source"]["filename"], "합성.mp4")
 
     def test_code_in_nickname_suggests_the_entry_and_warns_on_mismatch(self):
-        entry = self.approve(0, {"values": {"species": "하나몬", "cp": 100, "nickname": "하나PK1"}}).json()
-        self.assertEqual((entry["nickname"], entry["code"]), ("하나PK1", "PK1"))
+        entry = self.approve(0, {"values": {"species": "하나몬", "cp": 100, "nickname": "하나몬01"}}).json()
+        self.assertEqual((entry["nickname"], entry["code"]), ("하나몬01", "01"))
         base = {"frames": [1], "start_seconds": 0, "end_seconds": 1, "cp": None, "max_hp": None}
 
         def candidate(species, code):
@@ -256,26 +257,26 @@ class ApprovalApiTests(unittest.TestCase):
 
         path = self.store.root / self.scan_id / "analysis.json"
         result = json.loads(path.read_text(encoding="utf-8"))
-        result["individuals"] = [result["individuals"][0], candidate("하나몬", "PK1"),
-                                 candidate("두나몬", "PK1"), candidate("하나몬", "PK9"), candidate(None, "PK1")]
+        result["individuals"] = [result["individuals"][0], candidate("하나몬", "01"),
+                                 candidate("두나몬", "01"), candidate("하나몬", "09"), candidate(None, "01")]
         path.write_text(json.dumps(result), encoding="utf-8")
         found = [i["code_match"] for i in self.client.get(f"/api/scans/{self.scan_id}").json()["analysis"]["individuals"]]
         self.assertIsNone(found[0])
         self.assertEqual((found[1]["status"], found[1]["pokemon_id"]), ("match", entry["id"]))
         # The number counts within the species read on screen: 두나몬 has no PK1.
-        self.assertEqual(found[2], {"code": "PK1", "status": "not_found", "species": "두나몬"})
-        self.assertEqual(found[3], {"code": "PK9", "status": "not_found", "species": "하나몬"})
-        self.assertEqual(found[4], {"code": "PK1", "status": "species_unknown"})
+        self.assertEqual(found[2], {"code": "01", "status": "not_found", "species": "두나몬"})
+        self.assertEqual(found[3], {"code": "09", "status": "not_found", "species": "하나몬"})
+        self.assertEqual(found[4], {"code": "01", "status": "species_unknown"})
 
         other = self.approve(3, {"values": {"species": "하나몬", "cp": 100}}).json()  # 하나몬 PK2
         warned = self.approve(1, {"values": {"species": "하나몬", "cp": 100}, "target": other["id"],
                                   "expected_revision": 1})
         self.assertEqual(warned.status_code, 409)
-        self.assertIn("관리번호는 PK1인데 하나몬 PK2", warned.json()["warnings"][0])
+        self.assertIn("관리번호는 01인데 하나몬 02", warned.json()["warnings"][0])
         matched = self.approve(1, {"values": {"species": "하나몬", "cp": 120}, "target": entry["id"],
                                    "expected_revision": 1})
         self.assertEqual(matched.status_code, 200, matched.text)
-        self.assertEqual(matched.json()["nickname"], "하나PK1")  # blank nickname keeps the saved one
+        self.assertEqual(matched.json()["nickname"], "하나몬01")  # blank nickname keeps the saved one
         self.client.delete(f"/api/pokemon/{entry['id']}", params={"revision": 2})
         found = self.client.get(f"/api/scans/{self.scan_id}").json()["analysis"]["individuals"][1]["code_match"]
         self.assertEqual(found["status"], "deleted")

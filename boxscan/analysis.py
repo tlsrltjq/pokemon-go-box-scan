@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import ivbars, level, ocr, reference, species
 from . import moves as move_dictionary
-from .fields import group_frames, parse_frame
+from .fields import CODE as CODE_PK, group_frames, nickname_code, parse_frame
 from .store import JobStore
 from .video import MAX_VIDEO_SECONDS, SAMPLE_SECONDS
 
@@ -106,6 +106,13 @@ def apply_reference(individual: dict, data: reference.Reference | None) -> None:
     temp = resolved["temp_evolution"]
     if temp is None and (individual.get("mega_timer") or {}).get("value"):
         temp = species.single_mega(data, resolved["species"])  # timer seen, name not changed
+    # With the species known, read the nickname's number again so that only what follows the
+    # species name counts (폴리곤2 is a name, 폴리곤201 is number 01).
+    nickname = (individual.get("nickname") or {}).get("value")
+    if nickname and resolved["species"] and not CODE_PK.search(nickname):
+        number = nickname_code(nickname, resolved["species"])
+        individual["code"] = ({**(individual.get("code") or {"votes": 1, "observations": 1}), "value": f"{number:02d}"}
+                              if number else None)
     individual["state"] = {
         "screen_name": screen_name,
         "temp_evolution": temp,

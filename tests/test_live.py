@@ -187,6 +187,20 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual([i["frames"] for i in result["individuals"]], [[3, 4]])
 
 
+class NicknameCodeTests(unittest.TestCase):
+    def test_species_name_is_taken_off_before_reading_the_number(self):
+        def individual(nickname, code):
+            return {"species": {"value": "폴리곤2"}, "nickname": {"value": nickname, "votes": 1, "observations": 1},
+                    "code": {"value": code, "votes": 1, "observations": 1} if code else None,
+                    "cp": None, "max_hp": None, "appraisals": [], "moves": {"fast": None, "charged": []}}
+        named = individual("폴리곤201", "201")  # frame reading: three trailing digits
+        analysis.apply_reference(named, None)
+        self.assertEqual(named["code"]["value"], "01")
+        plain = individual("폴리곤2", None)
+        analysis.apply_reference(plain, None)
+        self.assertIsNone(plain["code"])
+
+
 class CpCorrectionTests(unittest.TestCase):
     def test_a_cp_that_fits_hp_and_iv_replaces_a_glitchy_vote(self):
         from boxscan import level

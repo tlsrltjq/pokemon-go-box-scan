@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from boxscan import ocr
-from boxscan.fields import group_frames, parse_frame
+from boxscan.fields import group_frames, nickname_code, parse_frame
 
 FFMPEG = shutil.which(os.environ.get("BOXSCAN_FFMPEG", "ffmpeg"))
 
@@ -69,12 +69,22 @@ class FieldParserTests(unittest.TestCase):
                        ("R마기PK0042", 117, 295, 98, 20), ("반짝반짝 포컷몬", 129, 321, 72, 14),
                        ("188 / 188 HP", 137, 351, 56, 10), ("바위 / 악", 155, 451, 38, 10))
         found = parse_frame(detail)
-        # Leading zeros from the earlier box-wide codes read as the same per-species number.
-        self.assertEqual((found["nickname"], found["code"]), ("R마기PK0042", "PK42"))
-        self.assertEqual(parse_frame(lines("pk 3"))["code"], "PK3")
-        self.assertEqual(parse_frame(lines("마기라스PK12"))["code"], "PK12")
+        # The earlier "PK" form is still read; leading zeros name the same number.
+        self.assertEqual((found["nickname"], found["code"]), ("R마기PK0042", "42"))
+        self.assertEqual(parse_frame(lines("pk 3"))["code"], "03")
         for text in ("APK2", "PKO4", "PK0", "PK12345", "PK2 PK3"):  # no guessing, no ambiguity
             self.assertNotIn("code", parse_frame(lines(text)), text)
+
+    def test_nickname_ending_in_a_number_is_the_code(self):
+        def read(name):
+            detail = boxed(("CP3492", 122, 44, 42, 19), (name, 117, 295, 98, 20), ("167 / 167 HP", 137, 351, 56, 10))
+            return parse_frame(detail).get("code")
+        self.assertEqual([read("R망나뇽01"), read("망나뇽 001"), read("망나뇽12"), read("망나뇽100")], ["01", "01", "12", "100"])
+        for name in ("망나뇽", "망나뇽O1", "망나뇽1", "망나뇽1234"):  # no number, OCR guess, one digit, too long
+            self.assertIsNone(read(name), name)
+        self.assertEqual(nickname_code("R폴리곤201", "폴리곤2"), 1)  # what follows the species name
+        self.assertIsNone(nickname_code("폴리곤2", "폴리곤2"))
+        self.assertIsNone(nickname_code("마기01", "마기라스"))  # does not start with the species name
         self.assertNotIn("nickname", parse_frame(lines("CP1000")))
 
     def test_cp_candidates_keep_other_readings_of_the_cp_line(self):
@@ -92,8 +102,8 @@ class FieldParserTests(unittest.TestCase):
     def test_a_different_code_starts_a_new_individual(self):
         frames = [frame(n, "CP1000", code) for n, code in ((1, "PK1"), (2, "PK1"), (3, "PK2"), (4, "PK2"))]
         first, second = group_frames(frames)
-        self.assertEqual((first["frames"], first["code"]["value"]), ([1, 2], "PK1"))
-        self.assertEqual((second["frames"], second["code"]["value"]), ([3, 4], "PK2"))
+        self.assertEqual((first["frames"], first["code"]["value"]), ([1, 2], "01"))
+        self.assertEqual((second["frames"], second["code"]["value"]), ([3, 4], "02"))
 
 
 def boxed(*items):
