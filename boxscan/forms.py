@@ -14,6 +14,11 @@ SPECIAL = {
     (150, "A"): "아머드",  # 아머드 뮤츠
     (646, "Black"): "블랙큐레무",  # names from the Korean client's fusion text
     (646, "White"): "화이트큐레무",
+    (888, "Crowned_Sword"): "검왕의 모습",  # 자시안
+    (888, "Hero"): "역전의 용사",
+    (889, "Crowned_Shield"): "방패왕의 모습",  # 자마젠타
+    (889, "Hero"): "역전의 용사",
+    (890, "Eternamax"): "무한다이맥스",  # 무한다이노
 }
 
 

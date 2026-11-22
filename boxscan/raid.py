@@ -40,7 +40,8 @@ from .species import TEMP_NAMES
 
 ENGINE_VERSION = "raid-sim/2"
 PARTY_SIZE = 6
-CANDIDATE_LIMIT = 12
+CANDIDATE_LIMIT = 12  # best by each measure (damage per second, total damage)
+SHORTLIST_LIMIT = 18  # at most this many are combined (18 choose 6 = 18,564 parties)
 MEGA_CANDIDATE_LIMIT = 4
 FULL_SIM_PARTIES = 5
 BOSS_EXTRA_DELAY_MS = 500
@@ -176,10 +177,12 @@ def attacker(reference: Reference, entry: dict, temp: str | None = None) -> tupl
     # The box keeps the regular form's max HP; a mega's HP comes from its own stamina.
     hp = (None if temp else entry.get("max_hp")) or max(10, math.floor((stats.stamina + iv["stamina"]) * cpm))
     # Fused or other forms show their own name (블랙큐레무), like the box does.
-    name = temp_name(species, temp) if temp else (
-        entry.get("form_name") if form != "Normal" and entry.get("form_name") else species)
-    name += "".join(mark for key, mark in (("shiny", "*"), ("lucky", "♣"), ("background", "◆"))
-                    if entry.get(key) is True)
+    # A fused form has its own name (블랙큐레무); other forms are shown after the species.
+    form_name = entry.get("form_name") if form != "Normal" else None
+    marks = "".join(mark for key, mark in (("shiny", "*"), ("lucky", "♣"), ("background", "◆")) if entry.get(key) is True)
+    name = temp_name(species, temp) + marks if temp else (
+        f"{species}{marks} ({form_name})" if form_name and form_name.endswith(("모습", "용사", "다이맥스"))
+        else (form_name or species) + marks)
     attack, defense = (stats.attack + iv["attack"]) * cpm, (stats.defense + iv["defense"]) * cpm
     if shadow:  # shadow bonus from the game's battle settings: more attack, less defense
         attack *= reference.battle.get("shadowPokemonAttackBonusMultiplier", 1.2)
@@ -407,7 +410,7 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
 
     candidates.sort(key=lambda c: c["dps"], reverse=True)
     megas.sort(key=lambda c: c["dps"], reverse=True)
-    considered = candidates[:CANDIDATE_LIMIT] + megas[:MEGA_CANDIDATE_LIMIT]
+    considered = _shortlist(candidates) + _shortlist(megas, MEGA_CANDIDATE_LIMIT, MEGA_CANDIDATE_LIMIT)
     size = min(PARTY_SIZE, len({c["fighter"].key for c in considered}))
     swap = reference.battle["swapDurationMs"]
     rejoin_ms = None if rejoin_delay_s is None else int(rejoin_delay_s * 1000)
@@ -438,7 +441,8 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
     _, team, runs = best
     search = {"candidates": len(candidates), "considered": len(considered), "combinations": len(combos),
               "fully_simulated": min(FULL_SIM_PARTIES, len(estimates)), "mega_candidates": len(megas),
-              "approximate": len(candidates) > CANDIDATE_LIMIT or len(megas) > MEGA_CANDIDATE_LIMIT}
+              "approximate": len(candidates) > len(considered) - len([c for c in considered if c in megas])
+              or len(megas) > MEGA_CANDIDATE_LIMIT}
     report = _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
                      shortfall=len(candidates) < PARTY_SIZE, include_mega=include_mega)
     if include_mega and compare_mega:
@@ -449,6 +453,20 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
             "with_mega": report["result"]["damage"]["avg"], "without_mega": plain["result"]["damage"]["avg"],
             "member": chosen["name"] if chosen else None, "candidates": len(megas)}
     return report
+
+
+def _shortlist(candidates: list[dict], per_measure: int | None = None, limit: int | None = None) -> list[dict]:
+    """The candidates worth combining: the best by damage per second and the best by total damage
+    before fainting (a bulky Pokémon can outlast a faster one), without duplicates."""
+    per_measure = per_measure or CANDIDATE_LIMIT
+    limit = limit or SHORTLIST_LIMIT
+    total = lambda c: sum(d for d, _ in c["solo"])
+    picked = []
+    for candidate in (sorted(candidates, key=lambda c: c["dps"], reverse=True)[:per_measure]
+                      + sorted(candidates, key=total, reverse=True)[:per_measure]):
+        if candidate not in picked:
+            picked.append(candidate)
+    return picked[:limit]
 
 
 def compare_weather(reference: Reference, entries: list[dict], species: str, tier: str, **options) -> list[dict]:

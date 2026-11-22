@@ -1,6 +1,7 @@
 import itertools
 import math
 import unittest
+import unittest.mock
 
 from boxscan import raid
 from boxscan.reference import BaseStats, Reference
@@ -212,6 +213,22 @@ def mega_reference(boost_types=None) -> Reference:
     data.temp_boosts = {"same_type": 1.3, "different_type": 1.1, "special_move": [1.0, 1.0, 1.1, 1.2, 1.3],
                         "types": boost_types or {}}
     return data
+
+
+class ShortlistTests(unittest.TestCase):
+    def test_bulky_candidates_join_the_fast_ones(self):
+        def candidate(name, dps, total):
+            return {"name": name, "dps": dps, "solo": [(total, 1000)]}
+        fast = [candidate(f"f{i}", 100 - i, 10) for i in range(5)]
+        bulky = [candidate(f"b{i}", 10 - i, 1000 - i) for i in range(5)]
+        with unittest.mock.patch.multiple(raid, CANDIDATE_LIMIT=3, SHORTLIST_LIMIT=5):
+            picked = [c["name"] for c in raid._shortlist(fast + bulky)]
+        self.assertEqual(picked, ["f0", "f1", "f2", "b0", "b1"])
+
+    def test_form_names_follow_the_species(self):
+        from boxscan.forms import display_name
+        self.assertEqual(display_name(888, "Crowned_Sword"), "검왕의 모습")
+        self.assertEqual(display_name(646, "Black"), "블랙큐레무")
 
 
 class MegaTests(unittest.TestCase):

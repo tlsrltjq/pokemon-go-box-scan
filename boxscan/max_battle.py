@@ -175,7 +175,9 @@ def fighter(reference: Reference, entry: dict) -> tuple[MaxFighter | None, str |
         return move.get("level") if move and move.get("level") and not move.get("locked") else None
 
     marks = "".join(mark for key, mark in (("shiny", "*"), ("lucky", "♣"), ("background", "◆")) if entry.get(key) is True)
-    label = (entry.get("form_name") if form != "Normal" and entry.get("form_name") else species) + marks
+    form_name = entry.get("form_name") if form != "Normal" else None
+    label = (f"{species}{marks} ({form_name})" if form_name and form_name.endswith(("모습", "용사", "다이맥스"))
+             else (form_name or species) + marks)
     if entry.get("shadow") is True:
         label += " (그림자)"
     return MaxFighter(entry["id"], label, attack, defense, int(hp), _types(reference, stats.pokemon_id, form), fast,

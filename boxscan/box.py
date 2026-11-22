@@ -18,6 +18,8 @@ from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .forms import display_name
+
 DATABASE = "box.sqlite3"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pokemon (
@@ -170,13 +172,16 @@ class BoxStore:
 
     @staticmethod
     def _entry(row: sqlite3.Row) -> dict:
+        data = json.loads(row["data"])
+        if data.get("dex") and data.get("form"):  # form labels added later apply to saved entries too
+            data["form_name"] = display_name(data["dex"], data["form"]) or data.get("form_name")
         return {
             "id": row["id"],
             "code": code(row["code_number"]),
             "revision": row["revision"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
-            **json.loads(row["data"]),
+            **data,
         }
 
     def saved_counts(self) -> dict[str, int]:
