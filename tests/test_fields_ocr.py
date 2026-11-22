@@ -99,6 +99,14 @@ class FieldParserTests(unittest.TestCase):
                               {"frame": 3, "seconds": 2, "duration": 1, "cp_candidates": [3492]}])
         self.assertEqual(group[0]["cp_candidates"], [349, 3492])
 
+    def test_max_moves_cut_short_in_some_frames_merge(self):
+        from boxscan.fields import _max_moves
+        frames = [{"max_moves": [{"name": "다이웜", "level": 2, "locked": False}, {"name": "다이리크", "level": None, "locked": True}]},
+                  {"max_moves": [{"name": "다이웜", "level": 2, "locked": False}, {"name": "다이월", "level": 1, "locked": False},
+                                 {"name": "다이리커버", "level": None, "locked": True}]},
+                  {"max_moves": [{"name": "다이리커버리", "level": None, "locked": True}]}]
+        self.assertEqual([m["name"] for m in _max_moves(frames)], ["다이웜", "다이월", "다이리커버리"])
+
     def test_a_different_code_starts_a_new_individual(self):
         frames = [frame(n, "CP1000", code) for n, code in ((1, "PK1"), (2, "PK1"), (3, "PK2"), (4, "PK2"))]
         first, second = group_frames(frames)

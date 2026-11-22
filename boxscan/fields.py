@@ -329,7 +329,14 @@ def _max_moves(group: list[dict]) -> list[dict]:
             if known["level"] is None and move["level"] is not None:
                 known["level"], known["locked"] = move["level"], False
             known["locked"] = known["locked"] and move["locked"] if known["level"] is None else False
-    return list(merged.values())
+    # A name cut short in some frames ("다이리커버", "다이리크" for 다이리커버리) is the same move:
+    # drop names that another read name starts with, and those sharing its first three letters.
+    names = list(merged)
+    kept = [name for name in names if not any(
+        other != name and len(other) > len(name) and (other.startswith(name) or other[:3] == name[:3] == "다이리")
+        for other in names)]
+    moves = [merged[name] for name in kept]
+    return moves[:3]  # the game shows at most three
 
 
 def _lucky(group: list[dict]) -> dict:

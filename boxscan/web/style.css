@@ -212,14 +212,14 @@ main.wide { max-width: 96rem; }
 /* Candidate rows: one line per Pokémon on wide screens. */
 .cand-head, .cand-main {
   display: grid; align-items: center; gap: .5rem;
-  grid-template-columns: 8.2rem minmax(8rem, 1.3fr) 4.6rem 4rem 9.6rem 3.6rem minmax(6.5rem, 1fr) minmax(6.5rem, 1fr) minmax(6.5rem, 1fr) 11.5rem;
-  grid-template-areas: "thumbs name cp hp iv level fast c1 c2 save" "sub sub sub sub sub sub sub sub sub sub";
+  grid-template-columns: 8.2rem minmax(8rem, 1.3fr) 4.6rem 4rem 9.6rem minmax(6.5rem, 1fr) minmax(6.5rem, 1fr) minmax(6.5rem, 1fr) 11.5rem;
+  grid-template-areas: "thumbs name cp hp iv fast c1 c2 save" "sub sub sub sub sub sub sub sub sub";
 }
 .cand-head { grid-template-areas: none; position: sticky; top: 3.1rem; z-index: 5; background: var(--bg); padding: .45rem .7rem;
   font-size: .78rem; font-weight: 700; color: var(--muted); border-bottom: 1px solid var(--line); }
 .cand { background: var(--surface); border: 1px solid var(--border); border-radius: .8rem; padding: .55rem .7rem; margin-top: .45rem; }
 .cand.saved { opacity: .82; }
-.cand.saved .cand-main { grid-template-areas: "thumbs name cp hp iv level moves moves moves save" "sub sub sub sub sub sub sub sub sub sub"; }
+.cand.saved .cand-main { grid-template-areas: "thumbs name cp hp iv moves moves moves save" "sub sub sub sub sub sub sub sub sub"; }
 .cand form.cand-main { border: 0; padding: 0; background: none; border-radius: 0; }
 .cand input:not([type=checkbox]), .cand select { font: inherit; font-size: .95rem; color: var(--text); background: var(--surface);
   border: 1px solid var(--border); border-radius: .45rem; padding: .35rem .45rem; width: 100%; min-width: 0; margin: 0; box-sizing: border-box; }
@@ -260,19 +260,19 @@ main.wide { max-width: 96rem; }
 @media (max-width: 82rem) {
   .cand-head { display: none; }
   .cand-main, .cand.saved .cand-main {
-    grid-template-columns: 8.2rem minmax(7rem, 1.4fr) 4.6rem 4rem 9.6rem 3.6rem;
-    grid-template-areas: "thumbs name cp hp iv level" "thumbs fast c1 c2 save save" "sub sub sub sub sub sub";
+    grid-template-columns: 8.2rem minmax(7rem, 1.4fr) 4.6rem 4rem 9.6rem;
+    grid-template-areas: "thumbs name cp hp iv" "thumbs fast c1 c2 save" "sub sub sub sub sub";
   }
-  .cand.saved .cand-main { grid-template-areas: "thumbs name cp hp iv level" "thumbs moves moves moves save save" "sub sub sub sub sub sub"; }
+  .cand.saved .cand-main { grid-template-areas: "thumbs name cp hp iv" "thumbs moves moves moves save" "sub sub sub sub sub"; }
   .cell-label { display: block; }
   .cand-sub, .cand-diff, .cand .save-message { padding-left: 0; }
 }
 @media (max-width: 44rem) {
   .cand-main, .cand.saved .cand-main {
     grid-template-columns: 1fr 1fr 1fr;
-    grid-template-areas: "thumbs thumbs thumbs" "name name name" "cp hp level" "iv iv iv" "fast fast fast" "c1 c1 c2" "save save save" "sub sub sub";
+    grid-template-areas: "thumbs thumbs thumbs" "name name name" "cp hp hp" "iv iv iv" "fast fast fast" "c1 c1 c2" "save save save" "sub sub sub";
   }
-  .cand.saved .cand-main { grid-template-areas: "thumbs thumbs thumbs" "name name name" "cp hp level" "iv iv iv" "moves moves moves" "save save save" "sub sub sub"; }
+  .cand.saved .cand-main { grid-template-areas: "thumbs thumbs thumbs" "name name name" "cp hp hp" "iv iv iv" "moves moves moves" "save save save" "sub sub sub"; }
 }
 /* Box table: many Pokémon at a glance, sortable by column. */
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: .8rem; background: var(--surface); margin-top: .6rem; }
@@ -313,3 +313,10 @@ main.wide { max-width: 96rem; }
   .table-wrap { overflow-x: auto; }
   .box-table thead th { top: 0; }
 }
+
+.max-edit { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem; }
+.max-edit-label { font-weight: 600; color: var(--muted); font-size: .85rem; }
+.max-move { display: inline-flex; gap: .2rem; }
+.max-move input { width: 7rem !important; font-size: .85rem !important; padding: .2rem .4rem !important; }
+.max-move select { width: auto !important; font-size: .82rem !important; padding: .2rem .3rem !important; }
+.edit-form .max-move input, .edit-form .max-move select { font: inherit; border: 1px solid var(--border); border-radius: .45rem; padding: .35rem .45rem; background: var(--surface); color: var(--text); }

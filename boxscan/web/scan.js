@@ -61,45 +61,6 @@ function ivBlock(appraisals) {
   );
 }
 
-const MISSING = { species: "종", iv: "IV", cp: "CP" };
-
-function levelBlock(level) {
-  if (!level) return null;
-  const levels = level.levels.map(value => String(value));
-  const max = level.max_level_checked;
-  const views = {
-    RESOLVED_BY_CONSTRAINTS: [`레벨 ${levels[0]}`,
-      `CP·${level.used_max_hp ? "최대 HP·" : ""}IV로 하나로 정해졌습니다.`],
-    AMBIGUOUS: [`레벨 ${levels.join(" 또는 ")}`,
-      "같은 값이 나오는 레벨이 여러 개입니다. 다음 강화 비용으로 좁힐 예정입니다."],
-    CONFLICT: ["맞는 레벨 없음",
-      `레벨 ${max} 이하에서 이 CP·HP·IV 조합이 나오지 않습니다. 판독 값을 원본과 비교하세요. ` +
-      `메가진화·베스트 파트너·다른 모습이거나 레벨 ${max}보다 높을 수도 있습니다.`],
-    MISSING_INPUT: ["레벨 계산 안 함",
-      `${(level.missing ?? []).map(key => MISSING[key] ?? key).join(", ")} 값이 없습니다.`],
-    NO_REFERENCE: ["레벨 계산 안 함",
-      "기준 데이터가 없습니다. Mac에서 reference update 명령을 실행하세요."],
-    UNKNOWN_SPECIES: ["레벨 계산 안 함", "기준 데이터에서 이 종 이름을 찾지 못했습니다."],
-  };
-  const [title, detail] = views[level.status] ?? ["레벨", level.status];
-  const notes = [detail];
-  if (level.form && level.form !== "Normal") notes.push(`${level.form_name ?? level.form} 종족값 기준입니다.`);
-  const others = Object.entries(level.other_forms ?? {});
-  if (others.length) {
-    notes.push("다른 모습으로도 맞습니다: " +
-      others.map(([form, found]) => `${form} 레벨 ${found.join("/")}`).join(", "));
-  }
-  if (level.temp_evolution && level.regular?.length === 1) {
-    const regular = level.regular[0];
-    notes.push(`메가진화·원시회귀 중의 화면 CP로 계산했습니다. 기본 모습 CP ${regular.cp}, 최대 HP ${regular.max_hp} (계산값).`);
-  }
-  const warn = ["CONFLICT", "AMBIGUOUS"].includes(level.status);
-  return element("div", { class: warn ? "level warn" : "level" },
-    element("h4", {}, title),
-    element("p", {}, notes.join(" ")),
-  );
-}
-
 function moveRow(label, move) {
   const boost = move.boost ? ` +${move.boost}` : "";
   const notes = [`${move.observations}장 중 ${move.votes}장`];
@@ -236,7 +197,7 @@ function readForm(formNode) {
     shadow: formNode.elements.shadow.checked,
     max_state: formNode.elements.max_state.value || null,
     temp_evolution: formNode.dataset.temp || null,
-    max_moves: JSON.parse(formNode.dataset.maxMoves || "[]"),
+    max_moves: formNode.elements.max_name_0 ? readMaxMoves(formNode) : JSON.parse(formNode.dataset.maxMoves || "[]"),
     mega_move: formNode.dataset.megaMove || null,
     nickname: get("nickname") || null,
   };
@@ -280,12 +241,6 @@ const CODE_NOTES = {
 
 // One row per candidate: the values to save are inputs on a single line, with the save button at the end.
 // Flags, nickname and differences sit on a thin second line; vote counts and explanations open on demand.
-const LEVEL_SHORT = {
-  RESOLVED_BY_CONSTRAINTS: level => [String(level.levels[0]), false],
-  AMBIGUOUS: level => [level.levels.join("/"), true],
-  CONFLICT: () => ["충돌", true],
-};
-
 function doubtful(item) {
   return !item || "corrected_from" in item || (item.observations > 1 && item.votes / item.observations < 0.6);
 }
@@ -320,7 +275,6 @@ function detailPanel(individual) {
   return element("div", { class: "row-detail", hidden: "" },
     element("dl", {}, reading("CP", individual.cp), reading("최대 HP", individual.max_hp), reading("종(조사 문구)", individual.species)),
     ivBlock(individual.appraisals),
-    levelBlock(individual.level),
     movesBlock(individual.moves),
     maxMovesBlock(individual.max_moves),
     fusionNote(individual.state),
@@ -334,14 +288,6 @@ function detailToggle(panel) {
     button.textContent = panel.hidden ? "세부" : "세부 닫기";
   });
   return button;
-}
-
-function levelCell(level) {
-  const short = level && LEVEL_SHORT[level.status];
-  const [text, warn] = short ? short(level) : ["-", false];
-  const title = level ? levelBlock(level).textContent : "";
-  return element("div", { class: `cell c-level${warn ? " warn" : ""}`, title },
-    element("span", { class: "cell-label" }, "레벨"), element("strong", {}, text));
 }
 
 function movesText(moves) {
@@ -363,7 +309,6 @@ function savedRow(individual, index, duplicate = false) {
       element("div", { class: "cell c-cp" }, element("span", { class: "cell-label" }, "CP"), String(values.cp || "-")),
       element("div", { class: "cell c-hp" }, element("span", { class: "cell-label" }, "HP"), String(values.max_hp || "-")),
       element("div", { class: "cell c-iv" }, element("span", { class: "cell-label" }, "IV"), iv ? formatIv(iv) : "-"),
-      levelCell(individual.level),
       element("div", { class: "cell c-moves-text" }, element("span", { class: "cell-label" }, "기술"), movesText(individual.moves)),
       element("div", { class: "cell c-result" },
         element("span", { class: approval.deleted ? "badge" : "badge neutral" },
@@ -391,6 +336,8 @@ function candidateRow(individual, index) {
   const diff = element("div", { class: "cand-diff" });
   const message = element("div", { class: "save-message", role: "status" });
   const moves = individual.moves ?? {};
+  const maxEditor = maxMovesEditor(values.max_moves);
+  maxEditor.hidden = !values.max_state && !values.max_moves.length;
   const moveInput = (name, move, label) => textInput(name, move ? move.name ?? move.value : "", {
     maxlength: "30", "aria-label": label, title: move ? [readingTitle(move), move.marker ? `* ${move.reason}` : ""].filter(Boolean).join(" · ") : "",
     class: move?.marker ? "marked" : null });
@@ -406,7 +353,6 @@ function candidateRow(individual, index) {
       element("div", { class: "iv-inputs" },
         ...STATS.map(([key, label]) => textInput(`iv_${key}`, iv[key], { ...numeric, "aria-label": `IV ${label}`, class: values.iv ? null : "doubt" })),
         ivPercent)),
-    levelCell(individual.level),
     cell("fast", "노말어택", moveInput("fast_move", moves.fast, "노말어택")),
     cell("c1", "스페셜어택", moveInput("charged_1", moves.charged?.[0], "스페셜어택 1")),
     cell("c2", "스페셜어택 2", moveInput("charged_2", moves.charged?.[1], "스페셜어택 2")),
@@ -422,6 +368,7 @@ function candidateRow(individual, index) {
         element("option", { value: "gigantamax", selected: values.max_state === "gigantamax" ? "" : null }, "거다이맥스")),
       element("label", { class: "inline-field" }, element("span", {}, "별명"),
         textInput("nickname", values.nickname, { maxlength: "30", "aria-label": "게임 별명" })),
+      maxEditor,
       individual.code_match ? element("span", { class: individual.code_match.status === "match" ? "muted" : "warn-text" },
         CODE_NOTES[individual.code_match.status](individual.code_match)) : null,
       values.mega_move ? element("span", { class: "muted" }, `메가진화 추가 ${values.mega_move} 함께 저장`) : null,
@@ -489,7 +436,10 @@ function candidateRow(individual, index) {
     refresh();
   }).catch(() => {});
   updatePercent();
-  target.addEventListener("change", () => { syncFlags(); refresh(); });
+  target.addEventListener("change", () => { syncFlags(); refresh(); maxEditor.hidden = !formNode.elements.max_state.value && !readMaxMoves(formNode).length; });
+  formNode.elements.max_state.addEventListener("change", () => {
+    maxEditor.hidden = !formNode.elements.max_state.value && !readMaxMoves(formNode).length;
+  });
   formNode.addEventListener("input", event => { if (event.target !== target) refresh(); });
   formNode.addEventListener("submit", async event => {
     event.preventDefault();
@@ -528,7 +478,7 @@ function candidateRow(individual, index) {
   return row;
 }
 
-const CANDIDATE_HEAD = ["#", "종", "CP", "HP", "IV 공/방/체", "레벨", "노말어택", "스페셜어택", "스페셜어택 2", "저장"];
+const CANDIDATE_HEAD = ["#", "종", "CP", "HP", "IV 공/방/체", "노말어택", "스페셜어택", "스페셜어택 2", "저장"];
 
 function candidateHead() {
   return element("div", { class: "cand-head", "aria-hidden": "true" },

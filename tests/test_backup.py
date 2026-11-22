@@ -196,6 +196,18 @@ class BackupApiTests(unittest.TestCase):
         same = self.client.patch(f"/api/pokemon/{entry['id']}", json={
             "expected_revision": 2, "values": {"species": "하나몬", "cp": 150, "shiny": True}}).json()
         self.assertEqual((same["cp_source"], same["shiny"]), ("manual", True))
+        # 맥스기술 can be corrected by hand; a request without them keeps the saved ones.
+        moves = [{"name": "다이웜", "level": 2}, {"name": "다이월", "level": 1}, {"name": "다이리커버리", "locked": True}]
+        fixed = self.client.patch(f"/api/pokemon/{entry['id']}", json={
+            "expected_revision": 3, "values": {"species": "하나몬", "cp": 150, "max_state": "dynamax", "max_moves": moves}}).json()
+        self.assertEqual([(m["name"], m["level"], m["locked"]) for m in fixed["max_moves"]],
+                         [("다이웜", 2, False), ("다이월", 1, False), ("다이리커버리", None, True)])
+        kept = self.client.patch(f"/api/pokemon/{entry['id']}", json={
+            "expected_revision": 4, "values": {"species": "하나몬", "cp": 150, "max_state": "dynamax"}}).json()
+        self.assertEqual(len(kept["max_moves"]), 3)
+        too_many = self.client.patch(f"/api/pokemon/{entry['id']}", json={
+            "expected_revision": 5, "values": {"species": "하나몬", "max_moves": moves + [{"name": "다이번"}]}})
+        self.assertEqual(too_many.status_code, 422)
         from openpyxl import load_workbook
         import io
         sheet = load_workbook(io.BytesIO(self.client.get("/api/exports/box.xlsx").content))["포켓몬 목록"]

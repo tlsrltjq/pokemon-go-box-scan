@@ -69,6 +69,29 @@ function maxStateSelect(value) {
       element("option", { value: "gigantamax", selected: value === "gigantamax" ? "" : null }, "거다이맥스")));
 }
 
+// 맥스기술 editor: up to three moves, each a name and a level (1-3) or locked.
+function maxMovesEditor(moves = []) {
+  const rows = [0, 1, 2].map(i => {
+    const move = moves[i] ?? {};
+    const level = move.locked ? "locked" : move.level ? String(move.level) : "";
+    return element("span", { class: "max-move" },
+      element("input", { name: `max_name_${i}`, value: move.name ?? "", maxlength: "20", autocomplete: "off",
+        placeholder: i === 0 ? "예: 다이웜" : "", "aria-label": `맥스기술 ${i + 1}` }),
+      element("select", { name: `max_level_${i}`, "aria-label": `맥스기술 ${i + 1} 레벨` },
+        ...[["", "레벨?"], ["1", "Lv.1"], ["2", "Lv.2"], ["3", "Lv.3"], ["locked", "잠김"]].map(([value, label]) =>
+          element("option", { value, selected: value === level ? "" : null }, label))));
+  });
+  return element("span", { class: "max-edit" }, element("span", { class: "max-edit-label" }, "맥스기술"), ...rows);
+}
+
+function readMaxMoves(form) {
+  return [0, 1, 2].map(i => {
+    const name = form.elements[`max_name_${i}`].value.trim();
+    const level = form.elements[`max_level_${i}`].value;
+    return name ? { name, level: level && level !== "locked" ? Number(level) : null, locked: level === "locked" } : null;
+  }).filter(Boolean);
+}
+
 function formatBytes(bytes) {
   return bytes >= 1024 ** 2 ? `${(bytes / 1024 ** 2).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`;
 }

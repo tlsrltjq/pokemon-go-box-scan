@@ -455,6 +455,8 @@ def create_app(
             values = review.normalize(payload.get("values"), data)
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
+        if "max_moves" not in (payload.get("values") or {}):
+            values["max_moves"] = existing.get("max_moves") or []  # an older client did not send them
         # A CP the user typed is a manual value; an unchanged CP keeps where it came from.
         changed = (values["cp"], values["max_hp"]) != (existing.get("cp"), existing.get("max_hp"))
         values["cp_source"] = "manual" if changed else existing.get("cp_source")
