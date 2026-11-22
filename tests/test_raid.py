@@ -299,6 +299,8 @@ class MegaTests(unittest.TestCase):
         mega, _ = raid.attacker(self.data, recorded, "MEGA")
         self.assertEqual([m.name for m in mega.charged], ["파도", "파도+"])
         self.assertEqual(mega.charged[1].bonus, 1.0)  # lowest mega level that unlocks it
+        leveled, _ = raid.attacker(self.data, {**recorded, "mega_level": 4}, "MEGA")
+        self.assertEqual(leveled.charged[1].bonus, 1.3)  # the saved mega level's multiplier
         self.assertEqual(mega.info["mega"]["plus_move"], "파도+")
         self.assertEqual(len(raid.attacker(self.data, recorded)[0].charged), 1)
         self.assertEqual(len(raid.attacker(self.data, entry(2, "물몬"), "MEGA")[0].charged), 1)

@@ -204,8 +204,8 @@ def attacker(reference: Reference, entry: dict, temp: str | None = None) -> tupl
 
 
 def _mega_plus(reference: Reference, entry: dict, pokemon_id: int, temp: str) -> Move | None:
-    """The mega's "+" charged attack, when the box recorded it for this form. The mega level is not
-    stored, so the lowest level that unlocks it is assumed (multiplier from the game master)."""
+    """The mega's "+" charged attack, when the box recorded it for this form. Its multiplier follows the
+    saved mega level (game master values); without one the lowest level that unlocks it is assumed."""
     recorded = (entry.get("mega_move") or {}).get("move_id")
     data = (reference.mega_moves or {}).get(pokemon_id, {}).get(temp) or {}
     if not recorded or recorded != data.get("move_id"):
@@ -214,7 +214,9 @@ def _mega_plus(reference: Reference, entry: dict, pokemon_id: int, temp: str) ->
     if move is None:
         return None
     levels = (reference.temp_boosts or {}).get("special_move") or [1.0]
-    move.name, move.bonus = data.get("name") or move.name, levels[min(1, len(levels) - 1)]
+    level = entry.get("mega_level")
+    index = level if isinstance(level, int) and 1 <= level < len(levels) else min(1, len(levels) - 1)
+    move.name, move.bonus = data.get("name") or move.name, levels[index]
     return move
 
 
@@ -655,5 +657,5 @@ _MEGA_ASSUMPTIONS = [
     "메가진화: 메가진화·원시회귀할 수 있는 개체는 그 모습(종족값·타입)으로도 후보에 넣고, 파티에는 최대 1마리만 넣습니다. 메가에너지는 충분하다고 가정합니다.",
     "메가진화한 개체가 싸우는 동안 그 개체의 공격은 같은 타입 ×1.3, 다른 타입 ×1.1입니다(게임 마스터 값). 원시그란돈·원시가이오가·메가레쿠쟈는 게임 마스터에 적힌 세 타입이 ×1.3입니다.",
     "혼자 싸우면 다른 내 포켓몬은 대기 중이라 메가 보너스를 받지 않습니다. 메가 개체 자신의 공격에도 보너스가 붙는다는 점은 커뮤니티 자료 기준입니다.",
-    "메가 레벨은 박스에 없어 모든 메가 개체를 같은 보너스로 계산합니다. 박스에 기록된 '+' 스페셜어택은 쓸 수 있는 가장 낮은 메가 레벨의 위력 배율로 계산합니다.",
+    "메가 레벨이 달라도 메가 보너스(×1.3·×1.1)는 같습니다. 박스에 기록된 '+' 스페셜어택은 저장한 메가 레벨(내 박스 수정에서 입력)의 위력 배율로, 메가 레벨이 없으면 쓸 수 있는 가장 낮은 레벨의 배율로 계산합니다.",
 ]

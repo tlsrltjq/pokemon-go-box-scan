@@ -91,7 +91,7 @@ def code_number(value: str | None) -> int | None:
 
 # Fields the box page edits directly. They are replaced as a whole, so the user can clear a wrong
 # value; other fields (mega record, max moves, approval history) stay as they are.
-EDITABLE = ("species", "dex", "form", "form_name", "nickname", "shiny", "lucky", "background", "shadow", "max_state", "max_moves",
+EDITABLE = ("species", "dex", "form", "form_name", "nickname", "mega_level", "shiny", "lucky", "background", "shadow", "max_state", "max_moves",
             "cp", "max_hp", "cp_source", "iv", "level", "moves", "fusion")
 
 

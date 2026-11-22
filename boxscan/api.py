@@ -2,6 +2,7 @@ import base64
 import binascii
 import json
 import secrets
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -20,6 +21,7 @@ from .store import JobStore
 from .video import MAX_FRAMES
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+AUTO_BACKUP_CHECK_SECONDS = 3600
 MAX_BACKUP_UPLOAD_BYTES = 8 * 1024 ** 3
 
 
@@ -41,6 +43,7 @@ def create_app(
     host: str = "127.0.0.1",
     lan_password: str | None = None,
     live_manager: live.Manager | None = None,
+    auto_backup: bool = False,
 ) -> FastAPI:
     if host != "127.0.0.1" and not lan_password:
         raise ValueError("LAN 모드에는 접속 암호가 필요합니다.")
@@ -48,9 +51,24 @@ def create_app(
     box = BoxStore(store.root)
     capture = live_manager or live.Manager(store)
 
+    stop_backups = threading.Event()
+
+    def backup_loop():
+        # A daily safety copy of the box: made when the newest backup is older than a day. Backups
+        # are small (box and reference version only) and are never deleted automatically.
+        while not stop_backups.is_set():
+            try:
+                backup.ensure_recent(store.root, export.app_version())
+            except Exception as error:  # a failed backup must not stop the server
+                print(f"자동 백업을 만들지 못했습니다: {error}", flush=True)
+            stop_backups.wait(AUTO_BACKUP_CHECK_SECONDS)
+
     @asynccontextmanager
     async def lifespan(_app):
+        if auto_backup:
+            threading.Thread(target=backup_loop, daemon=True).start()
         yield
+        stop_backups.set()
         capture.shutdown()  # finish the live scan with what it has read
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)

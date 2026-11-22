@@ -55,7 +55,7 @@ def main() -> None:
             password = getpass.getpass("iPhone에서 입력할 임시 접속 암호(12자 이상): ")
             if len(password) < 12:
                 serve.error("접속 암호는 12자 이상이어야 합니다.")
-        uvicorn.run(create_app(args.data_dir, host, password), host=host, port=args.port,
+        uvicorn.run(create_app(args.data_dir, host, password, auto_backup=True), host=host, port=args.port,
                     proxy_headers=False)
         return
 

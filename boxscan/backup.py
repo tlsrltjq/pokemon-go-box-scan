@@ -18,6 +18,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import time
 import zipfile
 from contextlib import closing
 from datetime import datetime, timezone
@@ -84,6 +85,25 @@ def _box_counts(database: Path) -> dict:
             "removed": db.execute("SELECT COUNT(*) FROM pokemon WHERE deleted_at IS NOT NULL").fetchone()[0],
             "revisions": db.execute("SELECT COUNT(*) FROM revisions").fetchone()[0],
         }
+
+
+AUTO_PREFIX = "boxscan-auto"
+AUTO_INTERVAL_SECONDS = 24 * 3600
+
+
+def ensure_recent(data_dir: Path, app_version: str = "unknown", now: float | None = None) -> dict | None:
+    """Make an automatic backup when the box has entries and no backup is newer than a day."""
+    data_dir = data_dir.resolve()
+    if not (data_dir / DATABASE).is_file():
+        return None
+    target = folder(data_dir)
+    newest = max((path.stat().st_mtime for path in target.glob("*.zip")), default=None) if target.is_dir() else None
+    now = time.time() if now is None else now
+    if newest is not None and now - newest < AUTO_INTERVAL_SECONDS:
+        return None
+    if not BoxStore(data_dir).list():
+        return None
+    return create(data_dir, app_version=app_version, prefix=AUTO_PREFIX)
 
 
 def create(data_dir: Path, output: Path | None = None, with_scans: bool = False,

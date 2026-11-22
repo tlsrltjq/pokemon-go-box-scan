@@ -58,6 +58,9 @@ function editForm(entry, onDone) {
       checkbox("배경 ◆", "background", entry?.background === true),
       checkbox("그림자", "shadow", entry?.shadow === true)),
     maxStateSelect(entry?.max_state ?? ""),
+    element("label", { class: "field wide" }, element("span", {}, "메가 레벨 (메가진화 화면에서 확인)"),
+      element("select", { name: "mega_level" }, ...[["", "모름"], ["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"]].map(([value, label]) =>
+        element("option", { value, selected: String(entry?.mega_level ?? "") === value ? "" : null }, label)))),
     element("div", { class: "field wide" }, maxMovesEditor(entry?.max_moves ?? [])),
     field(entry ? "수정 메모 (선택)" : "메모 (선택)", "note", "", { maxlength: "200" }),
     element("p", { class: "muted" }, entry ? "비운 칸은 값을 지웁니다. 레벨과 기술 * 표시는 저장할 때 다시 계산합니다. 이전 값은 이력에 남습니다."
@@ -91,6 +94,7 @@ function editForm(entry, onDone) {
             shadow: form.elements.shadow.checked,
             max_state: form.elements.max_state.value || null,
             max_moves: readMaxMoves(form),
+            mega_level: form.elements.mega_level.value || null,
             nickname: get("nickname") || null,
           },
         }),

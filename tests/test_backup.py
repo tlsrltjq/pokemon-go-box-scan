@@ -198,6 +198,26 @@ class BackupApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/pokemon", json={"values": {"cp": 100}}).status_code, 422)  # no species
         self.assertEqual(self.client.post("/api/pokemon", json={"values": {"species": "하나몬", "iv": {"attack": 1}}}).status_code, 422)
 
+    def test_automatic_backup_only_when_the_last_one_is_old(self):
+        import os, time
+        made = backup.ensure_recent(self.data, "test")
+        self.assertTrue(Path(made["path"]).name.startswith("boxscan-auto-"))
+        self.assertIsNone(backup.ensure_recent(self.data, "test"))  # one exists from just now
+        old = time.time() - 2 * 86400
+        for path in (self.data / "backups").glob("*.zip"):
+            os.utime(path, (old, old))
+        self.assertIsNotNone(backup.ensure_recent(self.data, "test"))
+        self.assertEqual(len(list((self.data / "backups").glob("*.zip"))), 2)  # nothing deleted
+
+    def test_mega_level_is_saved_and_cleared_by_edit(self):
+        entry = self.box.list()[0]
+        body = {"expected_revision": entry["revision"], "values": {"species": "하나몬", "mega_level": "3"}}
+        edited = self.client.patch(f"/api/pokemon/{entry['id']}", json=body).json()
+        self.assertEqual(edited["mega_level"], 3)
+        bad = self.client.patch(f"/api/pokemon/{entry['id']}", json={"expected_revision": edited["revision"],
+                                                                     "values": {"species": "하나몬", "mega_level": 5}})
+        self.assertEqual(bad.status_code, 422)
+
     def test_patch_edits_with_revision_and_marks_typed_cp(self):
         entry = self.box.list()[0]
         body = {"expected_revision": entry["revision"], "values": {"species": "하나몬", "cp": 150}}
