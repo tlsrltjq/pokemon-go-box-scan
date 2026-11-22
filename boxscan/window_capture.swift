@@ -10,6 +10,8 @@
 //       Once per second it is also saved as <folder>/frame-NNN.jpg, 720 px wide (for OCR), unless the
 //       screen has not changed since the last saved second (that number is then skipped).
 //       Stops after <max seconds>, when stdout closes, or on SIGTERM.
+//   window_capture crop <image>
+//       One JSON line with the phone-screen rectangle found in a saved image (for checking the crop).
 import CoreImage
 import Foundation
 import ImageIO
@@ -37,8 +39,9 @@ func shareable() async -> SCShareableContent {
 }
 
 /// The phone screen inside the window: trims the window's own frame (iPhone Mirroring's gray border
-/// and toolbar, AirPlay's black bars, transparent corners). The border colour is read at the
-/// left edge; scan lines at 35/50/65 % of the other axis move inward until the colour changes.
+/// and toolbar, AirPlay's black bars, transparent corners) and black padding around a window that
+/// changed size. The border colour is read at the left edge; scan lines at 35/50/65 % of the other
+/// axis move inward until a pixel is neither that colour, nor near black, nor transparent.
 func contentRect(_ image: CGImage) -> CGRect {
     let width = image.width, height = image.height
     let full = CGRect(x: 0, y: 0, width: width, height: height)
@@ -56,6 +59,7 @@ func contentRect(_ image: CGImage) -> CGRect {
     func content(_ x: Int, _ y: Int) -> Bool {
         let p = pixel(x, y)
         if p.3 < 200 { return false }  // transparent counts as frame
+        if max(p.0, p.1, p.2) < 28 { return false }  // black padding or letterbox
         if border.3 < 200 { return true }
         return abs(p.0 - border.0) + abs(p.1 - border.1) + abs(p.2 - border.2) > 36
     }
@@ -179,6 +183,10 @@ func streamWindow(id: UInt32, folder: URL, fps: Int, maxSeconds: Int, barWidth: 
     configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
     configuration.pixelFormat = kCVPixelFormatType_32BGRA
     configuration.showsCursor = false
+    // The mirroring window can change size while capturing (its toolbar shows and hides). Scale the
+    // window into the frame instead of leaving it small in a corner; the crop removes the padding.
+    configuration.scalesToFit = true
+    configuration.preservesAspectRatio = true
     configuration.queueDepth = 4
     let receiver = Receiver()
     receiver.stopped = { message in fail("캡처가 멈췄습니다: \(message)", code: 4) }
@@ -242,6 +250,12 @@ case "list":
                 "title": window.title ?? "", "width": Int(window.frame.width), "height": Int(window.frame.height)]
     }
     emit(["windows": windows])
+case "crop" where arguments.count == 3:
+    guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: arguments[2]) as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { fail("이미지를 읽지 못했습니다.") }
+    let rect = contentRect(image)
+    emit(["x": Int(rect.minX), "y": Int(rect.minY), "width": Int(rect.width), "height": Int(rect.height),
+          "image_width": image.width, "image_height": image.height])
 case "stream" where arguments.count == 7:
     guard let id = UInt32(arguments[2]), let fps = Int(arguments[4]), let seconds = Int(arguments[5]),
           let barWidth = Int(arguments[6]), (1...30).contains(fps), (1...3600).contains(seconds) else {
@@ -251,5 +265,5 @@ case "stream" where arguments.count == 7:
     await streamWindow(id: id, folder: URL(fileURLWithPath: arguments[3]), fps: fps, maxSeconds: seconds,
                        barWidth: barWidth)
 default:
-    fail("usage: window_capture list | stream <window id> <folder> <fps> <max seconds> <bar width>")
+    fail("usage: window_capture list | stream <window id> <folder> <fps> <max seconds> <bar width> | crop <image>")
 }

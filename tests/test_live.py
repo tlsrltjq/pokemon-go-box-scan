@@ -222,6 +222,26 @@ class CaptureToolTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertTrue("windows" in payload if completed.returncode == 0 else payload["error"] == "permission")
 
+    @unittest.skipUnless(__import__("shutil").which("ffmpeg"), "FFmpeg 필요")
+    def test_crop_finds_the_phone_inside_gray_frame_and_black_padding(self):
+        # Like a mirroring window that shrank after the capture started: gray window frame and toolbar,
+        # the phone screen, then black padding to the right and below.
+        import subprocess
+        from boxscan import ocr
+        with TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            image = folder / "window.png"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=0xd8d8d8:s=720x1583",
+                            "-vf", "drawbox=x=553:y=0:w=167:h=1583:color=black:t=fill,"
+                                   "drawbox=x=0:y=1186:w=720:h=397:color=black:t=fill,"
+                                   "drawbox=x=13:y=66:w=527:h=1107:color=0x3080c0:t=fill",
+                            "-frames:v", "1", str(image)], check=True, timeout=30)
+            tool = ocr.compile_swift(live.SOURCE, "window_capture", folder / "tooling")
+            completed = subprocess.run([str(tool), "crop", str(image)], capture_output=True, text=True, timeout=60)
+        rect = json.loads(completed.stdout)
+        for key, expected in (("x", 13), ("y", 66), ("width", 527), ("height", 1107)):
+            self.assertAlmostEqual(rect[key], expected, delta=2, msg=key)
+
 
 class LiveApiTests(Fixture):
     def setUp(self):
