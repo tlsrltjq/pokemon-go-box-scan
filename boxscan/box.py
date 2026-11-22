@@ -83,6 +83,14 @@ class Conflict(Exception):
     """The entry changed or was removed since the client read it."""
 
 
+class CodeTaken(Exception):
+    """Another entry of the species holds the number; it can be swapped when the user agrees."""
+
+    def __init__(self, holder: dict):
+        super().__init__(f"{holder.get('species') or ''} {holder['code']}번은 다른 개체가 쓰고 있습니다.")
+        self.holder = holder
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -299,6 +307,55 @@ class BoxStore:
             )
             row = db.execute(f"{SELECT} WHERE p.id = ?", (pokemon_id,)).fetchone()
             return self._entry(row)
+
+    def set_code(self, pokemon_id: str, number: int, expected_revision: int, swap: bool = False) -> dict:
+        """Give the entry another number within its species, chosen by the user.
+
+        A number reserved by a removed or re-classified entry may be chosen on purpose. A number another
+        entry holds raises CodeTaken unless swap is True, in which case that entry takes the old number.
+        The old number stays reserved, so it is not handed out automatically later. Both entries get a
+        new revision that records the change.
+        """
+        if not isinstance(number, int) or isinstance(number, bool) or not 1 <= number <= 999:
+            raise ValueError("관리 번호는 1~999 사이로 입력하세요.")
+        stamp = now()
+        with self._write() as db:
+            row = db.execute(f"{SELECT} WHERE p.id = ?", (pokemon_id,)).fetchone()
+            if row is None or row["deleted_at"] is not None:
+                raise Conflict("박스에 없는 개체입니다.")
+            if row["revision"] != expected_revision:
+                raise Conflict("다른 곳에서 먼저 갱신된 개체입니다. 최신 값을 다시 확인하세요.")
+            species = json.loads(row["data"]).get("species") or ""
+            old = row["code_number"]
+            if old == number:
+                return self._entry(row)
+            target = db.execute("SELECT * FROM codes WHERE species = ? AND number = ?", (species, number)).fetchone()
+            holder = None
+            if target is not None and target["current"] == 1:
+                holder = db.execute(f"{SELECT} WHERE p.id = ?", (target["pokemon_id"],)).fetchone()
+                if not swap:
+                    raise CodeTaken({**self._entry(holder), "deleted": holder["deleted_at"] is not None})
+                if old is None:
+                    raise Conflict("이 개체에 번호가 없어 맞바꿀 수 없습니다.")
+                # Swap the two holders of the rows; both rows stay current.
+                db.execute("UPDATE codes SET pokemon_id = ? WHERE species = ? AND number = ?", (holder["id"], species, old))
+                db.execute("UPDATE codes SET pokemon_id = ? WHERE species = ? AND number = ?", (pokemon_id, species, number))
+            else:
+                db.execute("UPDATE codes SET current = 0 WHERE pokemon_id = ? AND current = 1", (pokemon_id,))
+                if target is not None:  # a reserved number, chosen on purpose
+                    db.execute("UPDATE codes SET pokemon_id = ?, current = 1 WHERE species = ? AND number = ?",
+                               (pokemon_id, species, number))
+                else:
+                    db.execute("INSERT INTO codes VALUES (?, ?, ?, 1)", (species, number, pokemon_id))
+            changes = [(row, old, number)] + ([(holder, number, old)] if holder is not None else [])
+            for changed, before, after in changes:
+                revision = changed["revision"] + 1
+                db.execute("UPDATE pokemon SET revision = ?, updated_at = ? WHERE id = ?", (revision, stamp, changed["id"]))
+                db.execute("INSERT INTO revisions VALUES (?, ?, 'updated', ?, ?, ?, ?)",
+                           (changed["id"], revision, changed["data"], changed["data"],
+                            json.dumps({"kind": "code_change", "from": code(before), "to": code(after),
+                                        "swapped": holder is not None}, ensure_ascii=False), stamp))
+            return self._entry(db.execute(f"{SELECT} WHERE p.id = ?", (pokemon_id,)).fetchone())
 
     def delete(self, pokemon_id: str, expected_revision: int) -> None:
         """Remove from the box but keep the row, history and code reservation."""

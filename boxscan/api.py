@@ -15,7 +15,7 @@ from . import backup, cleanup, export, live, max_battle, raid, reference, review
 from .forms import display_name
 from .species import TEMP_NAMES
 from .analysis import LIVE_FILE, RESULT, detail_frame
-from .box import BoxStore, Conflict
+from .box import BoxStore, CodeTaken, Conflict
 from .store import JobStore
 from .video import MAX_FRAMES
 
@@ -535,6 +535,25 @@ def create_app(
             path.unlink(missing_ok=True)
         result["safety_backup"] = Path(result["safety_backup"]).name
         return result
+
+    @app.post("/api/pokemon/{pokemon_id}/code")
+    async def pokemon_code(pokemon_id: UUID, request: Request):
+        payload = await _json_body(request)
+        revision, number = payload.get("expected_revision"), payload.get("number")
+        if not isinstance(revision, int) or isinstance(revision, bool):
+            raise HTTPException(422, "현재 revision을 함께 보내야 합니다.")
+        if isinstance(number, str) and number.strip().isdigit():
+            number = int(number.strip())
+        try:
+            return box.set_code(str(pokemon_id), number, revision, payload.get("swap") is True)
+        except CodeTaken as error:
+            holder = error.holder
+            return JSONResponse({"detail": str(error), "holder": {key: holder.get(key) for key in (
+                "id", "code", "species", "cp", "nickname", "deleted")}}, status_code=409)
+        except Conflict as error:
+            raise HTTPException(409, str(error)) from None
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
 
     @app.delete("/api/pokemon/{pokemon_id}", status_code=204)
     def pokemon_delete(pokemon_id: UUID, revision: int):

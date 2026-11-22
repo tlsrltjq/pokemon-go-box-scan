@@ -82,6 +82,34 @@ class BoxStoreTests(unittest.TestCase):
         named = self.box.approve("scan", 5, {"species": "망나뇽"}, SOURCE, target=unknown["id"])
         self.assertEqual((unknown["code"], named["code"]), ("01", "03"))
 
+    def test_user_can_choose_a_number_and_swap_with_its_holder(self):
+        from boxscan.box import CodeTaken
+
+        def add(n):
+            return self.box.approve("scan", n, {"species": "그란돈", "cp": 100 + n}, SOURCE)
+        a, b, c = add(0), add(1), add(2)  # 01, 02, 03
+        moved = self.box.set_code(c["id"], 7, c["revision"])
+        self.assertEqual((moved["code"], moved["revision"]), ("07", 2))
+        with self.assertRaises(CodeTaken) as taken:
+            self.box.set_code(moved["id"], 1, moved["revision"])
+        self.assertEqual(taken.exception.holder["id"], a["id"])
+        swapped = self.box.set_code(moved["id"], 1, moved["revision"], swap=True)
+        self.assertEqual(swapped["code"], "01")
+        self.assertEqual(self.box.get(a["id"])["code"], "07")  # the holder took the old number
+        self.assertEqual(self.box.by_code("그란돈", "07")["id"], a["id"])
+        # The freed 03 stays reserved for new entries but can be chosen on purpose.
+        self.assertEqual(add(3)["code"], "08")
+        back = self.box.set_code(b["id"], 3, self.box.get(b["id"])["revision"])
+        self.assertEqual(back["code"], "03")
+        history = self.box.get(a["id"])["revisions"][0]
+        self.assertEqual((history["source"]["kind"], history["source"]["from"], history["source"]["to"], history["source"]["swapped"]),
+                         ("code_change", "01", "07", True))
+        with self.assertRaises(Conflict):
+            self.box.set_code(a["id"], 9, 1)  # stale revision
+        for bad in (0, 1000, "2", True):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.box.set_code(a["id"], bad, self.box.get(a["id"])["revision"])
+
     def test_box_from_before_per_species_codes_is_numbered_on_open(self):
         import sqlite3
         for n, species in enumerate(("마기라스", "망나뇽", "마기라스")):
@@ -280,6 +308,19 @@ class ApprovalApiTests(unittest.TestCase):
         self.client.delete(f"/api/pokemon/{entry['id']}", params={"revision": 2})
         found = self.client.get(f"/api/scans/{self.scan_id}").json()["analysis"]["individuals"][1]["code_match"]
         self.assertEqual(found["status"], "deleted")
+
+    def test_code_change_api_asks_before_swapping(self):
+        first = self.approve(0, {"values": {"species": "하나몬", "cp": 100}}).json()
+        second = self.approve(1, {"values": {"species": "하나몬", "cp": 120}}).json()
+        url = f"/api/pokemon/{second['id']}/code"
+        taken = self.client.post(url, json={"number": 1, "expected_revision": second["revision"]})
+        self.assertEqual(taken.status_code, 409)
+        self.assertEqual((taken.json()["holder"]["id"], taken.json()["holder"]["code"]), (first["id"], "01"))
+        done = self.client.post(url, json={"number": "1", "expected_revision": second["revision"], "swap": True})
+        self.assertEqual((done.status_code, done.json()["code"]), (200, "01"))
+        self.assertEqual(self.client.get(f"/api/pokemon/{first['id']}").json()["code"], "02")
+        self.assertEqual(self.client.post(url, json={"number": 0, "expected_revision": done.json()["revision"]}).status_code, 422)
+        self.assertEqual(self.client.post(url, json={"number": 5}).status_code, 422)
 
     def test_rejects_invalid_requests(self):
         self.assertEqual(self.approve(5, {"values": {"cp": 100}}).status_code, 404)

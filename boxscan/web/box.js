@@ -18,13 +18,15 @@ function moveLine(label, move) {
 function revisionItem(revision) {
   const source = revision.source;
   const manual = source?.kind === "manual_edit";
+  const codeChange = source?.kind === "code_change";
   const origin = manual ? (source.note ? ` · 메모: ${source.note}` : "")
     : source?.filename ? ` · ${source.filename} 프레임 ${source.frames[0]}–${source.frames.at(-1)}` : "";
-  const label = manual ? "직접 수정" : CHANGES[revision.change];
+  const label = codeChange ? `관리 번호 ${source.from ?? "-"} → ${source.to}${source.swapped ? " (맞바꿈)" : ""}`
+    : manual ? "직접 수정" : CHANGES[revision.change];
   const item = element("li", {},
     element("p", {}, element("strong", {}, `${revision.revision}번째 기록 · ${label}`),
       ` · ${new Date(revision.created_at).toLocaleString("ko-KR")}${origin}`));
-  if (revision.change !== "deleted") item.append(comparisonTable(revision.before, revision.after));
+  if (revision.change !== "deleted" && !codeChange) item.append(comparisonTable(revision.before, revision.after));
   return item;
 }
 
@@ -172,6 +174,7 @@ function detailRow(entry) {
   });
   const moves = entry.moves ?? {};
   const temp = entry.temp_observation;
+  const codeForm = codeChanger(entry);
   const notes = [
     hasCode(entry) || !entry.code ? null : element("p", {}, element("span", { class: "hint-chip" },
       `추천 별명 ${entry.species ?? ""}${entry.code}`), " 게임 별명을 이렇게 바꾸면 다음 스캔 때 자동으로 고릅니다."),
@@ -188,7 +191,56 @@ function detailRow(entry) {
   return element("tr", { class: "detail" }, element("td", { colspan: String(COLUMNS.length) },
     element("div", { class: "detail-grid" }, ...notes.filter(Boolean)),
     element("div", { class: "actions" }, editButton, toggle, remove),
-    editArea, history));
+    codeForm, editArea, history));
+}
+
+// Change the management number within the species; a number in use can be swapped after a confirm.
+function codeChanger(entry) {
+  const number = element("input", { name: "code", value: entry.code ?? "", inputmode: "numeric", maxlength: "3",
+    "aria-label": "새 관리 번호", class: "code-input" });
+  const button = element("button", { type: "submit", class: "secondary" }, "번호 바꾸기");
+  const message = element("span", { class: "muted", role: "status" });
+  const form = element("form", { class: "code-form" },
+    element("span", { class: "max-edit-label" }, `${entry.species ?? ""} 관리 번호`), number, button, message);
+  const send = swap => fetch(`/api/pokemon/${entry.id}/code`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ number: Number(number.value), expected_revision: entry.revision, swap }),
+  }).then(jsonResponse);
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const wanted = Number(number.value);
+    if (!Number.isInteger(wanted) || wanted < 1 || wanted > 999) {
+      message.textContent = "1~999 사이 숫자로 입력하세요.";
+      return;
+    }
+    button.disabled = true;
+    try {
+      let saved;
+      let other = null;
+      try {
+        saved = await send(false);
+      } catch (error) {
+        if (!error.payload?.holder) throw error;
+        other = error.payload.holder;
+        const who = `${other.species ?? ""} ${other.code}번(CP ${other.cp ?? "-"}${other.nickname ? `, 별명 ${other.nickname}` : ""}${other.deleted ? ", 제거된 개체" : ""})`;
+        if (!confirm(`${who}이(가) 이미 쓰고 있습니다. 두 개체의 번호를 서로 바꿀까요?`)) {
+          message.textContent = "바꾸지 않았습니다.";
+          return;
+        }
+        saved = await send(true);
+      }
+      const species = entry.species ?? "";
+      alert(`${species} ${entry.code ?? "-"} → ${saved.code}번으로 바꿨습니다.\n게임 별명도 ${species}${saved.code}(으)로 바꿔 주세요.` +
+        (other ? `\n맞바꾼 개체(지금 ${entry.code}번)의 별명은 ${species}${entry.code}(으)로 바꿔 주세요.` : ""));
+      location.hash = entry.id;
+      await load();
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return form;
 }
 
 function entryRows(entry) {
