@@ -11,12 +11,16 @@ const cards = document.querySelector("#individuals");
 const STATS = IV_KEYS;
 let currentScan = null;
 
+const LIVE_RECENT = 24;  // a live capture can hold hundreds of frames; show the latest ones
+
 function showFrames(frames) {
-  gallery.replaceChildren(...frames.map((url, index) => element("figure", {},
-    element("a", { href: url },
-      element("img", { src: url, loading: "lazy", alt: `추출 프레임 ${index + 1}` })),
-    element("figcaption", {}, `프레임 ${index + 1}`),
-  )));
+  gallery.replaceChildren(...frames.map(url => {
+    const number = url.split("/").pop();
+    return element("figure", {},
+      element("a", { href: url },
+        element("img", { src: url, loading: "lazy", alt: `추출 프레임 ${number}` })),
+      element("figcaption", {}, `프레임 ${number}`));
+  }));
 }
 
 function reading(label, item, unit = "") {
@@ -442,6 +446,8 @@ function card(individual, index) {
   );
 }
 
+let renderedCards = [];  // [key, node]: unchanged cards keep their node (and any typing) between polls
+
 function showAnalysis(analysis) {
   analysisSection.hidden = false;
   const messages = {
@@ -451,17 +457,29 @@ function showAnalysis(analysis) {
     failed: analysis.error,
     skipped: analysis.error,
   };
-  if (analysis.status !== "done") {
+  if (!["done", "live"].includes(analysis.status)) {
     analysisStatus.textContent = messages[analysis.status] ?? "";
     cards.replaceChildren();
+    renderedCards = [];
     return;
   }
   const count = analysis.individuals.length;
+  const live = analysis.status === "live";
   analysisStatus.textContent = count
-    ? `${count}개체를 찾았습니다. 자동 판독 값이므로 원본 프레임과 비교한 뒤 사용하세요.` +
+    ? (live ? `캡처하면서 ${count}개체를 찾았습니다. 마지막 개체는 화면을 더 보여 주면 값이 바뀔 수 있습니다.`
+      : `${count}개체를 찾았습니다. 자동 판독 값이므로 원본 프레임과 비교한 뒤 사용하세요.`) +
       (analysis.unassigned ? ` 개체에 연결하지 못한 조사 화면 ${analysis.unassigned}개가 있습니다.` : "")
-    : "읽은 값이 없습니다. 상세 화면과 조사 화면이 선명하게 찍혔는지 확인하세요.";
-  cards.replaceChildren(...analysis.individuals.map(card));
+    : live ? "캡처하고 있습니다. 포켓몬 상세 화면을 보여 주세요."
+      : "읽은 값이 없습니다. 상세 화면과 조사 화면이 선명하게 찍혔는지 확인하세요.";
+  const next = analysis.individuals.map((individual, index) => {
+    const key = `${index}:${JSON.stringify(individual)}`;
+    const kept = renderedCards[index];
+    return [key, kept && kept[0] === key ? kept[1] : card(individual, index)];
+  });
+  if (next.length !== renderedCards.length || next.some(([, node], i) => node !== renderedCards[i][1])) {
+    cards.replaceChildren(...next.map(([, node]) => node));
+  }
+  renderedCards = next;
 }
 
 async function monitor(id) {
@@ -475,10 +493,15 @@ async function monitor(id) {
       currentScan = scan.id;
       status.textContent = scan.filename;
       framesSection.hidden = false;
-      framesStatus.textContent = `1초마다 추출한 ${scan.frames.length}장`;
-      if (gallery.childElementCount !== scan.frames.length) showFrames(scan.frames);
+      const shown = scan.live ? scan.frames.slice(-LIVE_RECENT) : scan.frames;
+      framesStatus.textContent = scan.live
+        ? `실시간 캡처 ${scan.frames.length}장` + (shown.length < scan.frames.length ? ` 중 최근 ${shown.length}장` : "")
+        : `1초마다 추출한 ${scan.frames.length}장`;
+      if (gallery.lastElementChild?.querySelector("a")?.getAttribute("href") !== shown.at(-1)
+          || gallery.childElementCount !== shown.length) showFrames(shown);
       showAnalysis(scan.analysis);
-      if (!["queued", "running"].includes(scan.analysis.status)) return;
+      showLive(scan.live);
+      if (!["queued", "running", "live"].includes(scan.analysis.status)) return;
     } else {
       status.textContent = scan.status === "queued"
         ? "영상 저장 완료. 워커가 작업을 시작할 때까지 기다리는 중입니다."
@@ -522,3 +545,88 @@ form.addEventListener("submit", event => {
 
 const previous = new URLSearchParams(location.search).get("scan");
 if (previous) run(() => monitor(previous));
+
+// Live capture of a mirrored iPhone window.
+const liveForm = document.querySelector("#live");
+const liveSelect = liveForm.elements.window;
+const liveStart = document.querySelector("#live-start");
+const liveStop = document.querySelector("#live-stop");
+const liveStatus = document.querySelector("#live-status");
+
+let liveWasRunning = false;
+
+function showLive(session) {
+  const running = Boolean(session?.running);
+  liveStart.hidden = running;
+  liveStop.hidden = !running;
+  liveSelect.disabled = running;
+  if (running) {
+    liveStatus.textContent = `캡처 중 · ${Math.floor(session.seconds)}초 · 프레임 ${session.frames}장 · 조사 화면 ${session.appraisals}번`;
+  } else if (session?.error) {
+    liveStatus.textContent = session.error;
+  } else if (liveWasRunning) {
+    liveStatus.textContent = "캡처를 마쳤습니다. 아래 후보를 확인하고 저장하세요.";
+  }
+  liveWasRunning = running;
+}
+
+async function loadWindows() {
+  liveStatus.textContent = "창 목록을 읽고 있습니다.";
+  try {
+    const { windows } = await jsonResponse(await fetch("/api/live/windows"));
+    liveSelect.replaceChildren(...windows.map(w => element("option", { value: w.id },
+      `${w.suggested ? "★ " : ""}${w.app}${w.title ? ` · ${w.title}` : ""} (${w.width}×${w.height})`)));
+    liveStatus.textContent = windows.length
+      ? (windows[0].suggested ? "★ 표시가 iPhone 화면으로 보이는 창입니다." : "iPhone 미러링이나 AirPlay 창을 열고 새로고침하세요.")
+      : "캡처할 수 있는 창이 없습니다. iPhone 미러링이나 AirPlay 창을 열고 새로고침하세요.";
+  } catch (error) {
+    liveSelect.replaceChildren();
+    liveStatus.textContent = error.message;
+  }
+}
+
+liveForm.addEventListener("submit", event => {
+  event.preventDefault();
+  run(async () => {
+    if (!liveSelect.value) return;
+    liveStart.disabled = true;
+    try {
+      const label = liveSelect.selectedOptions[0]?.textContent.replace(/^★ /, "").split(" (")[0];
+      const scan = await jsonResponse(await fetch("/api/live/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ window_id: Number(liveSelect.value), label }),
+      }));
+      gallery.replaceChildren();
+      cards.replaceChildren();
+      renderedCards = [];
+      history.replaceState(null, "", `/?scan=${encodeURIComponent(scan.id)}`);
+      showLive({ running: true, seconds: 0, frames: 0, appraisals: 0 });
+      await monitor(scan.id);
+    } finally {
+      liveStart.disabled = false;
+    }
+  });
+});
+
+liveStop.addEventListener("click", async () => {
+  liveStop.disabled = true;
+  liveStatus.textContent = "남은 프레임을 읽고 마무리하고 있습니다.";
+  try {
+    await jsonResponse(await fetch("/api/live/stop", { method: "POST" }));
+    liveStatus.textContent = "캡처를 마쳤습니다. 아래 후보를 확인하고 저장하세요.";
+  } catch (error) {
+    liveStatus.textContent = error.message;
+  } finally {
+    liveStop.disabled = false;
+  }
+});
+
+document.querySelector("#live-refresh").addEventListener("click", loadWindows);
+loadWindows();
+fetch("/api/live").then(jsonResponse).then(({ session }) => {
+  if (session?.running && !previous) {
+    history.replaceState(null, "", `/?scan=${encodeURIComponent(session.scan_id)}`);
+    run(() => monitor(session.scan_id));
+  }
+}).catch(() => {});

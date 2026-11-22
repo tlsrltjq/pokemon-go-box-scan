@@ -2,6 +2,7 @@ import base64
 import binascii
 import json
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -10,10 +11,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from . import backup, export, max_battle, raid, reference, review
+from . import backup, export, live, max_battle, raid, reference, review
 from .forms import display_name
 from .species import TEMP_NAMES
-from .analysis import RESULT
+from .analysis import LIVE_FILE, RESULT
 from .box import BoxStore, Conflict
 from .store import JobStore
 from .video import MAX_FRAMES
@@ -39,12 +40,20 @@ def create_app(
     data_dir: Path,
     host: str = "127.0.0.1",
     lan_password: str | None = None,
+    live_manager: live.Manager | None = None,
 ) -> FastAPI:
     if host != "127.0.0.1" and not lan_password:
         raise ValueError("LAN 모드에는 접속 암호가 필요합니다.")
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     store = JobStore(data_dir)
     box = BoxStore(store.root)
+    capture = live_manager or live.Manager(store)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        yield
+        capture.shutdown()  # finish the live scan with what it has read
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
     @app.middleware("http")
     async def protect_local_data(request: Request, call_next):
@@ -254,11 +263,46 @@ def create_app(
             raise
         return {"id": scan_id, "status": "queued"}
 
+    @app.get("/api/live")
+    def live_status():
+        return {"session": capture.status(), "max_seconds": live.MAX_SECONDS}
+
+    @app.get("/api/live/windows")
+    def live_windows():
+        try:
+            return {"windows": capture.windows()}
+        except live.LiveError as error:
+            raise HTTPException(409, str(error)) from None
+
+    @app.post("/api/live/start", status_code=202)
+    async def live_start(request: Request):
+        payload = await _json_body(request)
+        window = payload.get("window_id")
+        if not isinstance(window, int) or isinstance(window, bool) or window <= 0:
+            raise HTTPException(422, "캡처할 창을 선택하세요.")
+        label = payload.get("label")
+        label = label.strip()[:40] or None if isinstance(label, str) else None
+        try:
+            return {"id": capture.start(window, label)}
+        except live.LiveError as error:
+            raise HTTPException(409, str(error)) from None
+
+    @app.post("/api/live/stop")
+    def live_stop():
+        session = capture.stop()
+        if session is None:
+            raise HTTPException(409, "실행 중인 실시간 캡처가 없습니다.")
+        return session
+
     @app.get("/api/scans/{scan_id}")
     def scan(scan_id: UUID):
         job = store.get(str(scan_id))
         if job is None:
             raise HTTPException(404, "스캔을 찾을 수 없습니다.")
+        current = capture.status()
+        job["live"] = ((current if current and current["scan_id"] == str(scan_id) else {"running": False})
+                       if (store.root / str(scan_id) / LIVE_FILE).is_file()
+                       or job["analysis_status"] == "live" else None)
         job["frames"] = []
         if job["status"] == "ready":
             job["frames"] = [
@@ -482,7 +526,8 @@ def create_app(
     def frame(scan_id: UUID, number: int):
         job = store.get(str(scan_id))
         path = store.root / str(scan_id) / f"frame-{number:03d}.jpg"
-        if not job or job["status"] != "ready" or not 1 <= number <= MAX_FRAMES or not path.is_file():
+        if (not job or job["status"] != "ready" or not 1 <= number <= max(MAX_FRAMES, live.MAX_FRAMES)
+                or not path.is_file()):
             raise HTTPException(404, "프레임을 찾을 수 없습니다.")
         return FileResponse(path, media_type="image/jpeg")
 
@@ -495,7 +540,8 @@ def _analysis(folder: Path, scan_id: str, status: str | None, error: str | None)
     if status is None:  # scans from before automatic analysis
         status = "done" if result_path.is_file() else "none"
     summary = {"status": status, "error": error, "individuals": [], "unassigned": 0}
-    if status != "done" or not result_path.is_file():
+    # A live capture shows its partial result while it runs.
+    if status not in ("done", "live") or not result_path.is_file():
         return summary
     result = json.loads(result_path.read_text(encoding="utf-8"))
     readings = {frame["frame"]: frame for frame in result.get("frames", [])}

@@ -3,7 +3,8 @@ from contextlib import closing
 from pathlib import Path
 
 # queued → running → done | failed; skipped when this Mac cannot run the local OCR.
-ANALYSIS_STATUSES = {"queued", "running", "done", "failed", "skipped"}
+# live: a live capture is still adding frames; its partial result is already readable.
+ANALYSIS_STATUSES = {"queued", "running", "done", "failed", "skipped", "live"}
 
 
 class JobStore:
@@ -40,12 +41,20 @@ class JobStore:
             if column not in columns:
                 db.execute(f"ALTER TABLE scans ADD COLUMN {column} TEXT")
 
-    def create(self, scan_id: str, filename: str) -> None:
+    def create(self, scan_id: str, filename: str, status: str = "queued") -> None:
+        """A live capture starts as ready: it has no video for the worker to extract."""
+        if status not in ("queued", "ready"):
+            raise ValueError(status)
         with closing(sqlite3.connect(self.database)) as db, db:
             db.execute(
-                "INSERT INTO scans (id, filename, status) VALUES (?, ?, 'queued')",
-                (scan_id, filename),
+                "INSERT INTO scans (id, filename, status) VALUES (?, ?, ?)",
+                (scan_id, filename, status),
             )
+
+    def with_analysis(self, status: str) -> list[str]:
+        with closing(sqlite3.connect(self.database)) as db:
+            return [row[0] for row in db.execute(
+                "SELECT id FROM scans WHERE analysis_status = ? ORDER BY rowid", (status,))]
 
     def get(self, scan_id: str) -> dict | None:
         with closing(sqlite3.connect(self.database)) as db:

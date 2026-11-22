@@ -25,16 +25,21 @@ def recognizer_version() -> str:
 
 def build_tool(tool_dir: Path = TOOL_DIR) -> Path:
     """Compile the Swift helper once per source revision and reuse the binary."""
+    return compile_swift(SOURCE, "vision_ocr", tool_dir)
+
+
+def compile_swift(source: Path, name: str, tool_dir: Path = TOOL_DIR) -> Path:
+    """Compile a Swift helper once per source revision (hash in the file name) and reuse it."""
     compiler = swiftc()
     if compiler is None:
         raise RuntimeError("Apple Vision OCR은 Xcode 명령줄 도구가 설치된 Mac에서만 실행할 수 있습니다.")
-    binary = tool_dir / f"vision_ocr-{recognizer_version().rsplit('/', 1)[1]}"
+    binary = tool_dir / f"{name}-{hashlib.sha256(source.read_bytes()).hexdigest()[:12]}"
     if binary.is_file():
         return binary
     tool_dir.mkdir(parents=True, exist_ok=True)
     partial = binary.with_suffix(".partial")
     subprocess.run(
-        [compiler, "-O", str(SOURCE), "-o", str(partial)],
+        [compiler, "-O", str(source), "-o", str(partial)],
         check=True, capture_output=True, timeout=300,
     )
     partial.replace(binary)

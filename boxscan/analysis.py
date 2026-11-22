@@ -16,6 +16,7 @@ from .store import JobStore
 from .video import MAX_VIDEO_SECONDS, SAMPLE_SECONDS
 
 RESULT = "analysis.json"
+LIVE_FILE = "live.json"  # appraisal windows read during a live capture (no video is kept)
 
 
 def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None = None) -> dict:
@@ -25,37 +26,54 @@ def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None =
     folder = store.root / scan_id
     images = store.frames(scan_id)
     recognized = ocr.recognize(images, tool)
-    frames = []
-    for path in images:
-        number = int(path.stem.split("-")[-1])
-        item = recognized.get(path, {})
-        lines = item.get("lines", [])
-        frames.append({
-            "frame": number,
-            "seconds": (number - 1) * SAMPLE_SECONDS,
-            "duration": SAMPLE_SECONDS,
-            **parse_frame(lines, item.get("width")),
-            "ocr": lines,
-        })
+    frames = [frame_entry(path, recognized.get(path, {})) for path in images]
+    live = folder / LIVE_FILE
+    if not (folder / "source").exists() and live.is_file():
+        # A live capture has no video: reuse the appraisal windows it read while capturing.
+        saved = json.loads(live.read_text(encoding="utf-8"))
+        windows, iv = saved["windows"], saved["recognizer"]
+    else:
+        windows = ivbars.read_video(ffmpeg, folder / "source", MAX_VIDEO_SECONDS)
+        iv = f"ivbars/{ivbars.REFERENCE_WIDTH}px-{ivbars.FPS}fps"
+        for number, window in enumerate(windows, 1):
+            if window["evidence_seconds"] is not None:
+                window["evidence"] = _save_evidence(ffmpeg, folder, window["evidence_seconds"], number)
+    result = assemble(scan_id, frames, windows, _reference(store.root), iv)
+    write_result(folder, result)
+    return result
+
+
+def frame_entry(path: Path, item: dict) -> dict:
+    """One sampled frame (frame-NNN.jpg, one per second) with the fields parsed from its OCR lines."""
+    number = int(path.stem.split("-")[-1])
+    lines = item.get("lines", [])
+    return {
+        "frame": number,
+        "seconds": (number - 1) * SAMPLE_SECONDS,
+        "duration": SAMPLE_SECONDS,
+        **parse_frame(lines, item.get("width")),
+        "ocr": lines,
+    }
+
+
+def assemble(scan_id: str, frames: list[dict], windows: list[dict], data: reference.Reference | None,
+             iv_recognizer: str) -> dict:
+    """Group frames into individuals, attach appraisal windows, and resolve species and level."""
     # Drop stretches without any reading (for example transitions or other screens).
     individuals = [group for group in group_frames(frames)
                    if group["cp"] or group["max_hp"] or group["species"]]
-    windows = ivbars.read_video(ffmpeg, folder / "source", MAX_VIDEO_SECONDS)
-    for number, window in enumerate(windows, 1):
-        if window["evidence_seconds"] is not None:
-            window["evidence"] = _save_evidence(ffmpeg, folder, window["evidence_seconds"], number)
+    for window in windows:
         target = _overlapping(individuals, window)
         if target is not None:
             target.setdefault("appraisals", []).append(window)
-    data = _reference(store.root)
     for individual in individuals:
         apply_reference(individual, data)
-    result = {
+    return {
         "scan_id": scan_id,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "recognizer": {
             "ocr": ocr.recognizer_version(),
-            "iv": f"ivbars/{ivbars.REFERENCE_WIDTH}px-{ivbars.FPS}fps",
+            "iv": iv_recognizer,
             "reference": data.version if data else None,
         },
         "status": "candidate",
@@ -64,11 +82,13 @@ def analyze_scan(store: JobStore, scan_id: str, ffmpeg: str, tool: Path | None =
             w in individual.get("appraisals", []) for individual in individuals)],
         "frames": frames,
     }
-    output = folder / RESULT
+
+
+def write_result(folder: Path, result: dict, name: str = RESULT) -> None:
+    output = folder / name
     partial = output.with_suffix(".partial")
     partial.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     partial.replace(output)
-    return result
 
 
 def apply_reference(individual: dict, data: reference.Reference | None) -> None:

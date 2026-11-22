@@ -118,11 +118,23 @@ def _read_row(frame: Frame, y: int, span: tuple[int, int]) -> dict:
 
 def find_windows(frames: Iterable[Frame], fps: float = FPS) -> list[dict]:
     """Group frames with visible bars into appraisal windows and pick a stable reading."""
+    return group_windows(((index, bars) for index, frame in enumerate(frames)
+                          if (bars := read_bars(frame)) is not None), fps)
+
+
+def band(frame: Frame) -> Frame:
+    """The part of a full frame (already REFERENCE_WIDTH wide) that holds the bars, cropped the way
+    read_video asks FFmpeg to crop it."""
+    top = int(frame.height * SEARCH_TOP)
+    height = int(frame.height * (SEARCH_BOTTOM - SEARCH_TOP))
+    row = frame.width * 3
+    return Frame(frame.width, height, frame.rgb[top * row:(top + height) * row])
+
+
+def group_windows(readings: Iterable[tuple[int, list[dict]]], fps: float = FPS) -> list[dict]:
+    """Group (frame index, bars) readings into appraisal windows."""
     windows: list[list[tuple[int, list[dict]]]] = []
-    for index, frame in enumerate(frames):
-        bars = read_bars(frame)
-        if bars is None:
-            continue
+    for index, bars in readings:
         if windows and (index - windows[-1][-1][0]) / fps <= MAX_GAP_SECONDS:
             windows[-1].append((index, bars))
         else:

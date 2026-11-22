@@ -14,9 +14,23 @@
     <header>
       <p class="eyebrow">POKÉMON GO · 개인 박스</p>
       <h1>박스 스캔</h1>
-      <p>화면 녹화에서 프레임을 추출하고, Mac에서 CP·HP·IV를 읽어 개체별 후보로 보여줍니다.</p>
+      <p>화면 녹화나 Mac에 미러링한 iPhone 화면에서 CP·HP·IV를 읽어 개체별 후보로 보여줍니다.</p>
     </header>
+    <form id="live" class="live-form">
+      <h2>실시간 캡처</h2>
+      <p class="muted">iPhone 미러링 앱이나 AirPlay 화면 미러링으로 Mac에 띄운 포켓몬 GO 화면을 읽습니다. 화면을 읽기만 하고 게임은 조작하지 않으며 영상은 남기지 않습니다. 포켓몬마다 상세 화면·기술·조사 화면을 1초 이상씩 보여 주세요. 최대 10분.</p>
+      <div class="fields">
+        <label class="field live-window"><span>캡처할 창</span><select name="window" required></select></label>
+      </div>
+      <div class="actions">
+        <button type="submit" id="live-start">캡처 시작</button>
+        <button type="button" id="live-stop" class="danger" hidden>중지하고 마무리</button>
+        <button type="button" id="live-refresh" class="secondary">창 목록 새로고침</button>
+      </div>
+      <p id="live-status" role="status"></p>
+    </form>
     <form id="upload">
+      <h2>녹화 영상 올리기</h2>
       <label for="video">화면 녹화 선택</label>
       <p id="constraints">MOV 또는 MP4 · 최대 200 MiB · 처음 72초에서 1초마다 추출</p>
       <input id="video" type="file" accept=".mp4,.mov,video/mp4,video/quicktime"

@@ -120,6 +120,9 @@ a.button { display: inline-flex; align-items: center; min-height: 2.75rem; paddi
 .backup-list { margin: 0; padding-left: 1.2rem; font-size: .9rem; }
 .edit-form { margin-top: .6rem; border-top: 1px solid #e3eae6; padding-top: .7rem; }
 .raid-form { margin-top: .5rem; }
+.live-form { margin-bottom: 1rem; }
+.live-form h2, #upload h2 { margin: 0 0 .3rem; font-size: 1.15rem; }
+.live-window { grid-column: 1 / -1; }
 .field.inline { flex-direction: row; align-items: center; gap: .4rem; }
 .field.inline input { width: 5rem; }
 .summary { margin-bottom: 1rem; }
