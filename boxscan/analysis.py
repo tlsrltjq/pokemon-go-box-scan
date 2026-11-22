@@ -151,6 +151,13 @@ def apply_reference(individual: dict, data: reference.Reference | None) -> None:
                 break
     move_dictionary.annotate(individual["moves"], data, resolved["species"],
                              resolved["form"] or individual["level"].get("form"))
+    # A charged move the species cannot learn, or a name not in the dictionary ("히푸이"), is usually
+    # a misread or a neighbouring Pokémon's move; drop it when a valid one was read at least as often.
+    charged = individual["moves"].get("charged") or []
+    valid = [move for move in charged if not suspect_move(move)]
+    if valid:
+        best = max(move["votes"] for move in valid)
+        individual["moves"]["charged"] = [move for move in charged if not suspect_move(move) or move["votes"] > best]
     # Shadow candidate: the purify button, or the shadow-only charged attack (화풀이).
     moves = individual["moves"]
     evidence = []
@@ -159,6 +166,10 @@ def apply_reference(individual: dict, data: reference.Reference | None) -> None:
     if any(m and m.get("marker_kind") == "shadow" for m in [moves.get("fast"), *moves.get("charged", [])]):
         evidence.append("그림자 전용 기술")
     individual["shadow"] = {"value": True if evidence else None, "evidence": evidence}
+
+
+def suspect_move(move: dict | None) -> bool:
+    return bool(move) and (move.get("match") == "none" or move.get("marker_kind") == "not_in_learnset")
 
 
 def _reference(data_dir: Path) -> reference.Reference | None:

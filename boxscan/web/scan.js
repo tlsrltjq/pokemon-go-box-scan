@@ -340,7 +340,7 @@ function candidateRow(individual, index) {
   maxEditor.hidden = !values.max_state && !values.max_moves.length;
   const moveInput = (name, move, label) => textInput(name, move ? move.name ?? move.value : "", {
     maxlength: "30", "aria-label": label, title: move ? [readingTitle(move), move.marker ? `* ${move.reason}` : ""].filter(Boolean).join(" · ") : "",
-    class: move?.marker ? "marked" : null });
+    class: move && (move.match === "none" || move.marker_kind === "not_in_learnset") ? "doubt" : move?.marker ? "marked" : null });
   const formNode = element("form", { class: "cand-main" },
     thumbs(individual, index, species),
     cell("name", "종", textInput("species", values.species, { maxlength: "30", "aria-label": "종", class: doubtful(individual.species) ? "doubt" : null,

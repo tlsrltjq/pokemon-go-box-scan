@@ -209,6 +209,24 @@ class NicknameCodeTests(unittest.TestCase):
         self.assertIsNone(plain["code"])
 
 
+class SuspectMoveTests(unittest.TestCase):
+    def test_misread_or_unlearnable_charged_moves_are_dropped_next_to_valid_ones(self):
+        def annotate(moves, data, species, form):  # what the dictionary would say
+            for move in moves["charged"]:
+                move.update({"화풀이": {"match": "exact"}, "대지의힘": {"match": "exact", "marker_kind": "not_in_learnset"},
+                             "히푸이": {"match": "none"}}[move["value"]])
+        individual = {"species": {"value": "랜드로스"}, "cp": None, "max_hp": None, "appraisals": [],
+                      "moves": {"fast": None, "charged": [{"value": "화풀이", "votes": 4}, {"value": "히푸이", "votes": 1},
+                                                          {"value": "대지의힘", "votes": 2}]}}
+        with mock.patch.object(analysis.move_dictionary, "annotate", annotate):
+            analysis.apply_reference(individual, None)
+        self.assertEqual([m["value"] for m in individual["moves"]["charged"]], ["화풀이"])
+        alone = {**individual, "moves": {"fast": None, "charged": [{"value": "히푸이", "votes": 1}]}}
+        with mock.patch.object(analysis.move_dictionary, "annotate", annotate):
+            analysis.apply_reference(alone, None)
+        self.assertEqual([m["value"] for m in alone["moves"]["charged"]], ["히푸이"])  # nothing better: kept, shown in orange
+
+
 class CpCorrectionTests(unittest.TestCase):
     def test_a_cp_that_fits_hp_and_iv_replaces_a_glitchy_vote(self):
         from boxscan import level
