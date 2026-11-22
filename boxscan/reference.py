@@ -91,6 +91,9 @@ class Reference:
     max_moves: dict[str, dict] | None = None
     max_move_by_type: dict[str, str] | None = None  # fast move type -> Max Attack move id
     species_max_moves: dict[str, str] | None = None  # "id|form" ("*" = any form) -> G-Max or special move id
+    # Mega / primal raid boosts: {"same_type", "different_type", "special_move": [by mega level],
+    #  "types": {pokemon id: boosted types} for primal-style boosts that differ from the Pokémon's types}
+    temp_boosts: dict | None = None
 
     def forms(self, korean_name: str) -> list[BaseStats]:
         pokemon_id = self.korean_names.get(korean_name.strip())
@@ -154,11 +157,33 @@ def parse(files: dict[str, bytes], version: str = "", fetched_at: str = "") -> R
     notes["mega_moves"] = sum(len(v) for v in mega_moves.values())
     types, move_stats, type_chart, weather, battle = _battle_data(master)
     max_moves, max_move_by_type, species_max_moves = _max_data(master, files["move_names.csv"])
+    temp_boosts = _temp_boosts(master, enum_ids)
     if len(type_chart) != 18 or not move_stats or "energyDeltaPerHealthLost" not in battle:
         raise ValueError("전투 계산용 데이터(상성·기술·전투 설정)를 읽지 못했습니다.")
     return Reference(version, fetched_at, stats, cpm, names, notes, move_names, move_power, learnsets,
                      temp_stats, form_changes, mega_moves, types, move_stats, type_chart, weather, battle,
-                     max_moves, max_move_by_type, species_max_moves)
+                     max_moves, max_move_by_type, species_max_moves, temp_boosts)
+
+
+def _temp_boosts(master: list[dict], enum_ids: dict[str, int]) -> dict:
+    """Raid attack boosts of an active mega / primal (MEGA_EVO_SETTINGS, PRIMAL_EVO_SETTINGS)."""
+    found: dict = {"types": {}}
+    for item in master:
+        data = item.get("data", {})
+        if item["templateId"] == "MEGA_EVO_SETTINGS":
+            settings = data.get("megaEvoSettings", {})
+            found["same_type"] = float(settings["attackBoostFromMegaSameType"])
+            found["different_type"] = float(settings["attackBoostFromMegaDifferentType"])
+            found["special_move"] = [float(b.get("gymsAndRaidsMultiplier", 1.0))
+                                     for b in settings.get("tempEvoSpecialAttackBoosts") or []]
+        elif item["templateId"] == "PRIMAL_EVO_SETTINGS":
+            for boost in data.get("primalEvoSettings", {}).get("typeBoosts") or []:
+                pokemon_id = enum_ids.get(boost.get("pokemonId"))
+                if pokemon_id:
+                    found["types"][str(pokemon_id)] = sorted(_type(t) for t in boost.get("boostType") or [])
+    if "same_type" not in found:
+        raise ValueError("메가진화 보너스 설정(MEGA_EVO_SETTINGS)을 찾지 못했습니다.")
+    return found
 
 
 # Max Guard keeps the main-series name 다이월; Max Spirit exists only in GO and is shown as 다이리커버리.
@@ -460,6 +485,7 @@ def to_json(reference: Reference) -> dict:
         "max_moves": reference.max_moves,
         "max_move_by_type": reference.max_move_by_type,
         "species_max_moves": reference.species_max_moves,
+        "temp_boosts": reference.temp_boosts,
     }
 
 
@@ -479,7 +505,7 @@ def from_json(data: dict) -> Reference:
                      {int(k): v for k, v in (data.get("mega_moves") or {}).items()},
                      data.get("types"), data.get("move_stats"), data.get("type_chart"),
                      data.get("weather"), data.get("battle"), data.get("max_moves"),
-                     data.get("max_move_by_type"), data.get("species_max_moves"))
+                     data.get("max_move_by_type"), data.get("species_max_moves"), data.get("temp_boosts"))
 
 
 def rebuild(data_dir: Path) -> dict:

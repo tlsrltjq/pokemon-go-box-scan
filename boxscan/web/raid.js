@@ -49,6 +49,9 @@ function memberCard(member) {
       element("span", { class: "badge neutral" }, member.code ?? "")),
     element("p", { class: "muted" }, `레벨 ${member.level} · IV ${formatIv(member.iv)} · ${member.types.join("/")}` +
       (member.shadow ? " · 그림자 보정 공격 ×1.2·방어 ×0.833" : "")),
+    member.mega ? element("p", { class: "mega-note" },
+      `${member.mega.name} 상태로 출전 · 싸우는 동안 ${member.mega.boost_types.join("·")} 공격 ×${member.mega.same_type}, ` +
+      `다른 타입 ×${member.mega.different_type}` + (member.mega.plus_move ? ` · ${member.mega.plus_move} 사용 가능` : "")) : null,
     element("div", { class: "move" }, element("span", { class: "move-role" }, "노말어택"), element("strong", {}, member.fast)),
     element("div", { class: "move" }, element("span", { class: "move-role" }, "스페셜어택"),
       element("strong", {}, member.charged), element("span", { class: "move-power" }, member.charged_type ?? "")),
@@ -58,6 +61,15 @@ function memberCard(member) {
       element("div", {}, element("dt", {}, "버틴 시간"), element("dd", {}, element("strong", {}, range(member.alive_s, "초", 1)))),
       element("div", {}, element("dt", {}, "이론 DPS"), element("dd", {}, element("strong", {}, String(member.theoretical_dps))))),
   );
+}
+
+function megaLine(comparison) {
+  if (!comparison) return null;
+  if (!comparison.candidates) return element("p", { class: "muted" }, "박스에 메가진화·원시회귀할 수 있는 개체가 없어 메가진화 없이 계산했습니다.");
+  if (!comparison.member) return element("p", { class: "muted" }, "메가진화 개체를 넣어도 피해가 늘지 않아 메가진화 없이 추천합니다.");
+  const gain = comparison.with_mega - comparison.without_mega;
+  return element("p", {}, `${comparison.member}을(를) 넣으면 메가진화 없는 추천(${Math.round(comparison.without_mega).toLocaleString()})보다 ` +
+    `평균 ${Math.round(gain).toLocaleString()} 더 줍니다.`);
 }
 
 function showResult(result) {
@@ -81,6 +93,7 @@ function showResult(result) {
       element("p", { class: "muted" }, `보스 기술 조합 ${result.scenarios.length}가지 평균(괄호는 가장 낮은~높은 결과). ` +
         (r.defeated_scenarios ? `${r.defeated_scenarios}가지 조합에서 혼자 보스를 쓰러뜨립니다. ` : "") +
         `평균 DPS ${r.dps.avg}.`),
+      megaLine(result.mega_comparison),
       result.shortfall ? element("p", { class: "warn-text" }, result.shortfall) : null,
     ].filter(Boolean));
   }
@@ -134,6 +147,7 @@ form.addEventListener("submit", async event => {
         boss_fast: form.elements.boss_fast.value || null,
         boss_charged: form.elements.boss_charged.value || null,
         compare_weather: form.elements.compare_weather.checked,
+        include_mega: form.elements.include_mega.checked,
       }),
     }));
     status.textContent = "";

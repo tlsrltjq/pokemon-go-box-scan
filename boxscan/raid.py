@@ -20,6 +20,13 @@ Party search: every eligible Pokémon picks the charged attack that deals more d
 the strongest candidates (by damage per second) are kept, every party of up to six from them is
 estimated from the solo runs, and the best few are simulated in full. The search is exhaustive over
 the kept candidates, not over every possible action, and the result says so.
+
+Mega evolution (optional): every box Pokémon that can mega evolve or reverse into a primal form is
+also tried in that form (its stats and types, and its "+" move when the box has it). A party holds
+at most one of them, like the game's one active mega. While it is on the field its own attacks get
+the game master's mega boost (same type x1.3, other types x1.1; primal Groudon, Kyogre and mega
+Rayquaza boost their listed types). Alone in a raid my other Pokémon wait on the bench, so they do
+not get the boost.
 """
 import heapq
 import itertools
@@ -29,10 +36,12 @@ from dataclasses import dataclass, field
 from . import level as level_rules
 from .forms import display_name
 from .reference import Reference
+from .species import TEMP_NAMES
 
-ENGINE_VERSION = "raid-sim/1"
+ENGINE_VERSION = "raid-sim/2"
 PARTY_SIZE = 6
 CANDIDATE_LIMIT = 12
+MEGA_CANDIDATE_LIMIT = 4
 FULL_SIM_PARTIES = 5
 BOSS_EXTRA_DELAY_MS = 500
 
@@ -74,6 +83,7 @@ class Move:
     energy: int
     duration_ms: int
     damage_ms: int
+    bonus: float = 1.0  # mega "+" moves get a multiplier by mega level
 
 
 @dataclass
@@ -128,8 +138,16 @@ def boss(reference: Reference, species: str, tier: str, form: str | None = None,
     }
 
 
-def attacker(reference: Reference, entry: dict) -> tuple[Fighter | None, str | None]:
-    """A box entry as a fighter, or the reason it cannot be used."""
+def temp_name(species: str, temp: str) -> str:
+    """The game's name of the mega / primal form: 메가리자몽X, 원시그란돈."""
+    if temp == "PRIMAL":
+        return f"원시{species}"
+    return f"메가{species}" + temp.removeprefix("MEGA").removeprefix("_")
+
+
+def attacker(reference: Reference, entry: dict, temp: str | None = None) -> tuple[Fighter | None, str | None]:
+    """A box entry as a fighter, or the reason it cannot be used. With temp, the same Pokémon mega
+    evolved (or in primal reversion)."""
     species, iv, lvl = entry.get("species"), entry.get("iv"), (entry.get("level") or {}).get("value")
     if not species or not reference.forms(species):
         return None, "종을 기준 데이터에서 찾지 못함"
@@ -138,9 +156,9 @@ def attacker(reference: Reference, entry: dict) -> tuple[Fighter | None, str | N
     if lvl is None:
         return None, "레벨이 하나로 정해지지 않음"
     form = entry.get("form") or "Normal"
-    options = level_rules._stat_options(reference, species, None, form)
+    options = level_rules._stat_options(reference, species, temp, None if temp else form)
     if not options:
-        return None, "모습의 종족값을 찾지 못함"
+        return None, "메가진화 종족값을 찾지 못함" if temp else "모습의 종족값을 찾지 못함"
     stats = options[0]
     moves = entry.get("moves") or {}
     fast = _move(reference, (moves.get("fast") or {}).get("move_id"))
@@ -152,27 +170,66 @@ def attacker(reference: Reference, entry: dict) -> tuple[Fighter | None, str | N
     cpm = reference.cpm.get(float(lvl))
     if cpm is None:
         return None, "레벨의 CP 배율이 없음"
-    hp = entry.get("max_hp") or max(10, math.floor((stats.stamina + iv["stamina"]) * cpm))
-    # Fused or other forms show their own name (블랙큐레무), like the box does.
-    name = (entry.get("form_name") if form != "Normal" and entry.get("form_name") else species) + "".join(
-        mark for key, mark in (("shiny", "*"), ("lucky", "♣"), ("background", "◆")) if entry.get(key) is True)
-    attack, defense = (stats.attack + iv["attack"]) * cpm, (stats.defense + iv["defense"]) * cpm
     shadow = entry.get("shadow") is True
+    if temp and shadow:
+        return None, "그림자 포켓몬은 메가진화할 수 없음"
+    # The box keeps the regular form's max HP; a mega's HP comes from its own stamina.
+    hp = (None if temp else entry.get("max_hp")) or max(10, math.floor((stats.stamina + iv["stamina"]) * cpm))
+    # Fused or other forms show their own name (블랙큐레무), like the box does.
+    name = temp_name(species, temp) if temp else (
+        entry.get("form_name") if form != "Normal" and entry.get("form_name") else species)
+    name += "".join(mark for key, mark in (("shiny", "*"), ("lucky", "♣"), ("background", "◆"))
+                    if entry.get(key) is True)
+    attack, defense = (stats.attack + iv["attack"]) * cpm, (stats.defense + iv["defense"]) * cpm
     if shadow:  # shadow bonus from the game's battle settings: more attack, less defense
         attack *= reference.battle.get("shadowPokemonAttackBonusMultiplier", 1.2)
         defense *= reference.battle.get("shadowPokemonDefenseBonusMultiplier", 0.8333333)
         name += " (그림자)"
-    return Fighter(entry["id"], name, attack, defense, int(hp), _types(reference, stats.pokemon_id, form), fast,
-                   charged, {"code": entry.get("code"), "revision": entry.get("revision"), "level": lvl, "iv": iv,
-                             "shadow": shadow}), None
+    types = _types(reference, stats.pokemon_id, None if temp else form, temp)
+    info = {"code": entry.get("code"), "revision": entry.get("revision"), "level": lvl, "iv": iv, "shadow": shadow,
+            "mega": None}
+    if temp:
+        boosts = reference.temp_boosts or {}
+        boosted = (boosts.get("types") or {}).get(str(stats.pokemon_id)) or types
+        plus = _mega_plus(reference, entry, stats.pokemon_id, temp)
+        if plus:
+            charged = [*charged, plus]
+        info["mega"] = {"kind": temp, "name": TEMP_NAMES.get(temp, temp), "boost_types": boosted,
+                        "same_type": boosts.get("same_type", 1.0), "different_type": boosts.get("different_type", 1.0),
+                        "plus_move": plus.name if plus else None}
+    return Fighter(entry["id"], name, attack, defense, int(hp), types, fast, charged, info), None
+
+
+def _mega_plus(reference: Reference, entry: dict, pokemon_id: int, temp: str) -> Move | None:
+    """The mega's "+" charged attack, when the box recorded it for this form. The mega level is not
+    stored, so the lowest level that unlocks it is assumed (multiplier from the game master)."""
+    recorded = (entry.get("mega_move") or {}).get("move_id")
+    data = (reference.mega_moves or {}).get(pokemon_id, {}).get(temp) or {}
+    if not recorded or recorded != data.get("move_id"):
+        return None
+    move = _move(reference, recorded)
+    if move is None:
+        return None
+    levels = (reference.temp_boosts or {}).get("special_move") or [1.0]
+    move.name, move.bonus = data.get("name") or move.name, levels[min(1, len(levels) - 1)]
+    return move
+
+
+def mega_bonus(fighter: Fighter, move: Move) -> float:
+    """The attack multiplier while this fighter is the active mega (1.0 for others)."""
+    mega = fighter.info.get("mega")
+    boost = 1.0
+    if mega:
+        boost = mega["same_type"] if move.type in mega["boost_types"] else mega["different_type"]
+    return boost * move.bonus
 
 
 def damage(reference: Reference, move: Move, attack: float, defense: float, attacker_types: list[str],
-           defender_types: list[str], weather_types: list[str]) -> int:
+           defender_types: list[str], weather_types: list[str], bonus: float = 1.0) -> int:
     stab = reference.battle["sameTypeAttackBonusMultiplier"] if move.type in attacker_types else 1.0
     boost = 1.2 if move.type in weather_types else 1.0
     effective = math.prod(reference.type_chart[move.type][t] for t in defender_types)
-    return math.floor(0.5 * move.power * attack / defense * stab * boost * effective) + 1
+    return math.floor(0.5 * move.power * attack / defense * stab * boost * effective * bonus) + 1
 
 
 def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, boss_fast: Move,
@@ -184,9 +241,10 @@ def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, 
     max_energy = settings["maximumEnergy"]
     swap = settings["swapDurationMs"]
     boss_delay = int(settings["enemyAttackInterval"] * 1000) + BOSS_EXTRA_DELAY_MS
-    hits = [damage(reference, f.fast, f.attack, foe["defense"], f.types, foe["types"], weather_types) for f, _ in party]
-    charges = [damage(reference, f.charged[c], f.attack, foe["defense"], f.types, foe["types"], weather_types)
-               for f, c in party]
+    hits = [damage(reference, f.fast, f.attack, foe["defense"], f.types, foe["types"], weather_types,
+                   mega_bonus(f, f.fast)) for f, _ in party]
+    charges = [damage(reference, f.charged[c], f.attack, foe["defense"], f.types, foe["types"], weather_types,
+                      mega_bonus(f, f.charged[c])) for f, c in party]
     taken = [(damage(reference, boss_fast, foe["attack"], f.defense, foe["types"], f.types, weather_types),
               damage(reference, boss_charged, foe["attack"], f.defense, foe["types"], f.types, weather_types))
              for f, _ in party]
@@ -304,9 +362,9 @@ def _estimate(members: list[list[tuple[int, int]]], limit_ms: int, swap_ms: int,
 def recommend(reference: Reference, entries: list[dict], species: str, tier: str, form: str | None = None,
               temp: str | None = None, weather: str = "", time_limit_s: float | None = None,
               rejoin_delay_s: float | None = None, boss_fast: str | None = None,
-              boss_charged: str | None = None, include_mega: bool = False) -> dict:
-    if include_mega:
-        raise RaidError("UNSUPPORTED_RULESET: 메가진화 포함 추천은 아직 지원하지 않습니다.")
+              boss_charged: str | None = None, include_mega: bool = False, compare_mega: bool = True) -> dict:
+    if include_mega and not reference.temp_boosts:
+        raise RaidError("기준 데이터에 메가진화 보너스가 없습니다. `python -m boxscan reference rebuild`를 실행하세요.")
     if weather not in WEATHER_NAMES:
         raise RaidError("날씨를 다시 선택하세요.")
     foe = boss(reference, species, tier, form, temp)
@@ -317,12 +375,7 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
         raise RaidError("재입장 지연은 0~120초 사이로 입력하세요.")
     scenarios = _scenarios(foe, boss_fast, boss_charged)
 
-    excluded, candidates = [], []
-    for entry in entries:
-        fighter, reason = attacker(reference, entry)
-        if fighter is None:
-            excluded.append({"code": entry.get("code"), "name": entry.get("species") or "종 미확인", "reason": reason})
-            continue
+    def candidate(fighter):
         options = []
         for index, _ in enumerate(fighter.charged):
             runs = [simulate(reference, [(fighter, index)], foe, f, c, limit_s, weather) for f, c in scenarios]
@@ -331,23 +384,43 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
         options.sort(key=lambda option: option[0], reverse=True)
         best_damage, choice, solo = options[0]
         dps = sum(d / t for d, t in solo) / len(solo) * 1000
-        candidates.append({"fighter": fighter, "choice": choice, "solo": solo, "dps": dps,
-                           "options": [(o[1], o[0]) for o in options]})
+        return {"fighter": fighter, "choice": choice, "solo": solo, "dps": dps,
+                "options": [(o[1], o[0]) for o in options]}
+
+    excluded, candidates, megas = [], [], []
+    for entry in entries:
+        fighter, reason = attacker(reference, entry)
+        if fighter is None:
+            excluded.append({"code": entry.get("code"), "name": entry.get("species") or "종 미확인", "reason": reason})
+            continue
+        candidates.append(candidate(fighter))
+        if include_mega:
+            pokemon_id = reference.korean_names.get(entry["species"].strip())
+            for kind in (reference.temp_stats or {}).get(pokemon_id, {}):
+                mega, _ = attacker(reference, entry, kind)
+                if mega is not None:
+                    megas.append(candidate(mega))
     if not candidates:
         return _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, [], [], excluded,
-                       {"candidates": 0, "considered": 0, "combinations": 0, "approximate": False})
+                       {"candidates": 0, "considered": 0, "combinations": 0, "approximate": False,
+                        "mega_candidates": 0}, include_mega=include_mega)
 
     candidates.sort(key=lambda c: c["dps"], reverse=True)
-    considered = candidates[:CANDIDATE_LIMIT]
-    size = min(PARTY_SIZE, len(considered))
+    megas.sort(key=lambda c: c["dps"], reverse=True)
+    considered = candidates[:CANDIDATE_LIMIT] + megas[:MEGA_CANDIDATE_LIMIT]
+    size = min(PARTY_SIZE, len({c["fighter"].key for c in considered}))
     swap = reference.battle["swapDurationMs"]
     rejoin_ms = None if rejoin_delay_s is None else int(rejoin_delay_s * 1000)
 
     def ordered(team):
         return sorted(team, key=lambda c: c["dps"], reverse=True)
 
+    def allowed(team):  # one Pokémon once, and at most one mega at a time
+        return (len({c["fighter"].key for c in team}) == len(team)
+                and sum(1 for c in team if c["fighter"].info.get("mega")) <= 1)
+
     estimates = []
-    combos = list(itertools.combinations(considered, size))
+    combos = [team for team in itertools.combinations(considered, size) if allowed(team)]
     for team in combos:
         team = ordered(team)
         score = sum(_estimate([c["solo"][s] for c in team], int(limit_s * 1000), swap, rejoin_ms)
@@ -364,17 +437,25 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
             best = (average, team, runs)
     _, team, runs = best
     search = {"candidates": len(candidates), "considered": len(considered), "combinations": len(combos),
-              "fully_simulated": min(FULL_SIM_PARTIES, len(estimates)),
-              "approximate": len(candidates) > len(considered)}
-    return _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
-                   shortfall=len(candidates) < PARTY_SIZE)
+              "fully_simulated": min(FULL_SIM_PARTIES, len(estimates)), "mega_candidates": len(megas),
+              "approximate": len(candidates) > CANDIDATE_LIMIT or len(megas) > MEGA_CANDIDATE_LIMIT}
+    report = _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
+                     shortfall=len(candidates) < PARTY_SIZE, include_mega=include_mega)
+    if include_mega and compare_mega:
+        plain = recommend(reference, entries, species, tier, form, temp, weather, time_limit_s, rejoin_delay_s,
+                          boss_fast, boss_charged)
+        chosen = next((m for m in report["party"] if m["mega"]), None)
+        report["mega_comparison"] = {
+            "with_mega": report["result"]["damage"]["avg"], "without_mega": plain["result"]["damage"]["avg"],
+            "member": chosen["name"] if chosen else None, "candidates": len(megas)}
+    return report
 
 
 def compare_weather(reference: Reference, entries: list[dict], species: str, tier: str, **options) -> list[dict]:
     """The same request in every weather, strongest first, with the party each weather picks."""
     rows = []
     for weather, name in WEATHER_NAMES.items():
-        result = recommend(reference, entries, species, tier, **{**options, "weather": weather})
+        result = recommend(reference, entries, species, tier, **{**options, "weather": weather, "compare_mega": False})
         if result["result"]:
             rows.append({"weather": weather, "name": name, "damage": result["result"]["damage"],
                          "party": [member["name"] for member in result["party"]]})
@@ -385,8 +466,10 @@ def _theoretical_dps(reference: Reference, fighter: Fighter, choice: int, foe: d
     """Damage per second of one fast/charged cycle against the boss, ignoring the boss's attacks."""
     weather_types = (reference.weather or {}).get(weather, []) if weather else []
     fast, charged = fighter.fast, fighter.charged[choice]
-    fast_damage = damage(reference, fast, fighter.attack, foe["defense"], fighter.types, foe["types"], weather_types)
-    charged_damage = damage(reference, charged, fighter.attack, foe["defense"], fighter.types, foe["types"], weather_types)
+    fast_damage = damage(reference, fast, fighter.attack, foe["defense"], fighter.types, foe["types"], weather_types,
+                         mega_bonus(fighter, fast))
+    charged_damage = damage(reference, charged, fighter.attack, foe["defense"], fighter.types, foe["types"],
+                            weather_types, mega_bonus(fighter, charged))
     count = math.ceil(-charged.energy / max(fast.energy, 1))
     return (count * fast_damage + charged_damage) / ((count * fast.duration_ms + charged.duration_ms) / 1000)
 
@@ -396,7 +479,7 @@ def _summary(values: list[float]) -> dict:
 
 
 def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
-            shortfall=False) -> dict:
+            shortfall=False, include_mega=False) -> dict:
     party = []
     for position, candidate in enumerate(team):
         fighter, choice = candidate["fighter"], candidate["choice"]
@@ -416,6 +499,9 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
             "alive_s": _summary([m["time_ms"] / 1000 for m in member_runs]),
             "theoretical_dps": round(_theoretical_dps(reference, fighter, choice, foe, weather), 1),
         })
+        if fighter.info.get("mega"):
+            mega = fighter.info["mega"]
+            party[-1]["mega"] = mega | {"boost_types": [TYPE_NAMES.get(t, t) for t in mega["boost_types"]]}
     result = None
     if runs:
         result = {
@@ -448,7 +534,16 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
              else f"재입장: 모두 기절하면 {rejoin_delay_s:g}초 뒤 같은 파티로 다시 들어갑니다(사용자가 정한 값)."),
             "날씨 보너스는 내 기술과 보스 기술 모두에 같은 규칙(해당 타입 ×1.2)으로 적용합니다.",
             "박스에 그림자로 표시한 개체는 공격 ×1.2, 방어 ×0.833(게임 전투 설정 값)을 적용합니다. 표시하지 않은 개체는 일반 개체로 계산합니다.",
+            *(_MEGA_ASSUMPTIONS if include_mega else ["메가진화는 넣지 않았습니다. 켜면 박스에서 메가진화할 수 있는 개체 1마리를 메가진화 상태로 함께 비교합니다."]),
             "친구·파티 파워·다른 트레이너의 메가 보너스는 넣지 않았습니다.",
             f"보스 HP·CP 배율은 {RULESET['version']} 표를 쓰고, 제한 시간 기본값은 앱이 정한 시나리오 값입니다.",
         ],
     }
+
+
+_MEGA_ASSUMPTIONS = [
+    "메가진화: 메가진화·원시회귀할 수 있는 개체는 그 모습(종족값·타입)으로도 후보에 넣고, 파티에는 최대 1마리만 넣습니다. 메가에너지는 충분하다고 가정합니다.",
+    "메가진화한 개체가 싸우는 동안 그 개체의 공격은 같은 타입 ×1.3, 다른 타입 ×1.1입니다(게임 마스터 값). 원시그란돈·원시가이오가·메가레쿠쟈는 게임 마스터에 적힌 세 타입이 ×1.3입니다.",
+    "혼자 싸우면 다른 내 포켓몬은 대기 중이라 메가 보너스를 받지 않습니다. 메가 개체 자신의 공격에도 보너스가 붙는다는 점은 커뮤니티 자료 기준입니다.",
+    "메가 레벨은 박스에 없어 모든 메가 개체를 같은 보너스로 계산합니다. 박스에 기록된 '+' 스페셜어택은 쓸 수 있는 가장 낮은 메가 레벨의 위력 배율로 계산합니다.",
+]

@@ -21,7 +21,12 @@ def master(count: int, whole=WHOLE) -> list[dict]:
                  "sameTypeAttackBonusMultiplier": 1.2, "maximumEnergy": 100, "energyDeltaPerHealthLost": 0.5,
                  "swapDurationMs": 1000, "enemyAttackInterval": 1.5, "bossEnergyRegenerationPerHealthLost": 0.5}}},
              {"templateId": "WEATHER_AFFINITY_CLEAR", "data": {"weatherAffinities": {
-                 "weatherCondition": "CLEAR", "pokemonType": ["POKEMON_TYPE_FIRE"]}}}]
+                 "weatherCondition": "CLEAR", "pokemonType": ["POKEMON_TYPE_FIRE"]}}},
+             {"templateId": "MEGA_EVO_SETTINGS", "data": {"megaEvoSettings": {
+                 "attackBoostFromMegaSameType": 1.3, "attackBoostFromMegaDifferentType": 1.1,
+                 "tempEvoSpecialAttackBoosts": [{"gymsAndRaidsMultiplier": 1.0}, {"gymsAndRaidsMultiplier": 1.1}]}}},
+             {"templateId": "PRIMAL_EVO_SETTINGS", "data": {"primalEvoSettings": {"typeBoosts": [
+                 {"pokemonId": "MON5", "boostType": ["POKEMON_TYPE_FIRE", "POKEMON_TYPE_GRASS"]}]}}}]
     for attack in reference.TYPE_ORDER:  # synthetic type chart: everything neutral
         items.append({"templateId": f"POKEMON_TYPE_{attack}", "data": {"typeEffective": {
             "attackType": f"POKEMON_TYPE_{attack}", "attackScalar": [1.0] * 18}}})
@@ -137,6 +142,10 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual((change["target"], change["type"], change["component"], change["stats"]),
                          ("Fused", "FUSE", "테스트몬7", [200, 180, 160]))
         self.assertEqual((change["existing_moves"], change["replacement_moves"]), (["MOVE_11"], ["MOVE_20"]))
+        self.assertEqual(data.temp_boosts, {"same_type": 1.3, "different_type": 1.1, "special_move": [1.0, 1.1],
+                                            "types": {"5": ["FIRE", "GRASS"]}})
+        restored = reference.from_json(json.loads(json.dumps(reference.to_json(data))))
+        self.assertEqual(restored.temp_boosts, data.temp_boosts)
         self.assertEqual(data.mega_moves[5]["MEGA"], {
             "move_id": "VM_MOVE_TEMP_EVOLUTION_MEGA_V0005_POKEMON_MON5", "base_move": "MOVE_12",
             "name": "기술12번+", "power": 140.0})

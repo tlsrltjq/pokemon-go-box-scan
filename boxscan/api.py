@@ -157,7 +157,8 @@ def create_app(
                 result["weather_comparison"] = raid.compare_weather(
                     data, box.list(), species, text("tier") or "5", form=text("form"), temp=text("temp"),
                     time_limit_s=number("time_limit_s"), rejoin_delay_s=number("rejoin_delay_s"),
-                    boss_fast=text("boss_fast"), boss_charged=text("boss_charged"))
+                    boss_fast=text("boss_fast"), boss_charged=text("boss_charged"),
+                    include_mega=payload.get("include_mega") is True)
         except raid.RaidError as error:
             raise HTTPException(422, str(error)) from None
         result["boss"]["temp_name"] = TEMP_NAMES.get(result["boss"]["temp"])
