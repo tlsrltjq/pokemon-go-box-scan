@@ -178,6 +178,30 @@ class ProgressTests(Fixture):
         self.assertEqual(session._windows(closed_only=True), [])
 
 
+class CpCorrectionTests(unittest.TestCase):
+    def test_a_cp_that_fits_hp_and_iv_replaces_a_glitchy_vote(self):
+        from boxscan import level
+
+        def estimate(data, species, iv, cp, max_hp, temp=None, form=None):
+            status = level.RESOLVED if cp == 3492 else level.CONFLICT
+            return {"status": status, "levels": [35.5] if cp == 3492 else [], "form": None}
+
+        individual = {"species": {"value": "망나뇽"}, "cp": {"value": 349, "votes": 3, "observations": 4},
+                      "cp_candidates": [349, 3492, 192], "max_hp": {"value": 167},
+                      "appraisals": [{"iv": {"attack": 15, "defense": 13, "stamina": 10}}],
+                      "moves": {"fast": None, "charged": []}}
+        with mock.patch.object(analysis.level, "estimate", estimate):
+            analysis.apply_reference(individual, None)
+        self.assertEqual(individual["cp"]["value"], 3492)
+        self.assertEqual(individual["cp"]["corrected_from"], 349)
+        self.assertEqual(individual["level"]["levels"], [35.5])
+        # Without IV nothing is guessed.
+        alone = {**individual, "cp": {"value": 349, "votes": 3, "observations": 4}, "appraisals": []}
+        with mock.patch.object(analysis.level, "estimate", estimate):
+            analysis.apply_reference(alone, None)
+        self.assertEqual(alone["cp"]["value"], 349)
+
+
 class WindowListTests(Fixture):
     def tool(self, body: str) -> Path:
         path = self.root / "tool.sh"

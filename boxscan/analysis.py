@@ -115,10 +115,22 @@ def apply_reference(individual: dict, data: reference.Reference | None) -> None:
         "fusion": species.fusion_options(data, resolved["species"]),
     }
     ivs = [a["iv"] for a in individual.get("appraisals", []) if a["iv"]]
-    individual["level"] = level.estimate(
-        data, resolved["species"], ivs[-1] if ivs else None,
-        (individual["cp"] or {}).get("value"), (individual["max_hp"] or {}).get("value"),
-        temp, resolved["form"])
+    iv, max_hp = (ivs[-1] if ivs else None), (individual["max_hp"] or {}).get("value")
+    individual["level"] = level.estimate(data, resolved["species"], iv, (individual["cp"] or {}).get("value"),
+                                         max_hp, temp, resolved["form"])
+    if individual["level"]["status"] in (level.CONFLICT, level.MISSING_INPUT) and iv and max_hp:
+        # A glitchy CP reading can win the vote ("CP349" for 3492 behind a bright background). Use the
+        # most often read candidate that is consistent with the species, IV and max HP instead.
+        voted = (individual["cp"] or {}).get("value")
+        for candidate in individual.get("cp_candidates", []):
+            if candidate == voted:
+                continue
+            found = level.estimate(data, resolved["species"], iv, candidate, max_hp, temp, resolved["form"])
+            if found["status"] == level.RESOLVED:
+                individual["cp"] = {**(individual["cp"] or {"votes": 0, "observations": 0}), "value": candidate,
+                                    "corrected_from": voted}
+                individual["level"] = found
+                break
     move_dictionary.annotate(individual["moves"], data, resolved["species"],
                              resolved["form"] or individual["level"].get("form"))
     # Shadow candidate: the purify button, or the shadow-only charged attack (화풀이).

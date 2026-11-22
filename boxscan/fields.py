@@ -6,6 +6,10 @@ import re
 from collections import Counter
 
 CP = re.compile(r"[cC][pP]\s*(\d{3,4})\b")
+# Other readings of the CP line kept as candidates (spec 5.3): a fifth digit stuck on ("CP34921"), or
+# the number alone when "CP" was read as a separate word ("3492" big and centred near the top).
+CP_LONG = re.compile(r"[cC][pP]\s*(\d{4})\d\b")
+CP_ALONE = re.compile(r"^(\d{3,4})$")
 HP = re.compile(r"(\d{1,3})\s*/\s*(\d{1,3})\s*[Hh][Pp]")
 # Appraisal caption: "이 마기라스(을)를 잡은 날과 장소는 ..." names the species, not the nickname.
 SPECIES = re.compile(r"이\s+(\S.*?)\s*\((?:을|를)\)(?:를|을)?\s*잡은")
@@ -51,14 +55,12 @@ def parse_moves(lines: list[dict], width: int | None) -> list[dict]:
     def centre(line):
         return line["box"][1] + line["box"][3] / 2
 
-    header = next((centre(line) for line in lines if MOVE_HEADER.search(line["text"])), None)
+    headers = [centre(line) for line in lines if MOVE_HEADER.search(line["text"])]
     rows = []
     for line in lines:
         x, _, w, h = line["box"]
         name = NAME_EDGES.sub("", line["text"].strip())
         if x > 0.3 * width or not MOVE_NAME.match(name) or name in BUTTONS:
-            continue
-        if header is not None and centre(line) < header:
             continue
         same_row = [other for other in lines if other is not line
                     and abs(centre(other) - centre(line)) <= max(8, h * 0.6)]
@@ -81,6 +83,11 @@ def parse_moves(lines: list[dict], width: int | None) -> list[dict]:
                      "boost": int(powers[0][2]) if powers[0][2] else None, "boost_kind": boost_kind,
                      "y": centre(line), "height": h})
     rows.sort(key=lambda row: row["y"])
+    # Other text can contain the header's words ("슈퍼 메가 레이드에서 잡은 …" above the moves), so the
+    # tab header is the lowest such line that still has move rows below it.
+    header = max((y for y in headers if rows and y < rows[-1]["y"]), default=None)
+    if header is not None:
+        rows = [row for row in rows if row["y"] > header]
     for index, row in enumerate(rows):
         # The fast move sits right under the tab header; a first row further down means the
         # fast move was not read in this frame.
@@ -148,6 +155,22 @@ def parse_code(texts: list[str]) -> str | None:
     return codes.pop() if len(codes) == 1 else None
 
 
+def _cp_candidates(lines: list[dict], width: int | None) -> list[int]:
+    if not lines:
+        return []
+    width = width or max(line["box"][0] + line["box"][2] for line in lines)
+    found = []
+    for line in lines:
+        text = line["text"].strip()
+        x, y, w, h = line["box"]
+        if match := CP.search(text) or CP_LONG.search(text):
+            found.append(int(match[1]))
+        elif ((match := CP_ALONE.match(text)) and y + h / 2 < 0.3 * width and h >= 0.05 * width
+              and 0.3 * width < x + w / 2 < 0.7 * width):
+            found.append(int(match[1]))
+    return sorted(set(found))
+
+
 def parse_frame(lines: list[dict], width: int | None = None) -> dict:
     texts = [line["text"].strip() for line in lines]
     found: dict = {"screen": "UNKNOWN"}
@@ -159,6 +182,8 @@ def parse_frame(lines: list[dict], width: int | None = None) -> dict:
         found["code"] = code
     if nickname := parse_nickname(lines):
         found["nickname"] = nickname
+    if candidates := _cp_candidates(lines, width):
+        found["cp_candidates"] = candidates
     for text in texts:
         if "cp" not in found and (match := CP.search(text)):
             found["cp"] = int(match[1])
@@ -249,6 +274,8 @@ def _summarize(group: list[dict]) -> dict:
         "start_seconds": group[0]["seconds"],
         "end_seconds": group[-1]["seconds"] + group[-1].get("duration", 1),
         "cp": vote([f["cp"] for f in group if "cp" in f]),
+        "cp_candidates": [value for value, _ in Counter(
+            c for f in group for c in f.get("cp_candidates", [f["cp"]] if "cp" in f else [])).most_common()],
         "max_hp": vote([f["hp"]["max"] for f in group if "hp" in f]),
         "species": vote([f["species"] for f in group if "species" in f]),
         "lucky": _lucky(group),

@@ -23,7 +23,7 @@ from .store import JobStore
 FPS = 10
 MAX_SECONDS = 600
 MAX_FRAMES = MAX_SECONDS  # one JPEG per second
-UPDATE_SECONDS = 1.0
+UPDATE_SECONDS = 0.5
 SOURCE = Path(__file__).with_name("window_capture.swift")
 SUGGESTED_BUNDLES = ("com.apple.ScreenContinuity",)  # iPhone Mirroring
 SUGGESTED_WORDS = ("iPhone", "AirPlay")

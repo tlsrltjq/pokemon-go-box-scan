@@ -77,6 +77,18 @@ class FieldParserTests(unittest.TestCase):
             self.assertNotIn("code", parse_frame(lines(text)), text)
         self.assertNotIn("nickname", parse_frame(lines("CP1000")))
 
+    def test_cp_candidates_keep_other_readings_of_the_cp_line(self):
+        # 720 px wide: "CP34921" (extra digit), the number alone big and centred, and noise.
+        found = parse_frame(boxed(("CP34921", 239, 90, 217, 48), ("17:15", 60, 33, 113, 29)), 720)
+        self.assertNotIn("cp", found)
+        self.assertEqual(found["cp_candidates"], [3492])
+        alone = parse_frame(boxed(("3492", 287, 88, 142, 50), ("80", 618, 35, 56, 25), ("2018", 290, 600, 60, 20)), 720)
+        self.assertEqual(alone["cp_candidates"], [3492])  # not the small battery or the date lower down
+        self.assertEqual(parse_frame(boxed(("cP349", 241, 89, 150, 48)), 720)["cp_candidates"], [349])
+        group = group_frames([{**frame(1, "cP349"), "cp_candidates": [349]}, {**frame(2, "cP349"), "cp_candidates": [349]},
+                              {"frame": 3, "seconds": 2, "duration": 1, "cp_candidates": [3492]}])
+        self.assertEqual(group[0]["cp_candidates"], [349, 3492])
+
     def test_a_different_code_starts_a_new_individual(self):
         frames = [frame(n, "CP1000", code) for n, code in ((1, "PK1"), (2, "PK1"), (3, "PK2"), (4, "PK2"))]
         first, second = group_frames(frames)
@@ -106,6 +118,13 @@ class MoveParserTests(unittest.TestCase):
             {"name": "테스트펀치", "power": 12, "boost": None, "boost_kind": None, "role": "fast"},
             {"name": "합성빔", "power": 90, "boost": 18, "boost_kind": "weather", "role": "charged"},
         ])
+
+    def test_header_words_in_other_text_do_not_move_the_tab_header(self):
+        # A Super Mega Raid note above the moves contains "레이드" too; the real tab header is lower.
+        lines = boxed(("슈퍼 메가 레이드에서 잡은 테스트몬(은)는 최소", 120, 280, 160, 11)) + MOVE_SCREEN
+        self.assertEqual([m["role"] for m in parse_frame(lines, 332)["moves"]], ["fast", "charged"])
+        below = MOVE_SCREEN + boxed(("레이드에서 잡은 날", 60, 560, 80, 11))  # below the moves: ignored
+        self.assertEqual([m["role"] for m in parse_frame(below, 332)["moves"]], ["fast", "charged"])
 
     def test_missing_fast_row_does_not_promote_the_charged_move(self):
         lines = [line for line in MOVE_SCREEN if line["text"] not in ("테스트펀치", "12")]

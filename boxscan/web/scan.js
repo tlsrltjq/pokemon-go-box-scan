@@ -25,7 +25,9 @@ function showFrames(frames) {
 
 function reading(label, item, unit = "") {
   const value = item ? `${item.value}${unit}` : "읽지 못함";
-  const votes = item ? `${item.observations}장 중 ${item.votes}장 일치` : "원본 프레임 확인 필요";
+  const votes = !item ? "원본 프레임 확인 필요"
+    : "corrected_from" in item ? `가장 많이 읽힌 ${item.corrected_from ?? "값"} 대신 HP·IV와 맞는 값`
+    : `${item.observations}장 중 ${item.votes}장 일치`;
   return element("div", { class: "reading" },
     element("dt", {}, label),
     element("dd", {}, element("strong", {}, value), element("span", {}, votes)),
@@ -510,7 +512,7 @@ async function monitor(id) {
         ? "영상 저장 완료. 워커가 작업을 시작할 때까지 기다리는 중입니다."
         : "프레임을 추출하고 있습니다.";
     }
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, scan.live?.running ? 700 : 1500));
   }
 }
 
