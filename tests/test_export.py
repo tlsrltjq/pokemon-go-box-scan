@@ -45,7 +45,7 @@ class ExportTests(unittest.TestCase):
 
     def test_pokemon_sheet_values_and_empty_unknowns(self):
         book, _ = self.workbook()
-        self.assertEqual(book.sheetnames, ["포켓몬 목록", "기술", "메타데이터"])
+        self.assertEqual(book.sheetnames, ["포켓몬 목록", "기술", "사탕", "메타데이터"])
         sheet = book["포켓몬 목록"]
         headers = [cell.value for cell in sheet[1]]
         row = dict(zip(headers, [cell.value for cell in sheet[2]]))
@@ -64,6 +64,17 @@ class ExportTests(unittest.TestCase):
         self.assertIsNone(partial["IV 공격"])  # unknown stays empty, never 0
         self.assertIsNone(partial["최대 HP"])
         self.assertEqual((partial["레벨 판정"], partial["레벨 후보"]), ("후보 여러 개", "10, 10.5"))
+
+    def test_candy_sheet_and_columns(self):
+        self.box.record_resources({"family": "하나몬", "candy": 98, "xl": 12, "stardust": 1_180_103}, {"scan_id": "s"})
+        data = export.workbook_bytes(self.box.list(), None, "9.9.9", self.box.candies())
+        book = load_workbook(io.BytesIO(data))
+        candy = [[cell.value for cell in row] for row in book["사탕"].iter_rows(min_row=2)]
+        self.assertEqual([row[:3] for row in candy], [["하나몬", 98, 12]])
+        headers = [cell.value for cell in book["포켓몬 목록"][1]]
+        self.assertTrue({"메가 레벨", "사탕 계열", "사탕", "사탕XL"} <= set(headers))
+        notes = {row[0].value: row[1].value for row in book["메타데이터"].iter_rows(min_row=2)}
+        self.assertEqual(notes["별의모래"], 1_180_103)
 
     def test_text_that_looks_like_a_formula_stays_text(self):
         book, raw = self.workbook()

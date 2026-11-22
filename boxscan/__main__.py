@@ -102,7 +102,7 @@ def main() -> None:
             data = reference.load(args.data_dir)
         except (OSError, ValueError, KeyError):
             data = None
-        output.write_bytes(export.workbook_bytes(entries, data, export.app_version()))
+        output.write_bytes(export.workbook_bytes(entries, data, export.app_version(), BoxStore(args.data_dir).candies()))
         print(f"{len(entries)}개체를 {output.resolve()}에 저장했습니다.")
         return
 

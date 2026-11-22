@@ -103,9 +103,11 @@ def _sheet(workbook: Workbook, title: str, headers: list[str], rows: list[list],
     return sheet
 
 
-def workbook_bytes(entries: list[dict], reference: Reference | None, app_version: str) -> bytes:
+def workbook_bytes(entries: list[dict], reference: Reference | None, app_version: str,
+                   candies: dict | None = None) -> bytes:
     workbook = Workbook()
     pokemon_rows, move_rows = [], []
+    candies = candies or {"candies": {}, "stardust": None}
     for entry in entries:
         iv = entry.get("iv")
         level = entry.get("level") or {}
@@ -127,6 +129,8 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
             _move_label(charged[1]) if len(charged) > 1 else None,
             _max_moves(entry), _fusion(entry),
             (entry.get("temp_observation") or {}).get("cp"),
+            entry.get("mega_level"), family := (reference.candy_name(entry.get("species")) if reference else None),
+            (candies["candies"].get(family) or {}).get("candy"), (candies["candies"].get(family) or {}).get("xl"),
             _local(entry.get("created_at")), _local(entry.get("updated_at")),
             entry["revision"], entry["id"],
         ])
@@ -150,17 +154,23 @@ def workbook_bytes(entries: list[dict], reference: Reference | None, app_version
            ["관리 번호", "종", "도감 번호", "모습", "다이맥스",
             "CP", "최대 HP", "CP 출처", "레벨", "레벨 판정", "레벨 후보",
             "IV 공격", "IV 방어", "IV HP", "IV %", "노말어택", "스페셜어택 1", "스페셜어택 2",
-            "맥스기술", "합체·모습 변화", "메가진화 중 CP",
+            "맥스기술", "합체·모습 변화", "메가진화 중 CP", "메가 레벨", "사탕 계열", "사탕", "사탕XL",
             "처음 저장", "마지막 갱신", "revision", "UUID"],
            pokemon_rows,
            [10, 16, 9, 10, 10, 8, 8, 9, 7, 14, 12, 8, 8, 8, 8, 16, 18, 18,
-            34, 30, 12, 17, 17, 9, 38],
+            34, 30, 12, 9, 12, 8, 8, 17, 17, 9, 38],
            {16: "0%"}, first=True)
     _sheet(workbook, "기술", ["관리 번호", "종", "슬롯", "기술", "기술 ID", "표시", "표시 이유"],
            move_rows, [10, 14, 10, 18, 24, 6, 48])
+    candy_rows = [[family, values.get("candy"), values.get("xl"), values.get("energy"), values.get("energy_kind"),
+                   _local(values.get("updated_at"))] for family, values in sorted(candies["candies"].items())]
+    _sheet(workbook, "사탕", ["계열", "사탕", "사탕XL", "에너지", "에너지 종류", "기록 시각"],
+           candy_rows, [14, 9, 9, 9, 10, 17])
     notes = [
         ["내보낸 시각", datetime.now(timezone.utc).astimezone().replace(tzinfo=None, microsecond=0)],
         ["개체 수", len(entries)],
+        ["별의모래", (candies.get("stardust") or {}).get("value")],
+        ["사탕", "진화 계열마다 하나입니다(마기라스 → 애버라스의 사탕). 스캔에서 저장할 때 화면에서 읽은 마지막 값입니다."],
         ["앱 버전", app_version],
         ["기준 데이터 버전", reference.version if reference else None],
         ["기준 데이터 받은 시각", _local(reference.fetched_at) if reference else None],

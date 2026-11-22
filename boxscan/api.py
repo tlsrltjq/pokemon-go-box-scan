@@ -506,7 +506,7 @@ def create_app(
             data = reference.load(store.root)
         except (OSError, ValueError, KeyError):
             data = None
-        content = export.workbook_bytes(box.list(), data, export.app_version())
+        content = export.workbook_bytes(box.list(), data, export.app_version(), box.candies())
         return Response(content, media_type=export.MEDIA_TYPE, headers={
             "Content-Disposition": f'attachment; filename="{export.filename()}"'})
 

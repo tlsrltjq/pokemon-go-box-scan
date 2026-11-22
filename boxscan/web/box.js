@@ -338,9 +338,40 @@ const SORTS = {
   species: (a, b) => (a.species ?? "").localeCompare(b.species ?? "", "ko") || (a.code ?? "").localeCompare(b.code ?? "", "ko", { numeric: true }),
 };
 
+// Quick filters: every chip that is on must match (다이맥스 + IV 90% 이상 = both).
+const FILTERS = [
+  ["max", "다이맥스", entry => Boolean(entry.max_state)],
+  ["shadow", "그림자", entry => entry.shadow === true],
+  ["shiny", "이로치", entry => entry.shiny === true],
+  ["lucky", "반짝반짝", entry => entry.lucky === true],
+  ["perfect", "IV 100%", entry => Boolean(entry.iv) && ivPercent(entry.iv) === 100],
+  ["high", "IV 90% 이상", entry => Boolean(entry.iv) && ivPercent(entry.iv) >= 90],
+  ["unsure", "레벨 미확정", entry => entry.level?.value == null],
+  ["nocode", "별명에 번호 없음", entry => Boolean(entry.code) && !hasCode(entry)],
+];
+const activeFilters = new Set();
+
+function renderFilters() {
+  const holder = document.querySelector("#filters");
+  holder.replaceChildren(...FILTERS.map(([key, label, test]) => {
+    const count = entries.filter(test).length;
+    const chip = element("button", { type: "button", class: "filter-chip", "aria-pressed": String(activeFilters.has(key)) },
+      `${label} ${count}`);
+    chip.addEventListener("click", () => {
+      if (activeFilters.has(key)) activeFilters.delete(key);
+      else activeFilters.add(key);
+      render();
+    });
+    return chip;
+  }));
+}
+
 function render() {
+  renderFilters();
   const words = search.value.trim().split(/\s+/).filter(Boolean);
-  const shown = entries.filter(entry => words.every(word => matches(entry, word))).sort(SORTS[sort.value] ?? SORTS.recent);
+  const tests = FILTERS.filter(([key]) => activeFilters.has(key)).map(([, , test]) => test);
+  const shown = entries.filter(entry => words.every(word => matches(entry, word)) && tests.every(test => test(entry)))
+    .sort(SORTS[sort.value] ?? SORTS.recent);
   status.textContent = entries.length
     ? `${entries.length}개체 중 ${shown.length}개체를 보여줍니다.`
     : "아직 저장한 개체가 없습니다. 스캔 화면의 판독 카드에서 저장하세요.";
