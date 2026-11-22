@@ -28,7 +28,7 @@ body { margin: 0; }
 main { max-width: 68rem; margin: auto; padding: 0 clamp(1rem, 4vw, 2.5rem) 4rem; }
 .appbar { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
-.appbar-inner { max-width: 68rem; margin: auto; padding: .5rem clamp(1rem, 4vw, 2.5rem); display: flex; align-items: center; gap: 1rem; }
+.appbar-inner { max-width: 96rem; margin: auto; padding: .5rem clamp(1rem, 4vw, 2.5rem); display: flex; align-items: center; gap: 1rem; }
 .brand { font-weight: 800; color: var(--text); text-decoration: none; white-space: nowrap; }
 .page-head { padding: 1.4rem 0 1rem; }
 .page-head p { color: var(--muted); margin: .2rem 0 0; }
@@ -205,4 +205,111 @@ a.button { display: inline-flex; align-items: center; min-height: 2.75rem; paddi
   .brand { display: none; }
   .toolbar { align-items: stretch; }
   .toolbar .field.search, .toolbar .field.sort { max-width: none; }
+}
+
+main.wide { max-width: 96rem; }
+#individuals { display: block; }
+/* Candidate rows: one line per Pokémon on wide screens. */
+.cand-head, .cand-main {
+  display: grid; align-items: center; gap: .5rem;
+  grid-template-columns: 8.2rem minmax(8rem, 1.3fr) 4.6rem 4rem 9.6rem 3.6rem minmax(6.5rem, 1fr) minmax(6.5rem, 1fr) minmax(6.5rem, 1fr) 11.5rem;
+  grid-template-areas: "thumbs name cp hp iv level fast c1 c2 save" "sub sub sub sub sub sub sub sub sub sub";
+}
+.cand-head { grid-template-areas: none; position: sticky; top: 3.1rem; z-index: 5; background: var(--bg); padding: .45rem .7rem;
+  font-size: .78rem; font-weight: 700; color: var(--muted); border-bottom: 1px solid var(--line); }
+.cand { background: var(--surface); border: 1px solid var(--border); border-radius: .8rem; padding: .55rem .7rem; margin-top: .45rem; }
+.cand.saved { opacity: .82; }
+.cand.saved .cand-main { grid-template-areas: "thumbs name cp hp iv level moves moves moves save" "sub sub sub sub sub sub sub sub sub sub"; }
+.cand form.cand-main { border: 0; padding: 0; background: none; border-radius: 0; }
+.cand input:not([type=checkbox]), .cand select { font: inherit; font-size: .95rem; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: .45rem; padding: .35rem .45rem; width: 100%; min-width: 0; margin: 0; box-sizing: border-box; }
+.cand input.doubt { border-color: var(--iv); background: color-mix(in srgb, var(--iv) 12%, var(--surface)); }
+.cand input.marked { font-weight: 700; }
+.cell { display: flex; flex-direction: column; gap: .15rem; min-width: 0; font-weight: 600; font-size: .95rem; }
+.cell-label { display: none; font-size: .72rem; color: var(--muted); font-weight: 600; }
+.c-thumbs { grid-area: thumbs; display: flex; align-items: center; gap: .3rem; }
+.c-thumbs img { display: block; width: 3.3rem; height: 4.4rem; object-fit: cover; object-position: top; border-radius: .35rem; border: 1px solid var(--line); }
+.c-thumbs a:nth-of-type(2) img { object-position: center 78%; }
+.thumb-empty { width: 3.3rem; height: 4.4rem; display: grid; place-items: center; font-size: .68rem; color: var(--muted); border: 1px dashed var(--border); border-radius: .35rem; text-align: center; }
+.row-no { width: 1.3rem; font-size: .8rem; font-weight: 700; color: var(--muted); text-align: center; }
+.c-name { grid-area: name; } .c-cp { grid-area: cp; } .c-hp { grid-area: hp; } .c-iv { grid-area: iv; }
+.c-level { grid-area: level; } .c-fast { grid-area: fast; } .c-c1 { grid-area: c1; } .c-c2 { grid-area: c2; }
+.c-save { grid-area: save; display: grid; grid-template-columns: 1fr auto; gap: .35rem; }
+.c-save button { min-height: 2.3rem; padding: .3rem .8rem; }
+.c-moves-text { grid-area: moves; font-weight: 500; }
+.c-result { grid-area: save; display: flex; flex-direction: column; gap: .15rem; font-size: .85rem; }
+.c-level strong { font-size: 1.05rem; }
+.c-level.warn strong { color: var(--warn-text); }
+.c-name .badges { margin-top: .2rem; }
+.c-name .badge { font-size: .7rem; padding: .05rem .45rem; }
+.iv-inputs { display: grid; grid-template-columns: repeat(3, 2.4rem) auto; gap: .25rem; align-items: center; }
+.iv-percent { font-size: .82rem; font-weight: 700; color: var(--accent-text); }
+.cand-sub { grid-area: sub; display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .9rem; padding-left: 8.7rem; font-size: .85rem; }
+.cand-sub .check { font-size: .85rem; }
+.cand-sub select { width: auto; font-size: .85rem; padding: .2rem .4rem; }
+.inline-field { display: inline-flex; align-items: center; gap: .3rem; font-weight: 600; color: var(--muted); }
+.inline-field input { width: 8.5rem !important; font-size: .85rem !important; padding: .2rem .4rem !important; }
+.link-button { background: none; color: var(--accent); min-height: auto; padding: 0; font-size: .85rem; text-decoration: underline; }
+.cand-diff { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; padding: .3rem 0 0 8.7rem; font-size: .82rem; }
+.cand-diff:empty, .save-message:empty { display: none; }
+.cand .save-message { padding-left: 8.7rem; }
+.chip { background: var(--accent-soft); color: var(--accent-text); border-radius: .4rem; padding: .05rem .45rem; }
+.row-detail { margin-top: .6rem; padding-top: .6rem; border-top: 1px solid var(--line);
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: .4rem 1.2rem; }
+.row-detail .level, .row-detail .moves { margin-top: 0; padding-top: 0; border-top: 0; }
+@media (max-width: 82rem) {
+  .cand-head { display: none; }
+  .cand-main, .cand.saved .cand-main {
+    grid-template-columns: 8.2rem minmax(7rem, 1.4fr) 4.6rem 4rem 9.6rem 3.6rem;
+    grid-template-areas: "thumbs name cp hp iv level" "thumbs fast c1 c2 save save" "sub sub sub sub sub sub";
+  }
+  .cand.saved .cand-main { grid-template-areas: "thumbs name cp hp iv level" "thumbs moves moves moves save save" "sub sub sub sub sub sub"; }
+  .cell-label { display: block; }
+  .cand-sub, .cand-diff, .cand .save-message { padding-left: 0; }
+}
+@media (max-width: 44rem) {
+  .cand-main, .cand.saved .cand-main {
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-areas: "thumbs thumbs thumbs" "name name name" "cp hp level" "iv iv iv" "fast fast fast" "c1 c1 c2" "save save save" "sub sub sub";
+  }
+  .cand.saved .cand-main { grid-template-areas: "thumbs thumbs thumbs" "name name name" "cp hp level" "iv iv iv" "moves moves moves" "save save save" "sub sub sub"; }
+}
+/* Box table: many Pokémon at a glance, sortable by column. */
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: .8rem; background: var(--surface); margin-top: .6rem; }
+.box-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.box-table th, .box-table td { padding: .45rem .6rem; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: middle; }
+.box-table thead th { position: sticky; top: 0; background: var(--surface-2); z-index: 2; font-size: .78rem; color: var(--muted); }
+.box-table thead button { background: none; color: inherit; font: inherit; font-weight: 700; padding: 0; min-height: auto; }
+.box-table thead button::after { content: " ↕"; opacity: .35; }
+.box-table thead th[aria-sort="descending"] button::after { content: " ↓"; opacity: 1; }
+.box-table thead th[aria-sort="ascending"] button::after { content: " ↑"; opacity: 1; }
+.box-table tbody tr.entry { cursor: pointer; }
+.box-table tbody tr.entry:hover { background: var(--surface-2); }
+.box-table tbody tr.entry.open { background: var(--accent-soft); }
+.box-table tbody tr.highlight { outline: 2px solid var(--iv); outline-offset: -2px; }
+.box-table .sticky-col { position: sticky; left: 0; background: inherit; z-index: 1; }
+.box-table tbody tr.entry > .sticky-col { background: var(--surface); }
+.box-table tbody tr.entry:hover > .sticky-col, .box-table tbody tr.entry.open > .sticky-col { background: inherit; }
+.box-table .name { font-weight: 700; }
+.box-table .num { font-variant-numeric: tabular-nums; }
+.box-table .muted { margin: 0; }
+.iv-pill { display: inline-block; min-width: 2.6rem; text-align: center; border-radius: 99rem; padding: .02rem .4rem; font-size: .78rem; font-weight: 700;
+  background: var(--accent-soft); color: var(--accent-text); margin-left: .3rem; }
+.iv-pill.top { background: var(--iv-full); color: #fff; }
+.iv-pill.high { background: var(--iv); color: #241a0a; }
+.box-table tr.detail td { white-space: normal; background: var(--surface-2); padding: .8rem 1rem 1rem; }
+.box-table tr.detail .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .3rem 1.5rem; }
+.box-table tr.detail p { margin: .2rem 0; }
+.row-actions { display: flex; gap: .3rem; }
+.row-actions button { min-height: 2rem; padding: .2rem .6rem; font-size: .82rem; }
+.cand-main > .cand-diff, .cand-main > .save-message { grid-column: 1 / -1; }
+.table-wrap:empty { display: none; }
+/* The page scrolls, so the header can stick under the app bar; narrow screens scroll the table sideways. */
+.table-wrap { overflow: visible; }
+.box-table thead th { top: 3.05rem; }
+.box-table thead th:first-child { border-top-left-radius: .8rem; }
+.box-table thead th:last-child { border-top-right-radius: .8rem; }
+@media (max-width: 70rem) {
+  .table-wrap { overflow-x: auto; }
+  .box-table thead th { top: 0; }
 }

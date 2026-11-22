@@ -165,6 +165,14 @@ class ProgressTests(Fixture):
         unsettled["appraisals"] = [{"iv": None}]  # bars seen but still moving
         self.assertFalse(live.progress([unsettled])["has"]["appraisal"])
 
+    def test_max_pokemon_also_need_their_max_moves(self):
+        done = self.individual(1234, 120, "물튀기기", ("파도",), {"attack": 15, "defense": 14, "stamina": 13})
+        dynamax = {**done, "max_state": {"value": "dynamax"}, "max_moves": []}
+        state = live.progress([dynamax])
+        self.assertEqual((state["has"]["max_moves"], state["complete"]), (False, False))
+        self.assertTrue(live.progress([{**dynamax, "max_moves": [{"name": "다이스트림", "level": 1}]}])["complete"])
+        self.assertNotIn("max_moves", live.progress([done])["has"])  # not asked for other Pokémon
+
     def test_settled_bars_count_while_the_appraisal_is_still_open(self):
         (self.root / "data" / "s").mkdir()
         session = live.Session(self.store, "s", ["true"], fake_recognize({}))

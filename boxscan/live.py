@@ -62,7 +62,7 @@ def list_windows(tool: Path) -> list[dict]:
 def progress(individuals: list[dict]) -> dict | None:
     """Which screens of the Pokémon on screen now (the last individual) have been read, so the page
     can tell the user when to move on: detail (CP and max HP), moves (fast and a charged attack),
-    appraisal (settled IV bars)."""
+    appraisal (settled IV bars), and for Max Pokémon the 맥스기술."""
     if not individuals:
         return None
     individual = individuals[-1]
@@ -72,6 +72,10 @@ def progress(individuals: list[dict]) -> dict | None:
         "moves": bool(moves.get("fast") and moves.get("charged")),
         "appraisal": any(a.get("iv") for a in individual.get("appraisals", [])),
     }
+    # A Dynamax or Gigantamax Pokémon also lists 맥스기술 further down (below the form-change panel
+    # on 자시안·자마젠타), which a quick scroll to the moves can miss.
+    if (individual.get("max_state") or {}).get("value"):
+        has["max_moves"] = bool(individual.get("max_moves"))
     return {"number": len(individuals), "species": (individual.get("species") or {}).get("value"),
             "nickname": (individual.get("nickname") or {}).get("value"),
             "cp": (individual.get("cp") or {}).get("value"), "start_seconds": individual.get("start_seconds"),

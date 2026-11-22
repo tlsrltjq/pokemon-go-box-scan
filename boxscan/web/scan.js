@@ -271,16 +271,6 @@ function previewValues(values, individual) {
   };
 }
 
-function savedNote(approval, duplicate = false) {
-  return element("div", { class: "save saved" },
-    element("h4", {}, `${approval.species ?? ""} ${approval.code}` + (approval.deleted ? " · 박스에서 제거됨" : "(으)로 저장됨")),
-    element("p", {},
-      duplicate ? "이미 저장한 후보입니다. " : "",
-      element("a", { href: `/box#${approval.pokemon_id}` }, "내 박스에서 보기")),
-    approval.deleted ? null : element("p", { class: "muted" },
-      `게임에서 이 포켓몬의 별명을 ${approval.species ?? ""}${approval.code}(으)로 바꿔 두면 다음 스캔 때 이 개체를 자동으로 고릅니다. 번호는 종마다 따로 셉니다.`));
-}
-
 const CODE_NOTES = {
   not_found: match => `별명에서 번호 ${match.code}을(를) 읽었지만 박스의 ${match.species}에는 없는 관리번호입니다. 새 개체로 저장하거나 직접 고르세요.`,
   deleted: match => `별명의 ${match.species} ${match.code}은(는) 박스에서 제거한 개체의 번호라 자동으로 고르지 않았습니다.`,
@@ -288,52 +278,168 @@ const CODE_NOTES = {
   match: match => `별명에서 ${match.species} ${match.code}을(를) 읽어 기존 개체를 골랐습니다. 다른 개체면 저장 방식을 바꾸세요.`,
 };
 
-function saveBlock(individual, index) {
-  if (individual.approval) return savedNote(individual.approval);
+// One row per candidate: the values to save are inputs on a single line, with the save button at the end.
+// Flags, nickname and differences sit on a thin second line; vote counts and explanations open on demand.
+const LEVEL_SHORT = {
+  RESOLVED_BY_CONSTRAINTS: level => [String(level.levels[0]), false],
+  AMBIGUOUS: level => [level.levels.join("/"), true],
+  CONFLICT: () => ["충돌", true],
+};
+
+function doubtful(item) {
+  return !item || "corrected_from" in item || (item.observations > 1 && item.votes / item.observations < 0.6);
+}
+
+function readingTitle(item) {
+  if (!item) return "읽지 못했습니다. 원본 프레임을 확인하세요.";
+  if ("corrected_from" in item) return `가장 많이 읽힌 ${item.corrected_from ?? "값"} 대신 HP·IV와 맞는 값`;
+  return `${item.observations}장 중 ${item.votes}장 일치`;
+}
+
+function textInput(name, value, attributes = {}) {
+  return element("input", { name, value: value ?? "", autocomplete: "off", ...attributes });
+}
+
+function cell(area, label, ...children) {
+  return element("label", { class: `cell c-${area}` }, element("span", { class: "cell-label" }, label), ...children);
+}
+
+function thumbs(individual, index, species) {
+  const appraisal = individual.appraisals.filter(item => item.evidence).at(-1);
+  const image = (href, alt) => element("a", { href, target: "_blank", rel: "noopener" },
+    element("img", { src: href, loading: "lazy", alt }));
+  return element("div", { class: "c-thumbs" },
+    element("span", { class: "row-no" }, String(index + 1)),
+    image(individual.detail_frame, `${species} 상세 화면`),
+    appraisal ? image(appraisal.evidence, `${species} IV 판정 프레임`) : element("span", { class: "thumb-empty" }, "IV 없음"));
+}
+
+function detailPanel(individual) {
+  const [first, last] = individual.frames;
+  const [start, end] = individual.seconds;
+  return element("div", { class: "row-detail", hidden: "" },
+    element("dl", {}, reading("CP", individual.cp), reading("최대 HP", individual.max_hp), reading("종(조사 문구)", individual.species)),
+    ivBlock(individual.appraisals),
+    levelBlock(individual.level),
+    movesBlock(individual.moves),
+    maxMovesBlock(individual.max_moves),
+    fusionNote(individual.state),
+    element("p", { class: "muted" }, `프레임 ${first}–${last} · ${start}–${end}초`));
+}
+
+function detailToggle(panel) {
+  const button = element("button", { type: "button", class: "link-button" }, "세부");
+  button.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    button.textContent = panel.hidden ? "세부" : "세부 닫기";
+  });
+  return button;
+}
+
+function levelCell(level) {
+  const short = level && LEVEL_SHORT[level.status];
+  const [text, warn] = short ? short(level) : ["-", false];
+  const title = level ? levelBlock(level).textContent : "";
+  return element("div", { class: `cell c-level${warn ? " warn" : ""}`, title },
+    element("span", { class: "cell-label" }, "레벨"), element("strong", {}, text));
+}
+
+function movesText(moves) {
+  if (!moves) return "-";
+  const name = move => (move ? `${move.name ?? move.value}${move.marker ?? ""}` : "-");
+  return `${name(moves.fast)} / ${(moves.charged ?? []).map(name).join(", ") || "-"}`;
+}
+
+function savedRow(individual, index, duplicate = false) {
+  const approval = individual.approval;
   const values = candidateValues(individual);
+  const species = values.species || "종 미확인";
+  const panel = detailPanel(individual);
+  const iv = values.iv;
+  return element("article", { class: "cand saved" },
+    element("div", { class: "cand-main" },
+      thumbs(individual, index, species),
+      element("div", { class: "cell c-name" }, element("strong", {}, species), stateBadges(individual)),
+      element("div", { class: "cell c-cp" }, element("span", { class: "cell-label" }, "CP"), String(values.cp || "-")),
+      element("div", { class: "cell c-hp" }, element("span", { class: "cell-label" }, "HP"), String(values.max_hp || "-")),
+      element("div", { class: "cell c-iv" }, element("span", { class: "cell-label" }, "IV"), iv ? formatIv(iv) : "-"),
+      levelCell(individual.level),
+      element("div", { class: "cell c-moves-text" }, element("span", { class: "cell-label" }, "기술"), movesText(individual.moves)),
+      element("div", { class: "cell c-result" },
+        element("span", { class: approval.deleted ? "badge" : "badge neutral" },
+          `${approval.species ?? ""} ${approval.code ?? ""}` + (approval.deleted ? " · 제거됨" : " 저장됨")),
+        element("a", { href: `/box#${approval.pokemon_id}` }, "박스에서 보기"))),
+    element("div", { class: "cand-sub" },
+      duplicate ? element("span", { class: "muted" }, "이미 저장한 후보입니다.") : null,
+      approval.deleted ? null : element("span", { class: "muted" },
+        `별명을 ${approval.species ?? ""}${approval.code ?? ""}(으)로 바꿔 두면 다음 스캔 때 자동으로 고릅니다.`),
+      detailToggle(panel)),
+    panel);
+}
+
+function candidateRow(individual, index) {
+  if (individual.approval) return savedRow(individual, index);
+  const values = candidateValues(individual);
+  const species = values.species || "종 미확인";
   const iv = values.iv ?? {};
   const numeric = { inputmode: "numeric" };
-  const target = element("select", { name: "target" }, element("option", { value: "" }, "새 개체로 저장"));
-  const compare = element("div", { class: "compare-area" });
+  const panel = detailPanel(individual);
+  const ivPercent = element("span", { class: "iv-percent" });
+  const target = element("select", { name: "target", "aria-label": "저장 방식" },
+    element("option", { value: "" }, "새 개체로 저장"));
+  const submit = element("button", { type: "submit" }, "저장");
+  const diff = element("div", { class: "cand-diff" });
   const message = element("div", { class: "save-message", role: "status" });
-  const submit = element("button", { type: "submit" }, "박스에 저장");
-  const formNode = element("form", { class: "save-form" },
-    element("div", { class: "fields" },
-      field("종", "species", values.species, { maxlength: "30" }),
-      field(values.temp_evolution ? "CP (메가진화 중)" : "CP", "cp", values.cp, numeric),
-      field(values.temp_evolution ? "최대 HP (메가진화 중)" : "최대 HP", "max_hp", values.max_hp, numeric),
-      field("IV 공격", "iv_attack", iv.attack, numeric),
-      field("IV 방어", "iv_defense", iv.defense, numeric),
-      field("IV HP", "iv_stamina", iv.stamina, numeric),
-      field("노말어택", "fast_move", values.fast_move, { maxlength: "30" }),
-      field("스페셜어택 1", "charged_1", values.charged_moves[0], { maxlength: "30" }),
-      field("스페셜어택 2", "charged_2", values.charged_moves[1], { maxlength: "30" }),
-      field("게임 별명", "nickname", values.nickname, { maxlength: "30" }),
-    ),
-    element("div", { class: "checks" },
+  const moves = individual.moves ?? {};
+  const moveInput = (name, move, label) => textInput(name, move ? move.name ?? move.value : "", {
+    maxlength: "30", "aria-label": label, title: move ? [readingTitle(move), move.marker ? `* ${move.reason}` : ""].filter(Boolean).join(" · ") : "",
+    class: move?.marker ? "marked" : null });
+  const formNode = element("form", { class: "cand-main" },
+    thumbs(individual, index, species),
+    cell("name", "종", textInput("species", values.species, { maxlength: "30", "aria-label": "종", class: doubtful(individual.species) ? "doubt" : null,
+      title: readingTitle(individual.species) }), stateBadges(individual)),
+    cell("cp", values.temp_evolution ? "CP(메가)" : "CP", textInput("cp", values.cp, { ...numeric, "aria-label": "CP",
+      class: doubtful(individual.cp) ? "doubt" : null, title: readingTitle(individual.cp) })),
+    cell("hp", "HP", textInput("max_hp", values.max_hp, { ...numeric, "aria-label": "최대 HP",
+      class: doubtful(individual.max_hp) ? "doubt" : null, title: readingTitle(individual.max_hp) })),
+    element("div", { class: "cell c-iv" }, element("span", { class: "cell-label" }, "IV 공/방/체"),
+      element("div", { class: "iv-inputs" },
+        ...STATS.map(([key, label]) => textInput(`iv_${key}`, iv[key], { ...numeric, "aria-label": `IV ${label}`, class: values.iv ? null : "doubt" })),
+        ivPercent)),
+    levelCell(individual.level),
+    cell("fast", "노말어택", moveInput("fast_move", moves.fast, "노말어택")),
+    cell("c1", "스페셜어택", moveInput("charged_1", moves.charged?.[0], "스페셜어택 1")),
+    cell("c2", "스페셜어택 2", moveInput("charged_2", moves.charged?.[1], "스페셜어택 2")),
+    element("div", { class: "cell c-save" }, target, submit),
+    element("div", { class: "cand-sub" },
       checkbox("이로치 *", "shiny", false),
-      checkbox("반짝반짝 포켓몬 ♣", "lucky", values.lucky),
+      checkbox("반짝 ♣", "lucky", values.lucky),
       checkbox("배경 ◆", "background", values.background),
-      checkbox("그림자", "shadow", values.shadow)),
-    values.shadow_evidence.length ? element("p", { class: "muted" },
-      `그림자로 보이는 단서: ${values.shadow_evidence.join(", ")}. 실제 그림자 개체 영상으로는 아직 확인하지 않은 판독이라 직접 확인하세요.`) : null,
-    element("label", { class: "field wide" }, element("span", {}, "다이맥스"),
-      element("select", { name: "max_state" },
-        element("option", { value: "" }, "해당 없음"),
+      checkbox("그림자", "shadow", values.shadow),
+      element("select", { name: "max_state", "aria-label": "다이맥스" },
+        element("option", { value: "" }, "다이맥스 아님"),
         element("option", { value: "dynamax", selected: values.max_state === "dynamax" ? "" : null }, "다이맥스"),
-        element("option", { value: "gigantamax", selected: values.max_state === "gigantamax" ? "" : null }, "거다이맥스"))),
-    element("p", { class: "muted" }, "반짝반짝 포켓몬·배경·다이맥스는 화면 글자로 미리 채웁니다. 이로치는 직접 체크하면 이름 뒤에 *가 붙습니다." +
-      (values.mega_move ? ` 메가진화 추가 스페셜어택 ${values.mega_move}도 함께 저장합니다.` : "") +
-      (values.temp_evolution ? " 메가진화 중이라 기본 모습 CP·최대 HP는 레벨로 계산해 저장하고, 화면 값은 메가진화 기록으로 따로 남깁니다." : "")),
-    element("label", { class: "field wide" }, element("span", {}, "저장 방식"), target),
-    individual.code_match ? element("p", { class: individual.code_match.status === "match" ? "muted" : "warn-text" },
-      CODE_NOTES[individual.code_match.status](individual.code_match)) : null,
-    compare, message, submit);
+        element("option", { value: "gigantamax", selected: values.max_state === "gigantamax" ? "" : null }, "거다이맥스")),
+      element("label", { class: "inline-field" }, element("span", {}, "별명"),
+        textInput("nickname", values.nickname, { maxlength: "30", "aria-label": "게임 별명" })),
+      individual.code_match ? element("span", { class: individual.code_match.status === "match" ? "muted" : "warn-text" },
+        CODE_NOTES[individual.code_match.status](individual.code_match)) : null,
+      values.mega_move ? element("span", { class: "muted" }, `메가진화 추가 ${values.mega_move} 함께 저장`) : null,
+      values.shadow_evidence.length ? element("span", { class: "muted" }, `그림자 단서: ${values.shadow_evidence.join(", ")}`) : null,
+      detailToggle(panel)),
+    diff, message);
   if (values.temp_evolution) formNode.dataset.temp = values.temp_evolution;
   formNode.dataset.maxMoves = JSON.stringify(values.max_moves);
   if (values.mega_move) formNode.dataset.megaMove = values.mega_move;
   const existing = new Map();
   let acknowledge = false;
+
+  const updatePercent = () => {
+    const parts = STATS.map(([key]) => Number(formNode.elements[`iv_${key}`].value));
+    ivPercent.textContent = parts.every(n => Number.isInteger(n) && n >= 0 && n <= 15)
+      && STATS.every(([key]) => formNode.elements[`iv_${key}`].value !== "")
+      ? `${Math.round(parts.reduce((a, b) => a + b, 0) / 45 * 100)}%` : "";
+  };
 
   const syncFlags = () => {
     // Updating keeps the saved shiny/lucky/background unless the user changes them.
@@ -349,12 +455,19 @@ function saveBlock(individual, index) {
     const entry = existing.get(target.value);
     acknowledge = false;
     message.replaceChildren();
-    compare.replaceChildren();
+    diff.replaceChildren();
+    updatePercent();
     if (entry) {
-      compare.append(comparisonTable(entry, previewValues(readForm(formNode), individual)),
-        element("p", { class: "muted" }, "비운 칸은 기존 값을 그대로 둡니다. 레벨과 * 표시는 저장할 때 다시 계산합니다."));
+      // What the update changes, in one line; empty inputs keep the saved value.
+      const after = previewValues(readForm(formNode), individual);
+      const changes = BOX_FIELDS.filter(([key]) => after[key] != null && after[key] !== "")
+        .map(([key, label, format]) => [label, format(entry[key]), format(after[key])])
+        .filter(([, before, next]) => before !== next);
+      diff.append(element("span", { class: "muted" }, `${entry.species ?? ""} ${entry.code} 갱신: `),
+        ...(changes.length ? changes.map(([label, before, next]) => element("span", { class: "chip" }, `${label} ${before} → ${next}`))
+          : [element("span", { class: "muted" }, "바뀌는 값 없음")]));
     }
-    submit.textContent = entry ? `${entry.code} 갱신` : "박스에 저장";
+    submit.textContent = entry ? "갱신" : "저장";
   };
 
   const match = individual.code_match?.status === "match" ? individual.code_match : null;
@@ -362,8 +475,7 @@ function saveBlock(individual, index) {
     existing.set(entry.id, entry);
     const same = values.iv && entry.iv && STATS.every(([key]) => entry.iv[key] === values.iv[key]);
     target.append(element("option", { value: entry.id },
-      `${entry.code} 갱신 · CP ${entry.cp ?? "-"} · IV ${formatIv(entry.iv)}${same ? " · IV 일치" : ""}` +
-      (entry.id === match?.pokemon_id ? " · 별명 관리번호 일치" : "")));
+      `${entry.code}번 갱신 · CP ${entry.cp ?? "-"}${same ? " · IV 일치" : ""}` + (entry.id === match?.pokemon_id ? " · 별명 일치" : "")));
   };
   const listed = values.species
     ? fetch(`/api/pokemon?species=${encodeURIComponent(values.species)}`).then(jsonResponse)
@@ -376,6 +488,7 @@ function saveBlock(individual, index) {
     syncFlags();
     refresh();
   }).catch(() => {});
+  updatePercent();
   target.addEventListener("change", () => { syncFlags(); refresh(); });
   formNode.addEventListener("input", event => { if (event.target !== target) refresh(); });
   formNode.addEventListener("submit", async event => {
@@ -395,14 +508,15 @@ function saveBlock(individual, index) {
             acknowledge,
           }),
         }));
-      formNode.replaceWith(savedNote({ pokemon_id: saved.id, code: saved.code }, saved.duplicate));
+      individual.approval = { pokemon_id: saved.id, code: saved.code, species: saved.species, deleted: false };
+      row.replaceWith(savedRow(individual, index, saved.duplicate));
     } catch (error) {
       if (error.payload?.warnings) {
         acknowledge = true;
         message.append(
           element("ul", { class: "warnings" }, ...error.payload.warnings.map(text => element("li", {}, text))),
           element("p", {}, "같은 개체가 맞으면 한 번 더 누르세요."));
-        submit.textContent = "확인했고 저장";
+        submit.textContent = "확인 후 저장";
       } else {
         message.textContent = error.message;
       }
@@ -410,44 +524,15 @@ function saveBlock(individual, index) {
       submit.disabled = false;
     }
   });
-  return element("details", { class: "save", open: "" }, element("summary", {}, "박스에 저장"), formNode);
+  const row = element("article", { class: "cand" }, formNode, panel);
+  return row;
 }
 
-function card(individual, index) {
-  const species = individual.species?.value ?? "종 미확인";
-  const lucky = individual.lucky?.value === true;
-  const appraisal = individual.appraisals.filter(item => item.evidence).at(-1);
-  const [first, last] = individual.frames;
-  const [start, end] = individual.seconds;
-  return element("article", { class: "card" },
-    element("header", {},
-      element("h3", {}, `${index + 1}. ${species}${lucky ? "♣" : ""}`),
-      individual.approval && !individual.approval.deleted
-        ? element("span", { class: "badge neutral" }, `저장됨 · ${individual.approval.code ?? ""}번`)
-        : element("span", { class: "badge" }, "저장 전"),
-    ),
-    stateBadges(individual),
-    element("div", { class: "evidence" },
-      element("a", { href: individual.detail_frame },
-        element("img", { src: individual.detail_frame, loading: "lazy", alt: `${species} 상세 화면` })),
-      appraisal ? element("a", { href: appraisal.evidence },
-        element("img", { src: appraisal.evidence, loading: "lazy", alt: `${species} IV 판정 프레임` })) : null,
-    ),
-    element("dl", {},
-      reading("CP", individual.cp),
-      reading("최대 HP", individual.max_hp),
-      reading("종(조사 문구)", individual.species),
-    ),
-    lucky ? element("p", { class: "muted" },
-      `♣ 반짝반짝 포켓몬 (${individual.lucky.observations}장 중 ${individual.lucky.votes}장에서 확인)`) : null,
-    ivBlock(individual.appraisals),
-    levelBlock(individual.level),
-    movesBlock(individual.moves),
-    maxMovesBlock(individual.max_moves),
-    fusionNote(individual.state),
-    element("p", { class: "muted" }, `프레임 ${first}–${last} · ${start}–${end}초`),
-    saveBlock(individual, index),
-  );
+const CANDIDATE_HEAD = ["#", "종", "CP", "HP", "IV 공/방/체", "레벨", "노말어택", "스페셜어택", "스페셜어택 2", "저장"];
+
+function candidateHead() {
+  return element("div", { class: "cand-head", "aria-hidden": "true" },
+    ...CANDIDATE_HEAD.map((text, i) => element("span", { class: `h-${i}` }, text)));
 }
 
 let renderedCards = [];  // [key, node]: unchanged cards keep their node (and any typing) between polls
@@ -478,10 +563,10 @@ function showAnalysis(analysis) {
   const next = analysis.individuals.map((individual, index) => {
     const key = `${index}:${JSON.stringify(individual)}`;
     const kept = renderedCards[index];
-    return [key, kept && kept[0] === key ? kept[1] : card(individual, index)];
+    return [key, kept && kept[0] === key ? kept[1] : candidateRow(individual, index)];
   });
   if (next.length !== renderedCards.length || next.some(([, node], i) => node !== renderedCards[i][1])) {
-    cards.replaceChildren(...next.map(([, node]) => node));
+    cards.replaceChildren(candidateHead(), ...next.map(([, node]) => node));
   }
   renderedCards = next;
 }
@@ -599,6 +684,7 @@ const NEXT_STEP = {
   detail: "포켓몬 상세 화면을 열어 CP와 HP가 보이게 해 주세요.",
   moves: "아래로 스크롤해서 기술이 보이게 해 주세요.",
   appraisal: "조사 화면을 열고 IV 막대가 다 찰 때까지 기다려 주세요.",
+  max_moves: "다이맥스 포켓몬입니다. 더 아래로 내려 맥스기술이 보이게 해 주세요.",
 };
 
 function showProgress(current, running) {
@@ -608,8 +694,11 @@ function showProgress(current, running) {
   const label = current.species ?? (current.nickname ? `별명 ${current.nickname}` : "이름 읽는 중");
   const name = `${current.number}번째 · ${label}${current.cp ? ` CP ${current.cp}` : ""}`;
   liveProgress.querySelector(".live-now").textContent = name;
-  liveProgress.querySelectorAll("li").forEach(item => item.classList.toggle("ok", current.has[item.dataset.key]));
-  const missing = Object.keys(NEXT_STEP).find(key => !current.has[key]);
+  liveProgress.querySelectorAll("li").forEach(item => {
+    item.hidden = !(item.dataset.key in current.has);
+    item.classList.toggle("ok", current.has[item.dataset.key] === true);
+  });
+  const missing = Object.keys(NEXT_STEP).find(key => key in current.has && !current.has[key]);
   liveProgress.classList.toggle("done", current.complete);
   liveProgress.querySelector(".live-next").textContent = current.complete
     ? "다 읽었습니다. 다음 포켓몬으로 넘기세요." : NEXT_STEP[missing];

@@ -99,11 +99,40 @@ function editForm(entry, onDone) {
   return form;
 }
 
-function entryCard(entry) {
+// The box as a table: one row per Pokémon, sortable by column. Clicking a row opens its details
+// (edit form, history, notes) in a row right below.
+const COLUMNS = [
+  ["species", "종·번호"], ["cp", "CP"], ["iv", "IV"], ["level", "레벨"], ["hp", "최대 HP"],
+  ["fast", "노말어택"], ["charged", "스페셜어택"], ["state", "상태"], ["nickname", "별명"], ["recent", "갱신"], [null, ""],
+];
+const opened = new Set();
+
+function ivPill(iv) {
+  if (!iv) return element("span", { class: "muted" }, "-");
+  const percent = ivPercent(iv);
+  return element("span", {}, `${iv.attack}/${iv.defense}/${iv.stamina}`,
+    element("span", { class: `iv-pill${percent === 100 ? " top" : percent >= 90 ? " high" : ""}` }, `${percent}%`));
+}
+
+function stateChips(entry) {
+  const chips = [];
+  if (entry.max_state) chips.push([formatMaxState(entry.max_state), "max"]);
+  if (entry.shadow) chips.push(["그림자", "shadow"]);
+  if (entry.fusion?.length) chips.push([entry.fusion.some(f => f.type === "FUSE") ? "합체" : "모습 변화", "plain"]);
+  return chips.length ? element("span", { class: "badges" }, ...chips.map(([text, kind]) => element("span", { class: `badge state ${kind}` }, text)))
+    : element("span", { class: "muted" }, "");
+}
+
+function moveName(move) {
+  return move ? element("span", { title: move.reason ?? "" }, move.name, move.marker ? element("span", { class: "marker" }, move.marker) : null)
+    : element("span", { class: "muted" }, "-");
+}
+
+function detailRow(entry) {
   const history = element("ol", { class: "history", hidden: "" });
   const toggle = element("button", { type: "button", class: "secondary" }, "이력 보기");
   const remove = element("button", { type: "button", class: "danger" }, "박스에서 제거");
-  const editButton = element("button", { type: "button", class: "secondary" }, "수정");
+  const editButton = element("button", { type: "button" }, "수정");
   const editArea = element("div", {});
   editButton.addEventListener("click", () => {
     if (editArea.childElementCount) {
@@ -140,40 +169,67 @@ function entryCard(entry) {
     }
   });
   const moves = entry.moves ?? {};
-  const badges = [];
-  if (entry.max_state) badges.push([formatMaxState(entry.max_state), "max"]);
-  if (entry.fusion?.length) badges.push([entry.fusion.some(f => f.type === "FUSE") ? "합체 가능" : "모습 변화 가능", "plain"]);
   const temp = entry.temp_observation;
-  return element("article", { class: "card", id: entry.id },
-    element("header", {},
-      element("h3", { class: "card-title" }, displayName(entry), element("span", { class: "code-chip" }, entry.code ? `${entry.code}번` : "번호 없음")),
-      entry.iv ? element("span", { class: "badge neutral" }, `IV ${ivPercent(entry.iv)}%`) : null),
-    badges.length ? element("div", { class: "badges" },
-      ...badges.map(([text, kind]) => element("span", { class: `badge state ${kind}` }, text))) : null,
-    element("dl", {},
-      element("div", {}, element("dt", {}, "CP"), element("dd", {}, element("strong", {}, String(entry.cp ?? "-")))),
-      element("div", {}, element("dt", {}, "최대 HP"), element("dd", {}, element("strong", {}, String(entry.max_hp ?? "-")))),
-      element("div", {}, element("dt", {}, "레벨"), element("dd", {}, element("strong", {}, formatLevel(entry.level)))),
-    ),
-    element("p", {}, element("span", { class: "muted" }, "IV 공/방/체 "), element("strong", {}, formatIv(entry.iv))),
-    entry.nickname ? element("p", {}, element("span", { class: "muted" }, "게임 별명 "), entry.nickname) : null,
-    hasCode(entry) || !entry.code ? null : element("span", { class: "hint-chip", title: "게임 별명을 이렇게 바꾸면 다음 스캔 때 자동으로 고릅니다" },
-      `추천 별명 ${entry.species ?? ""}${entry.code}`),
-    entry.cp_source === "calculated" ? element("p", { class: "muted" },
-      "CP·최대 HP는 메가진화 중 기록과 레벨로 계산한 기본 모습 값입니다.") : null,
-    temp ? element("p", { class: "muted" },
-      `${temp.temp_name} 중 기록: CP ${temp.cp ?? "-"}, 최대 HP ${temp.max_hp ?? "-"}`) : null,
+  const notes = [
+    hasCode(entry) || !entry.code ? null : element("p", {}, element("span", { class: "hint-chip" },
+      `추천 별명 ${entry.species ?? ""}${entry.code}`), " 게임 별명을 이렇게 바꾸면 다음 스캔 때 자동으로 고릅니다."),
     element("div", { class: "moves" },
       moveLine("노말어택", moves.fast),
       ...(moves.charged ?? []).map((move, i, all) => moveLine(all.length > 1 ? `스페셜어택 ${i + 1}` : "스페셜어택", move))),
     entry.mega_move ? element("p", {}, element("span", { class: "muted" }, "메가진화 추가 "), entry.mega_move.name) : null,
     entry.max_moves?.length ? element("p", {}, element("span", { class: "muted" }, "맥스기술 "),
       entry.max_moves.map(m => `${m.name} ${m.level ? `레벨 ${m.level}` : m.locked ? "잠김" : ""}`.trim()).join(", ")) : null,
-    element("p", { class: "muted" }, `마지막 갱신 ${new Date(entry.updated_at).toLocaleString("ko-KR")}`),
+    entry.cp_source === "calculated" ? element("p", { class: "muted" }, "CP·최대 HP는 메가진화 중 기록과 레벨로 계산한 기본 모습 값입니다.") : null,
+    temp ? element("p", { class: "muted" }, `${temp.temp_name} 중 기록: CP ${temp.cp ?? "-"}, 최대 HP ${temp.max_hp ?? "-"}`) : null,
+    element("p", { class: "muted" }, `처음 저장 ${new Date(entry.created_at).toLocaleString("ko-KR")} · 마지막 갱신 ${new Date(entry.updated_at).toLocaleString("ko-KR")}`),
+  ];
+  return element("tr", { class: "detail" }, element("td", { colspan: String(COLUMNS.length) },
+    element("div", { class: "detail-grid" }, ...notes.filter(Boolean)),
     element("div", { class: "actions" }, editButton, toggle, remove),
-    editArea,
-    history,
-  );
+    editArea, history));
+}
+
+function entryRows(entry) {
+  const moves = entry.moves ?? {};
+  const isOpen = opened.has(entry.id);
+  const row = element("tr", { class: `entry${isOpen ? " open" : ""}`, id: entry.id, tabindex: "0", "aria-expanded": String(isOpen) },
+    element("td", { class: "sticky-col" }, element("span", { class: "name" }, displayName(entry)), " ",
+      element("span", { class: "code-chip" }, entry.code ? `${entry.code}` : "-")),
+    element("td", { class: "num" }, String(entry.cp ?? "-")),
+    element("td", { class: "num" }, ivPill(entry.iv)),
+    element("td", { class: "num" }, formatLevel(entry.level)),
+    element("td", { class: "num" }, String(entry.max_hp ?? "-")),
+    element("td", {}, moveName(moves.fast)),
+    element("td", {}, ...(moves.charged?.length ? moves.charged.flatMap((move, i) => [i ? ", " : null, moveName(move)]).filter(Boolean)
+      : [element("span", { class: "muted" }, "-")])),
+    element("td", {}, stateChips(entry)),
+    element("td", {}, entry.nickname ?? "", hasCode(entry) || !entry.code ? null
+      : element("span", { class: "muted", title: "추천 별명" }, ` → ${entry.species ?? ""}${entry.code}`)),
+    element("td", { class: "muted" }, new Date(entry.updated_at).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })),
+    element("td", {}, element("span", { class: "muted" }, isOpen ? "▲" : "▼")));
+  const toggle = () => {
+    if (opened.has(entry.id)) opened.delete(entry.id);
+    else opened.add(entry.id);
+    render();
+  };
+  row.addEventListener("click", toggle);
+  row.addEventListener("keydown", event => { if (event.key === "Enter") toggle(); });
+  return isOpen ? [row, detailRow(entry)] : [row];
+}
+
+function tableHead() {
+  return element("thead", {}, element("tr", {}, ...COLUMNS.map(([key, label], i) => {
+    if (!key || !SORTS[key]) return element("th", { scope: "col", class: i === 0 ? "sticky-col" : null }, label);
+    const active = sort.value === key;
+    const th = element("th", { scope: "col", class: i === 0 ? "sticky-col" : null,
+      "aria-sort": active ? (key === "species" ? "ascending" : "descending") : null },
+      element("button", { type: "button" }, label));
+    th.querySelector("button").addEventListener("click", () => {
+      sort.value = key;
+      sort.dispatchEvent(new Event("change"));
+    });
+    return th;
+  })));
 }
 
 // A management code as a number: "01", "1", "001" and the earlier "PK1" are all number 1.
@@ -203,10 +259,13 @@ function ivPercent(iv) {
   return Math.round(((iv.attack + iv.defense + iv.stamina) / 45) * 100);
 }
 
+const levelValue = entry => entry.level?.value ?? entry.level?.candidates?.[0] ?? -1;
 const SORTS = {
   recent: (a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""),
   cp: (a, b) => (b.cp ?? -1) - (a.cp ?? -1),
   iv: (a, b) => (b.iv ? ivPercent(b.iv) : -1) - (a.iv ? ivPercent(a.iv) : -1) || (b.cp ?? -1) - (a.cp ?? -1),
+  level: (a, b) => levelValue(b) - levelValue(a) || (b.cp ?? -1) - (a.cp ?? -1),
+  hp: (a, b) => (b.max_hp ?? -1) - (a.max_hp ?? -1),
   species: (a, b) => (a.species ?? "").localeCompare(b.species ?? "", "ko") || (a.code ?? "").localeCompare(b.code ?? "", "ko", { numeric: true }),
 };
 
@@ -216,16 +275,20 @@ function render() {
   status.textContent = entries.length
     ? `${entries.length}개체 중 ${shown.length}개체를 보여줍니다.`
     : "아직 저장한 개체가 없습니다. 스캔 화면의 판독 카드에서 저장하세요.";
-  list.replaceChildren(...shown.map(entryCard));
+  list.replaceChildren(...(shown.length ? [element("table", { class: "box-table" }, tableHead(),
+    element("tbody", {}, ...shown.flatMap(entryRows)))] : []));
 }
 
 async function load() {
   entries = (await jsonResponse(await fetch("/api/pokemon"))).pokemon;
   render();
-  const target = location.hash && document.getElementById(location.hash.slice(1));
-  if (target) {
+  const id = location.hash.slice(1);
+  if (id && entries.some(entry => entry.id === id)) {
+    opened.add(id);
+    render();
+    const target = document.getElementById(id);
     target.classList.add("highlight");
-    target.scrollIntoView({ block: "start" });
+    target.scrollIntoView({ block: "center" });
   }
 }
 
