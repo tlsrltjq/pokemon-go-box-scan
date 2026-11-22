@@ -121,6 +121,14 @@ class FieldParserTests(unittest.TestCase):
         self.assertEqual((first["frames"], second["frames"]), ([1, 2, 3, 4], [5, 6, 7, 8]))
         self.assertEqual((first["moves"]["fast"]["value"], second["moves"]["fast"]["value"]), ("폭포오르기", "머드샷"))
 
+    def test_crowned_zacian_and_eternatus_max_moves_are_read(self):
+        from boxscan.fields import parse_max_moves
+        lines = boxed(("맥스기술", 20, 400, 60, 12), ("레벨 1", 30, 425, 30, 10), ("거대검돌격", 20, 440, 60, 12),
+                      ("레벨 1", 130, 425, 30, 10), ("다이월", 125, 440, 40, 12), ("LOCKED", 230, 425, 40, 10), ("다이리커버리", 215, 440, 70, 12))
+        self.assertEqual([m["name"] for m in parse_max_moves(lines)], ["거대검돌격", "다이월", "다이리커버리"])
+        cannon = boxed(("맥스기술", 20, 400, 60, 12), ("레벨 2", 30, 425, 30, 10), ("다이맥스포", 20, 440, 60, 12))
+        self.assertEqual(parse_max_moves(cannon), [{"name": "다이맥스포", "level": 2, "locked": False}])
+
     def test_unlock_button_misread_is_not_a_move(self):
         lines = MOVE_SCREEN + boxed(("해바", 77, 530, 24, 11), ("100", 290, 530, 25, 11))
         self.assertNotIn("해바", [m["name"] for m in parse_frame(lines, 332)["moves"]])
