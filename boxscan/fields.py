@@ -42,7 +42,7 @@ POWER = re.compile(r"^(\d{1,3})(?:\s*\+\s*(\d{1,3}))?$")
 NAME_EDGES = re.compile(r"^[^가-힣]+|[^가-힣]+$")
 MOVE_NAME = re.compile(r"^[가-힣]{2,12}$")
 COST = re.compile(r"\d{1,3}(?:,\d{3})+")
-BUTTONS = {"해방", "해빙", "해벙", "애방", "강화", "강차", "감화", "교환", "교한", "교체", "합체"}
+BUTTONS = {"해방", "해빙", "해벙", "애방", "해바", "해밤", "강화", "강차", "감화", "교환", "교한", "교체", "합체"}
 # "체육관 배틀 & 레이드배틀" tab header, also when OCR garbles it.
 MOVE_HEADER = re.compile(r"체육관|채육관|제육|레이드|레미드")
 
@@ -243,9 +243,12 @@ def vote(values: list) -> dict | None:
 def group_frames(frames: list[dict]) -> list[dict]:
     """Split a time-ordered frame list where a confident value changes.
 
-    A new group starts when a frame shows a CP, max HP or species that conflicts with the group
-    so far and the next frame with such a value conflicts too. A single unmatched reading (for
-    example a cropped CP) stays in the group. Users must confirm the boundaries.
+    A new group starts when a frame shows a CP, max HP, species or normal attack that conflicts
+    with the group so far and the next frame with such a value conflicts too. A single unmatched
+    reading (for example a cropped CP) stays in the group. Users must confirm the boundaries.
+
+    The normal attack matters when the user swipes to the next Pokémon while scrolled down: its
+    moves show first, before its CP is on screen, and must not join the previous Pokémon.
     """
     groups: list[list[dict]] = []
     for index, frame in enumerate(frames):
@@ -261,13 +264,13 @@ def group_frames(frames: list[dict]) -> list[dict]:
 
 def _confirmed(group: list[dict], following: list[dict]) -> bool:
     for frame in following:
-        if any(_value(frame, key) is not None for key in ("cp", "max_hp", "species", "code")):
+        if any(_value(frame, key) is not None for key in ("cp", "max_hp", "species", "code", "fast")):
             return _conflicts(group, frame)
     return False
 
 
 def _conflicts(group: list[dict], frame: dict) -> bool:
-    for key in ("cp", "max_hp"):
+    for key in ("cp", "max_hp", "fast"):
         value = _value(frame, key)
         seen = vote([v for f in group if (v := _value(f, key)) is not None])
         if value is not None and seen and seen["votes"] >= 2 and value != seen["value"]:
@@ -283,6 +286,8 @@ def _conflicts(group: list[dict], frame: dict) -> bool:
 def _value(frame: dict, key: str):
     if key == "max_hp":
         return frame.get("hp", {}).get("max")
+    if key == "fast":
+        return next((move["name"] for move in frame.get("moves", []) if move.get("role") == "fast"), None)
     return frame.get(key)
 
 

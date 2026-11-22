@@ -107,6 +107,24 @@ class FieldParserTests(unittest.TestCase):
                   {"max_moves": [{"name": "다이리커버리", "level": None, "locked": True}]}]
         self.assertEqual([m["name"] for m in _max_moves(frames)], ["다이웜", "다이월", "다이리커버리"])
 
+    def test_next_pokemons_moves_shown_first_start_a_new_individual(self):
+        # Swiping while scrolled down: the next Pokémon's moves appear before its CP does.
+        def moves_frame(number, fast, charged):
+            return {"frame": number, "seconds": number - 1, "duration": 1, "screen": "DETAIL_MOVES",
+                    "moves": [{"name": fast, "role": "fast", "power": 10, "boost": None, "boost_kind": None},
+                              {"name": charged, "role": "charged", "power": 90, "boost": None, "boost_kind": None}]}
+        frames = [frame(1, "CP2500", "150 / 150 HP"), frame(2, "CP2500", "150 / 150 HP"),
+                  moves_frame(3, "폭포오르기", "회전부리"), moves_frame(4, "폭포오르기", "회전부리"),
+                  moves_frame(5, "머드샷", "대지의힘"), moves_frame(6, "머드샷", "대지의힘"),
+                  frame(7, "CP3000", "180 / 180 HP"), frame(8, "CP3000", "180 / 180 HP")]
+        first, second = group_frames(frames)
+        self.assertEqual((first["frames"], second["frames"]), ([1, 2, 3, 4], [5, 6, 7, 8]))
+        self.assertEqual((first["moves"]["fast"]["value"], second["moves"]["fast"]["value"]), ("폭포오르기", "머드샷"))
+
+    def test_unlock_button_misread_is_not_a_move(self):
+        lines = MOVE_SCREEN + boxed(("해바", 77, 530, 24, 11), ("100", 290, 530, 25, 11))
+        self.assertNotIn("해바", [m["name"] for m in parse_frame(lines, 332)["moves"]])
+
     def test_a_different_code_starts_a_new_individual(self):
         frames = [frame(n, "CP1000", code) for n, code in ((1, "PK1"), (2, "PK1"), (3, "PK2"), (4, "PK2"))]
         first, second = group_frames(frames)
