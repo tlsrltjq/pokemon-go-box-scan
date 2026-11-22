@@ -23,7 +23,7 @@ from .store import JobStore
 FPS = 10
 MAX_SECONDS = 600
 MAX_FRAMES = MAX_SECONDS  # one JPEG per second
-UPDATE_SECONDS = 2.0
+UPDATE_SECONDS = 1.0
 SOURCE = Path(__file__).with_name("window_capture.swift")
 SUGGESTED_BUNDLES = ("com.apple.ScreenContinuity",)  # iPhone Mirroring
 SUGGESTED_WORDS = ("iPhone", "AirPlay")
@@ -59,6 +59,25 @@ def list_windows(tool: Path) -> list[dict]:
     return sorted(windows, key=lambda w: (not w["suggested"], w["app"], w["title"]))
 
 
+def progress(individuals: list[dict]) -> dict | None:
+    """Which screens of the Pokémon on screen now (the last individual) have been read, so the page
+    can tell the user when to move on: detail (CP and max HP), moves (fast and a charged attack),
+    appraisal (settled IV bars)."""
+    if not individuals:
+        return None
+    individual = individuals[-1]
+    moves = individual.get("moves") or {}
+    has = {
+        "detail": bool((individual.get("cp") or {}).get("value") and (individual.get("max_hp") or {}).get("value")),
+        "moves": bool(moves.get("fast") and moves.get("charged")),
+        "appraisal": any(a.get("iv") for a in individual.get("appraisals", [])),
+    }
+    return {"number": len(individuals), "species": (individual.get("species") or {}).get("value"),
+            "nickname": (individual.get("nickname") or {}).get("value"),
+            "cp": (individual.get("cp") or {}).get("value"), "start_seconds": individual.get("start_seconds"),
+            "has": has, "complete": all(has.values())}
+
+
 class Session:
     """One running capture. `command` must write PPM frames (FPS per second, REFERENCE_WIDTH wide)
     to stdout and frame-NNN.jpg files (one per second) into the scan folder."""
@@ -72,6 +91,7 @@ class Session:
         self.readings: list[tuple[int, list[dict]]] = []
         self.frames: list[dict] = []
         self.evidence: dict[int, str] = {}
+        self.current: dict | None = None
         self.error: str | None = None
         self.finished = threading.Event()
         self._ended = threading.Event()
@@ -91,7 +111,7 @@ class Session:
     def status(self) -> dict:
         return {"scan_id": self.scan_id, "running": not self.finished.is_set(),
                 "seconds": round(self.ticks / self.fps, 1), "frames": len(self.frames),
-                "appraisals": len(self._windows(closed_only=False)), "error": self.error}
+                "appraisals": len(self._windows(closed_only=False)), "current": self.current, "error": self.error}
 
     def _read(self) -> None:
         try:
@@ -129,9 +149,9 @@ class Session:
 
     def _windows(self, closed_only: bool) -> list[dict]:
         windows = ivbars.group_windows(list(self.readings), self.fps)
-        if closed_only:  # an appraisal still on screen may not have settled yet
+        if closed_only:  # an appraisal still on screen counts once its bars have settled
             now = self.ticks / self.fps
-            windows = [w for w in windows if w["end_seconds"] + ivbars.MAX_GAP_SECONDS < now]
+            windows = [w for w in windows if w["end_seconds"] + ivbars.MAX_GAP_SECONDS < now or w["iv"] is not None]
         return windows[:99]
 
     def _refresh(self, closed_only: bool) -> None:
@@ -153,6 +173,7 @@ class Session:
             result = analysis.assemble(self.scan_id, copy.deepcopy(self.frames), copy.deepcopy(windows),
                                        self._data, recognizer)
             analysis.write_result(self.folder, result)
+            self.current = progress(result["individuals"])
 
     def _evidence(self, number: int, seconds: float) -> str | None:
         """The saved second showing the settled bars (no video is kept for an exact frame). Seconds

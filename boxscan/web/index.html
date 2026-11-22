@@ -27,7 +27,17 @@
         <button type="button" id="live-stop" class="danger" hidden>중지하고 마무리</button>
         <button type="button" id="live-refresh" class="secondary">창 목록 새로고침</button>
       </div>
+      <label class="check"><input type="checkbox" id="live-sound" checked><span>다 읽으면 소리로 알리기</span></label>
       <p id="live-status" role="status"></p>
+      <div id="live-progress" class="live-progress" hidden aria-live="polite">
+        <p class="live-now"></p>
+        <ul class="live-checks">
+          <li data-key="detail">상세 화면 (CP·HP)</li>
+          <li data-key="moves">기술 (아래로 스크롤)</li>
+          <li data-key="appraisal">조사 화면 (IV 막대)</li>
+        </ul>
+        <p class="live-next"></p>
+      </div>
     </form>
     <form id="upload">
       <h2>녹화 영상 올리기</h2>

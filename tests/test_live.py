@@ -88,6 +88,10 @@ class SessionTests(Fixture):
         status = manager.status()
         self.assertEqual((status["running"], status["frames"], status["appraisals"], status["seconds"]),
                          (False, 7, 1, 7.0))
+        # The checklist for the Pokémon on screen: detail and appraisal read, no move lines shown.
+        self.assertEqual(status["current"]["has"], {"detail": True, "moves": False, "appraisal": True})
+        self.assertEqual((status["current"]["number"], status["current"]["species"], status["current"]["complete"]),
+                         (1, "물몬", False))
         result = json.loads((self.root / "data" / scan_id / analysis.RESULT).read_text(encoding="utf-8"))
         (individual,) = result["individuals"]
         self.assertEqual((individual["cp"]["value"], individual["species"]["value"]), (1234, "물몬"))
@@ -140,6 +144,38 @@ class SessionTests(Fixture):
         live.Manager(self.store, tool=lambda: Path("/bin/true"))
         self.assertEqual(self.store.get("a")["analysis_status"], "done")
         self.assertEqual(self.store.get("b")["analysis_status"], "failed")
+
+
+class ProgressTests(Fixture):
+    def individual(self, cp=None, hp=None, fast=None, charged=(), iv=None):
+        return {"species": {"value": "물몬"}, "cp": {"value": cp} if cp else None,
+                "max_hp": {"value": hp} if hp else None, "start_seconds": 3,
+                "moves": {"fast": {"value": fast} if fast else None, "charged": [{"value": c} for c in charged]},
+                "appraisals": [{"iv": iv}] if iv is not None else []}
+
+    def test_checklist_follows_the_last_individual(self):
+        self.assertIsNone(live.progress([]))
+        done = self.individual(1234, 120, "물튀기기", ("파도",), {"attack": 15, "defense": 14, "stamina": 13})
+        partial = self.individual(1000, None, "물튀기기")
+        state = live.progress([done, partial])
+        self.assertEqual((state["number"], state["has"], state["complete"]),
+                         (2, {"detail": False, "moves": False, "appraisal": False}, False))
+        self.assertTrue(live.progress([done])["complete"])
+        unsettled = self.individual(1234, 120, "물튀기기", ("파도",), iv=None)
+        unsettled["appraisals"] = [{"iv": None}]  # bars seen but still moving
+        self.assertFalse(live.progress([unsettled])["has"]["appraisal"])
+
+    def test_settled_bars_count_while_the_appraisal_is_still_open(self):
+        (self.root / "data" / "s").mkdir()
+        session = live.Session(self.store, "s", ["true"], fake_recognize({}))
+        bars = ivbars.read_bars(synthetic_frame((15, 14, 13)))
+        session.readings = [(tick, bars) for tick in range(10)]
+        session.ticks = 10  # bars still on screen at the last tick
+        (window,) = session._windows(closed_only=True)
+        self.assertEqual(window["iv"], {"attack": 15, "defense": 14, "stamina": 13})
+        session.readings = [(tick, bars) for tick in range(3)]  # 0.3 s: still filling
+        session.ticks = 3
+        self.assertEqual(session._windows(closed_only=True), [])
 
 
 class WindowListTests(Fixture):

@@ -123,6 +123,16 @@ a.button { display: inline-flex; align-items: center; min-height: 2.75rem; paddi
 .live-form { margin-bottom: 1rem; }
 .live-form h2, #upload h2 { margin: 0 0 .3rem; font-size: 1.15rem; }
 .live-window { grid-column: 1 / -1; }
+.live-progress { margin-top: .7rem; border: 2px solid #c9d5d0; border-radius: .8rem; padding: .7rem .9rem; background: #f6f9f8; }
+.live-progress.done { border-color: #236154; background: #e3f1ec; }
+.live-now { margin: 0; font-weight: 700; font-size: 1.05rem; }
+.live-checks { list-style: none; padding: 0; margin: .5rem 0; display: flex; flex-wrap: wrap; gap: .4rem; }
+.live-checks li { padding: .3rem .6rem; border-radius: 999px; background: #e3eae6; color: #3f5953; font-size: .9rem; }
+.live-checks li::before { content: "○ "; }
+.live-checks li.ok { background: #236154; color: white; }
+.live-checks li.ok::before { content: "✓ "; }
+.live-next { margin: 0; font-weight: 700; color: #7a3d14; }
+.live-progress.done .live-next { color: #174a3f; }
 .scan-list { list-style: none; padding: 0; margin: .5rem 0; display: grid; gap: .5rem; }
 .scan-list li { background: white; border: 1px solid #c9d5d0; border-radius: .8rem; padding: .7rem .9rem; }
 .scan-list .scan-title { font-weight: 700; overflow-wrap: anywhere; }

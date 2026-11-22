@@ -557,12 +557,71 @@ const liveStop = document.querySelector("#live-stop");
 const liveStatus = document.querySelector("#live-status");
 
 let liveWasRunning = false;
+const liveProgress = document.querySelector("#live-progress");
+const liveSound = document.querySelector("#live-sound");
+const announced = new Set();  // Pokémon already announced as complete in this page
+let audio = null;
+
+try { liveSound.checked = localStorage.getItem("boxscan-live-sound") !== "off"; } catch { /* storage blocked */ }
+liveSound.addEventListener("change", () => {
+  try { localStorage.setItem("boxscan-live-sound", liveSound.checked ? "on" : "off"); } catch { /* storage blocked */ }
+  if (liveSound.checked) unlockAudio();
+});
+
+// Browsers only play sound after a click on the page, so the start button unlocks it.
+function unlockAudio() {
+  try {
+    audio = audio ?? new AudioContext();
+    if (audio.state === "suspended") audio.resume();
+  } catch { audio = null; }
+}
+
+function chime() {
+  if (!liveSound.checked || !audio || audio.state !== "running") return;
+  [[880, 0], [1320, 0.16]].forEach(([frequency, delay]) => {
+    const tone = audio.createOscillator();
+    const gain = audio.createGain();
+    tone.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.0001, audio.currentTime + delay);
+    gain.gain.exponentialRampToValueAtTime(0.25, audio.currentTime + delay + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + delay + 0.25);
+    tone.connect(gain).connect(audio.destination);
+    tone.start(audio.currentTime + delay);
+    tone.stop(audio.currentTime + delay + 0.3);
+  });
+}
+
+const NEXT_STEP = {
+  detail: "포켓몬 상세 화면을 열어 CP와 HP가 보이게 해 주세요.",
+  moves: "아래로 스크롤해서 기술이 보이게 해 주세요.",
+  appraisal: "조사 화면을 열고 IV 막대가 다 찰 때까지 기다려 주세요.",
+};
+
+function showProgress(current, running) {
+  liveProgress.hidden = !current || !running;
+  if (!current || !running) return;
+  // The detail screen shows the nickname; the species name comes from the appraisal caption.
+  const label = current.species ?? (current.nickname ? `별명 ${current.nickname}` : "이름 읽는 중");
+  const name = `${current.number}번째 · ${label}${current.cp ? ` CP ${current.cp}` : ""}`;
+  liveProgress.querySelector(".live-now").textContent = name;
+  liveProgress.querySelectorAll("li").forEach(item => item.classList.toggle("ok", current.has[item.dataset.key]));
+  const missing = Object.keys(NEXT_STEP).find(key => !current.has[key]);
+  liveProgress.classList.toggle("done", current.complete);
+  liveProgress.querySelector(".live-next").textContent = current.complete
+    ? "다 읽었습니다. 다음 포켓몬으로 넘기세요." : NEXT_STEP[missing];
+  const key = `${current.number}:${current.start_seconds}`;  // not the name or CP, which fill in later
+  if (current.complete && !announced.has(key)) {
+    announced.add(key);
+    chime();
+  }
+}
 
 function showLive(session) {
   const running = Boolean(session?.running);
   liveStart.hidden = running;
   liveStop.hidden = !running;
   liveSelect.disabled = running;
+  showProgress(session?.current, running);
   if (running) {
     liveStatus.textContent = `캡처 중 · ${Math.floor(session.seconds)}초 · 프레임 ${session.frames}장 · 조사 화면 ${session.appraisals}번`;
   } else if (session?.error) {
@@ -590,6 +649,7 @@ async function loadWindows() {
 
 liveForm.addEventListener("submit", event => {
   event.preventDefault();
+  unlockAudio();
   run(async () => {
     if (!liveSelect.value) return;
     liveStart.disabled = true;
