@@ -328,7 +328,7 @@ class RaidApiTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         body = result.json()
         self.assertEqual([p["name"] for p in body["party"]], ["물몬", "풀몬"])
-        self.assertEqual(body["party"][0]["code"], "PK0001")
+        self.assertEqual(body["party"][0]["code"], "PK1")
         self.assertEqual(body["weather_name"], "비")
         compared = self.client.post("/api/raid/recommend", json={"species": "불꽃몬", "tier": "3",
                                                                  "compare_weather": True}).json()

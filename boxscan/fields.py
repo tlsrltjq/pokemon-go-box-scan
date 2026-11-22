@@ -20,9 +20,11 @@ DYNAMAX = re.compile(r"^다이맥스$")
 GIGANTAMAX = re.compile(r"^거다이맥")
 BACKGROUND = re.compile(r"배경은")
 MEGA_TIMER = re.compile(r"남은\s*시간")
-# Management code the user typed into the in-game nickname (spec 6.3), such as "PK0042" or
-# "마기PK0042". Only an exact letters-and-digits reading counts; OCR guesses are not repaired.
-CODE = re.compile(r"(?<![A-Za-z0-9])[Pp][Kk]\s?(\d{4,6})(?!\d)")
+# Management code the user typed into the in-game nickname (spec 6.3), such as "PK2" or "마기PK2".
+# The number counts within the species, so the species read on screen picks the entry. Leading
+# zeros ("PK0002", from the earlier box-wide numbering) read as the same number. Only an exact
+# letters-and-digits reading counts; OCR guesses are not repaired.
+CODE = re.compile(r"(?<![A-Za-z0-9])[Pp][Kk]\s?(\d{1,4})(?!\d)")
 # 맥스기술: names start with 다이 or 거다이; the row above shows "레벨 N" or LOCKED per move.
 MAX_HEADER = re.compile(r"맥스기술")
 MAX_MOVE = re.compile(r"^(?:거다이|다이)[가-힣]{1,8}$")
@@ -142,7 +144,7 @@ def parse_nickname(lines: list[dict]) -> str | None:
 
 
 def parse_code(texts: list[str]) -> str | None:
-    codes = {f"PK{int(match[1]):04d}" for text in texts for match in CODE.finditer(text)}
+    codes = {f"PK{int(match[1])}" for text in texts for match in CODE.finditer(text) if int(match[1])}
     return codes.pop() if len(codes) == 1 else None
 
 

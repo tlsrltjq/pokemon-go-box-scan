@@ -4,6 +4,11 @@ Only values the user approved are stored here. Each approval of a scan candidate
 once, so a double click or retry cannot create a second entry. Updating an existing entry keeps
 its UUID and management code, bumps the revision and stores the previous values. Fields that a
 new observation did not read keep their previous values instead of being cleared.
+
+Management codes count up within each species (마기라스 PK1, PK2, 망나뇽 PK1), so the number the
+user types into a nickname stays short. A number is never given out twice in the same species:
+removed entries keep theirs, and an entry whose species is corrected gets the next number of the
+new species while the old number stays reserved.
 """
 import json
 import re
@@ -16,7 +21,7 @@ from pathlib import Path
 DATABASE = "box.sqlite3"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pokemon (
-    seq INTEGER PRIMARY KEY AUTOINCREMENT,  -- never reused, so codes stay unique after deletion
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,  -- insertion order
     id TEXT NOT NULL UNIQUE,
     revision INTEGER NOT NULL,
     data TEXT NOT NULL,
@@ -34,6 +39,13 @@ CREATE TABLE IF NOT EXISTS revisions (
     created_at TEXT NOT NULL,
     PRIMARY KEY (pokemon_id, revision)
 );
+CREATE TABLE IF NOT EXISTS codes (
+    species TEXT NOT NULL,  -- '' while the species is unknown
+    number INTEGER NOT NULL,
+    pokemon_id TEXT NOT NULL REFERENCES pokemon(id),
+    current INTEGER NOT NULL,  -- 1 for the entry's code, 0 for a reserved earlier one
+    PRIMARY KEY (species, number)
+);
 CREATE TABLE IF NOT EXISTS approvals (
     scan_id TEXT NOT NULL,
     individual INTEGER NOT NULL,
@@ -43,6 +55,16 @@ CREATE TABLE IF NOT EXISTS approvals (
     PRIMARY KEY (scan_id, individual)
 );
 """
+
+
+# Every read joins the entry's current code.
+SELECT = ("SELECT p.*, c.number AS code_number FROM pokemon p "
+          "LEFT JOIN codes c ON c.pokemon_id = p.id AND c.current = 1")
+CODE = re.compile(r"PK([1-9][0-9]{0,3})")
+
+
+def code(number: int | None) -> str | None:
+    return f"PK{number}" if number else None
 
 
 # Fields the box page edits directly. They are replaced as a whole, so the user can clear a wrong
@@ -84,9 +106,37 @@ class BoxStore:
         # CREATE TABLE IF NOT EXISTS is safe when the server and the worker start together.
         with closing(sqlite3.connect(self.database, timeout=10)) as db:
             db.executescript(SCHEMA)
+        self._assign_missing()
+
+    def _assign_missing(self) -> None:
+        """Give codes to entries without one: a box from before per-species codes, or a restored backup."""
+        with closing(sqlite3.connect(self.database, timeout=10)) as db:
+            db.executescript(SCHEMA)
+            missing = db.execute("SELECT 1 FROM pokemon p WHERE NOT EXISTS (SELECT 1 FROM codes c "
+                                 "WHERE c.pokemon_id = p.id AND c.current = 1) LIMIT 1").fetchone()
+        if missing:
+            with self._write(assign=False) as db:
+                rows = db.execute("SELECT id, data FROM pokemon p WHERE NOT EXISTS (SELECT 1 FROM codes c "
+                                  "WHERE c.pokemon_id = p.id AND c.current = 1) ORDER BY seq").fetchall()
+                for row in rows:
+                    self._give_code(db, row["id"], json.loads(row["data"]).get("species"))
+
+    @staticmethod
+    def _give_code(db, pokemon_id: str, species: str | None) -> None:
+        """Keep the current code if it is for this species, otherwise take the species' next number."""
+        species = species or ""
+        current = db.execute("SELECT species FROM codes WHERE pokemon_id = ? AND current = 1",
+                             (pokemon_id,)).fetchone()
+        if current is not None and current["species"] == species:
+            return
+        db.execute("UPDATE codes SET current = 0 WHERE pokemon_id = ?", (pokemon_id,))
+        (last,) = db.execute("SELECT COALESCE(MAX(number), 0) FROM codes WHERE species = ?", (species,)).fetchone()
+        db.execute("INSERT INTO codes VALUES (?, ?, ?, 1)", (species, last + 1, pokemon_id))
 
     @contextmanager
-    def _write(self):
+    def _write(self, assign: bool = True):
+        if assign:  # the database file may have been replaced by a restore
+            self._assign_missing()
         with closing(sqlite3.connect(self.database, isolation_level=None, timeout=10)) as db:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA foreign_keys = ON")
@@ -99,6 +149,7 @@ class BoxStore:
             db.execute("COMMIT")
 
     def _read(self):
+        self._assign_missing()
         db = sqlite3.connect(self.database)
         db.row_factory = sqlite3.Row
         return closing(db)
@@ -107,7 +158,7 @@ class BoxStore:
     def _entry(row: sqlite3.Row) -> dict:
         return {
             "id": row["id"],
-            "code": f"PK{row['seq']:04d}",
+            "code": code(row["code_number"]),
             "revision": row["revision"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -117,13 +168,13 @@ class BoxStore:
     def approval(self, scan_id: str, individual: int) -> dict | None:
         with self._read() as db:
             row = db.execute(
-                "SELECT a.revision AS approved_revision, p.* FROM approvals a "
-                "JOIN pokemon p ON p.id = a.pokemon_id WHERE a.scan_id = ? AND a.individual = ?",
+                f"SELECT a.revision AS approved_revision, x.* FROM approvals a JOIN ({SELECT}) x "
+                "ON x.id = a.pokemon_id WHERE a.scan_id = ? AND a.individual = ?",
                 (scan_id, individual),
             ).fetchone()
         if row is None:
             return None
-        return {"pokemon_id": row["id"], "code": f"PK{row['seq']:04d}",
+        return {"pokemon_id": row["id"], "code": code(row["code_number"]),
                 "revision": row["approved_revision"], "deleted": row["deleted_at"] is not None}
 
     def approve(self, scan_id: str, individual: int, values: dict, source: dict,
@@ -139,7 +190,7 @@ class BoxStore:
                 (scan_id, individual),
             ).fetchone()
             if done is not None:
-                row = db.execute("SELECT * FROM pokemon WHERE id = ?", (done["pokemon_id"],)).fetchone()
+                row = db.execute(f"{SELECT} WHERE p.id = ?", (done["pokemon_id"],)).fetchone()
                 return {**self._entry(row), "duplicate": True}
             if target is None:
                 pokemon_id, revision, before = str(uuid.uuid4()), 1, None
@@ -148,9 +199,10 @@ class BoxStore:
                     "INSERT INTO pokemon (id, revision, data, created_at, updated_at) VALUES (?, 1, ?, ?, ?)",
                     (pokemon_id, json.dumps(after, ensure_ascii=False), stamp, stamp),
                 )
+                self._give_code(db, pokemon_id, after.get("species"))
                 change = "created"
             else:
-                row = db.execute("SELECT * FROM pokemon WHERE id = ?", (target,)).fetchone()
+                row = db.execute(f"{SELECT} WHERE p.id = ?", (target,)).fetchone()
                 if row is None or row["deleted_at"] is not None:
                     raise Conflict("갱신할 개체가 박스에 없습니다.")
                 if expected_revision is not None and row["revision"] != expected_revision:
@@ -162,6 +214,7 @@ class BoxStore:
                     "UPDATE pokemon SET revision = ?, data = ?, updated_at = ? WHERE id = ?",
                     (revision, json.dumps(after, ensure_ascii=False), stamp, pokemon_id),
                 )
+                self._give_code(db, pokemon_id, after.get("species"))
                 change = "updated"
             db.execute(
                 "INSERT INTO revisions VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -171,31 +224,31 @@ class BoxStore:
             )
             db.execute("INSERT INTO approvals VALUES (?, ?, ?, ?, ?)",
                        (scan_id, individual, pokemon_id, revision, stamp))
-            row = db.execute("SELECT * FROM pokemon WHERE id = ?", (pokemon_id,)).fetchone()
+            row = db.execute(f"{SELECT} WHERE p.id = ?", (pokemon_id,)).fetchone()
             return {**self._entry(row), "duplicate": False}
 
     def list(self, species: str | None = None) -> list[dict]:
         with self._read() as db:
-            rows = db.execute("SELECT * FROM pokemon WHERE deleted_at IS NULL ORDER BY seq").fetchall()
+            rows = db.execute(f"{SELECT} WHERE p.deleted_at IS NULL ORDER BY p.seq").fetchall()
         entries = [self._entry(row) for row in rows]
         if species:
             entries = [entry for entry in entries if entry.get("species") == species]
         return entries
 
-    def by_code(self, code: str) -> dict | None:
-        """The entry a management code was given to, including removed ones (codes are never reused)."""
-        match = re.fullmatch(r"PK(\d{4,6})", code or "")
-        if match is None:
+    def by_code(self, species: str | None, value: str | None) -> dict | None:
+        """The entry holding this code in this species, including removed ones (codes are never reused)."""
+        match = CODE.fullmatch(value or "")
+        if match is None or not species:
             return None
         with self._read() as db:
-            row = db.execute("SELECT * FROM pokemon WHERE seq = ?", (int(match[1]),)).fetchone()
+            row = db.execute(f"{SELECT} WHERE c.species = ? AND c.number = ?", (species, int(match[1]))).fetchone()
         if row is None:
             return None
         return {**self._entry(row), "deleted": row["deleted_at"] is not None}
 
     def get(self, pokemon_id: str) -> dict | None:
         with self._read() as db:
-            row = db.execute("SELECT * FROM pokemon WHERE id = ?", (pokemon_id,)).fetchone()
+            row = db.execute(f"{SELECT} WHERE p.id = ?", (pokemon_id,)).fetchone()
             if row is None or row["deleted_at"] is not None:
                 return None
             revisions = db.execute(
@@ -215,7 +268,7 @@ class BoxStore:
         """Replace the editable fields after checking the revision; history keeps the old values."""
         stamp = now()
         with self._write() as db:
-            row = db.execute("SELECT * FROM pokemon WHERE id = ?", (pokemon_id,)).fetchone()
+            row = db.execute(f"{SELECT} WHERE p.id = ?", (pokemon_id,)).fetchone()
             if row is None or row["deleted_at"] is not None:
                 raise Conflict("박스에 없는 개체입니다.")
             if row["revision"] != expected_revision:
@@ -225,20 +278,21 @@ class BoxStore:
             revision = row["revision"] + 1
             db.execute("UPDATE pokemon SET revision = ?, data = ?, updated_at = ? WHERE id = ?",
                        (revision, json.dumps(after, ensure_ascii=False), stamp, pokemon_id))
+            self._give_code(db, pokemon_id, after.get("species"))
             db.execute(
                 "INSERT INTO revisions VALUES (?, ?, 'updated', ?, ?, ?, ?)",
                 (pokemon_id, revision, json.dumps(before, ensure_ascii=False),
                  json.dumps(after, ensure_ascii=False),
                  json.dumps({"kind": "manual_edit", "note": note}, ensure_ascii=False), stamp),
             )
-            row = db.execute("SELECT * FROM pokemon WHERE id = ?", (pokemon_id,)).fetchone()
+            row = db.execute(f"{SELECT} WHERE p.id = ?", (pokemon_id,)).fetchone()
             return self._entry(row)
 
     def delete(self, pokemon_id: str, expected_revision: int) -> None:
         """Remove from the box but keep the row, history and code reservation."""
         stamp = now()
         with self._write() as db:
-            row = db.execute("SELECT * FROM pokemon WHERE id = ?", (pokemon_id,)).fetchone()
+            row = db.execute(f"{SELECT} WHERE p.id = ?", (pokemon_id,)).fetchone()
             if row is None or row["deleted_at"] is not None:
                 raise Conflict("이미 박스에 없는 개체입니다.")
             if row["revision"] != expected_revision:

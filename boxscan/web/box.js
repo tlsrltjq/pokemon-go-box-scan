@@ -156,8 +156,8 @@ function entryCard(entry) {
     ),
     element("p", {}, element("span", { class: "muted" }, "IV 공/방/체 "), element("strong", {}, formatIv(entry.iv))),
     entry.nickname ? element("p", {}, element("span", { class: "muted" }, "게임 별명 "), entry.nickname) : null,
-    (entry.nickname ?? "").toUpperCase().includes(entry.code) ? null : element("p", { class: "muted" },
-      `게임 별명에 ${entry.code}을(를) 넣으면 다음 스캔 때 이 개체를 자동으로 고릅니다.`),
+    hasCode(entry) ? null : element("p", { class: "muted" },
+      `게임 별명에 ${entry.code}을(를) 넣으면 다음 스캔 때 이 개체를 자동으로 고릅니다. 번호는 종마다 따로 셉니다.`),
     entry.cp_source === "calculated" ? element("p", { class: "muted" },
       "CP·최대 HP는 메가진화 중 기록과 레벨로 계산한 기본 모습 값입니다.") : null,
     temp ? element("p", { class: "muted" },
@@ -175,11 +175,23 @@ function entryCard(entry) {
   );
 }
 
+// The nickname holds this entry's code exactly (PK1, also PK0001), not just as part of PK12.
+function hasCode(entry) {
+  const number = entry.code?.slice(2);
+  return Boolean(number) && new RegExp(`PK\\s?0*${number}(?!\\d)`, "i").test(entry.nickname ?? "");
+}
+
+// Every word must match the species, the code (PK1 = PK0001) or the nickname: "마기라스 PK1".
+function matches(entry, word) {
+  const upper = word.toUpperCase();
+  const code = upper.match(/^PK0*([1-9]\d*)$/);
+  return (entry.species ?? "").includes(word) || (code ? entry.code === `PK${code[1]}` : false)
+    || (entry.nickname ?? "").toUpperCase().includes(upper);
+}
+
 function render() {
-  const query = search.value.trim();
-  const upper = query.toUpperCase();
-  const shown = entries.filter(entry => !query || (entry.species ?? "").includes(query)
-    || entry.code.includes(upper) || (entry.nickname ?? "").toUpperCase().includes(upper));
+  const words = search.value.trim().split(/\s+/).filter(Boolean);
+  const shown = entries.filter(entry => words.every(word => matches(entry, word)));
   status.textContent = entries.length
     ? `${entries.length}개체 중 ${shown.length}개체를 보여줍니다.`
     : "아직 저장한 개체가 없습니다. 스캔 화면의 판독 카드에서 저장하세요.";
