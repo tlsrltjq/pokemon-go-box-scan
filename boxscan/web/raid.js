@@ -63,6 +63,17 @@ function memberCard(member) {
   );
 }
 
+function shadowLine(shadow) {
+  if (!shadow) return null;
+  const calm = shadow.calm_after_ms == null ? "진정 안 함" : `격앙 ${shadow.calm_after_ms / 1000}초 뒤 진정`;
+  const when = shadow.enraged_s == null ? "이 피해로는 격앙 시점(남은 HP " + Math.round(shadow.enrage_at * 100) + "%)까지 가지 않습니다"
+    : `평균 ${shadow.enraged_s}초에 격앙(${shadow.enraged_runs}/${shadow.runs}가지 조합)`;
+  const other = shadow.comparison
+    ? ` 같은 파티로 ${shadow.comparison.calm_after_s == null ? "진정하지 않으면" : "격앙하자마자 진정하면"} ${Math.round(shadow.comparison.damage).toLocaleString()}.`
+    : "";
+  return element("p", { class: "mega-note" }, `그림자 레이드 · ${calm} · ${when}.${other}`);
+}
+
 function megaLine(comparison) {
   if (!comparison) return null;
   if (!comparison.candidates) return element("p", { class: "muted" }, "박스에 메가진화·원시회귀할 수 있는 개체가 없어 메가진화 없이 계산했습니다.");
@@ -75,7 +86,7 @@ function megaLine(comparison) {
 function showResult(result) {
   section.hidden = false;
   const boss = result.boss;
-  const name = `${boss.species}${boss.form_name ? ` (${boss.form_name})` : ""}${boss.temp_name ? ` · ${boss.temp_name}` : ""}`;
+  const name = `${boss.shadow ? "그림자 " : ""}${boss.species}${boss.form_name ? ` (${boss.form_name})` : ""}${boss.temp_name ? ` · ${boss.temp_name}` : ""}`;
   const summary = document.querySelector("#summary");
   if (!result.result) {
     summary.replaceChildren(element("p", {}, "추천에 쓸 수 있는 개체가 없습니다. 아래 제외 사유를 확인하세요."));
@@ -84,7 +95,8 @@ function showResult(result) {
     summary.replaceChildren(...[
       element("h3", {}, `${name} · ${boss.tier_name} · ${result.weather_name}`),
       element("p", {}, `보스 ${boss.types.join("/")} · HP ${boss.hp.toLocaleString()} · 제한 시간 ${result.time_limit_s}초` +
-        (result.rejoin_delay_s == null ? " · 재입장 없음" : ` · 재입장 지연 ${result.rejoin_delay_s}초`)),
+        (result.rejoin_delay_s == null ? " · 재입장 없음" : ` · 재입장 지연 ${result.rejoin_delay_s}초`) +
+        (result.trainers > 1 ? ` · ${result.trainers}명` : " · 혼자")),
       element("dl", {},
         element("div", {}, element("dt", {}, "예상 누적 피해"), element("dd", {}, element("strong", {}, range(r.damage)),
           element("span", {}, `보스 HP의 ${Math.round((r.damage.avg / r.boss_hp) * 100)}%`))),
@@ -94,6 +106,7 @@ function showResult(result) {
         (r.defeated_scenarios ? `${r.defeated_scenarios}가지 조합에서 혼자 보스를 쓰러뜨립니다. ` : "") +
         `평균 DPS ${r.dps.avg}.`),
       megaLine(result.mega_comparison),
+      shadowLine(result.shadow),
       result.shortfall ? element("p", { class: "warn-text" }, result.shortfall) : null,
     ].filter(Boolean));
   }
@@ -124,6 +137,9 @@ function showResult(result) {
 }
 
 form.elements.species.addEventListener("change", loadBoss);
+form.elements.shadow.addEventListener("change", () => {
+  document.querySelector("#shadow-fields").hidden = !form.elements.shadow.checked;
+});
 form.elements.tier.addEventListener("change", () => {
   form.elements.time_limit_s.value = tierDefaults[form.elements.tier.value] ?? form.elements.time_limit_s.value;
 });
@@ -148,6 +164,13 @@ form.addEventListener("submit", async event => {
         boss_charged: form.elements.boss_charged.value || null,
         compare_weather: form.elements.compare_weather.checked,
         include_mega: form.elements.include_mega.checked,
+        trainers: form.elements.trainers.value,
+        shadow: form.elements.shadow.checked ? {
+          enrage_at: Number(form.elements.enrage_at.value) / 100,
+          attack: form.elements.enraged_attack.value,
+          defense: form.elements.enraged_defense.value,
+          calm_after_s: form.elements.calm_after_s.value || null,
+        } : null,
       }),
     }));
     status.textContent = "";

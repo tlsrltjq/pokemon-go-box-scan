@@ -236,21 +236,35 @@ def damage(reference: Reference, move: Move, attack: float, defense: float, atta
 
 
 def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, boss_fast: Move,
-             boss_charged: Move, time_limit_s: float, weather: str = "", rejoin_delay_s: float | None = None) -> dict:
-    """Run one battle. party = [(fighter, index of the charged attack to use)], in order."""
+             boss_charged: Move, time_limit_s: float, weather: str = "", rejoin_delay_s: float | None = None,
+             trainers: int = 1) -> dict:
+    """Run one battle. party = [(fighter, index of the charged attack to use)], in order.
+
+    With trainers > 1 the others are assumed to deal as much as I do at the same moments, so the boss
+    loses HP that many times faster; only my share is counted as my damage."""
     weather_types = (reference.weather or {}).get(weather, []) if weather else []
     settings = reference.battle
     limit = int(time_limit_s * 1000)
     max_energy = settings["maximumEnergy"]
     swap = settings["swapDurationMs"]
     boss_delay = int(settings["enemyAttackInterval"] * 1000) + BOSS_EXTRA_DELAY_MS
-    hits = [damage(reference, f.fast, f.attack, foe["defense"], f.types, foe["types"], weather_types,
-                   mega_bonus(f, f.fast)) for f, _ in party]
-    charges = [damage(reference, f.charged[c], f.attack, foe["defense"], f.types, foe["types"], weather_types,
-                      mega_bonus(f, f.charged[c])) for f, c in party]
-    taken = [(damage(reference, boss_fast, foe["attack"], f.defense, foe["types"], f.types, weather_types),
-              damage(reference, boss_charged, foe["attack"], f.defense, foe["types"], f.types, weather_types))
-             for f, _ in party]
+    shadow = foe.get("shadow")
+
+    def tables(attack_scale: float, defense_scale: float):
+        defense, attack = foe["defense"] * defense_scale, foe["attack"] * attack_scale
+        return ([damage(reference, f.fast, f.attack, defense, f.types, foe["types"], weather_types,
+                        mega_bonus(f, f.fast)) for f, _ in party],
+                [damage(reference, f.charged[c], f.attack, defense, f.types, foe["types"], weather_types,
+                        mega_bonus(f, f.charged[c])) for f, c in party],
+                [(damage(reference, boss_fast, attack, f.defense, foe["types"], f.types, weather_types),
+                  damage(reference, boss_charged, attack, f.defense, foe["types"], f.types, weather_types))
+                 for f, _ in party])
+
+    # A shadow raid boss turns enraged (more attack and defense) once its HP falls to the threshold,
+    # and calms again only in the scenario where the user uses Purified Gems.
+    normal = tables(1.0, 1.0)
+    angry = tables(shadow["attack"], shadow["defense"]) if shadow else normal
+    enraged, enraged_ms, calmed_ms = False, None, None
     stats = [{"damage": 0, "time_ms": 0, "faints": 0, "charged_uses": 0} for _ in party]
     boss_hp, boss_energy, boss_charge_turn = foe["hp"], 0, False
     current, hp, energy, entered = 0, party[0][0].hp, 0, 0
@@ -277,22 +291,29 @@ def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, 
             if energy >= -move.energy:
                 energy += move.energy
                 stats[current]["charged_uses"] += 1
-                push(time + move.damage_ms, "attacker_hit", (generation, charges[current], 0))
+                push(time + move.damage_ms, "attacker_hit", (generation, 1, 0))
             else:
                 move = fighter.fast
-                push(time + move.damage_ms, "attacker_hit", (generation, hits[current], move.energy))
+                push(time + move.damage_ms, "attacker_hit", (generation, 0, move.energy))
             push(time + move.duration_ms, "attacker_move", generation)
         elif kind == "attacker_hit":
-            hit_generation, dealt, gained = data
+            hit_generation, which, gained = data
             if hit_generation != generation or not active:
                 continue
-            dealt = min(dealt, boss_hp)
-            boss_hp -= dealt
+            total = min((angry if enraged else normal)[which][current] * trainers, boss_hp)
+            dealt = total / trainers
+            boss_hp -= total
             stats[current]["damage"] += dealt
             energy = min(max_energy, energy + gained)
             boss_energy = min(max_energy, boss_energy + math.ceil(dealt * settings["bossEnergyRegenerationPerHealthLost"]))
             if boss_hp <= 0:
                 defeated, end_time = True, time
+            elif shadow and enraged_ms is None and boss_hp <= shadow["enrage_at"] * foe["hp"]:
+                enraged, enraged_ms = True, time
+                if shadow.get("calm_after_ms") is not None:
+                    push(time + shadow["calm_after_ms"], "calm")
+        elif kind == "calm":
+            enraged, calmed_ms = False, time
         elif kind == "boss_move":
             use_charged = boss_energy >= -boss_charged.energy and boss_charge_turn
             if boss_energy >= -boss_charged.energy:
@@ -308,7 +329,7 @@ def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, 
                 boss_energy = min(max_energy, boss_energy + gained)
             if not active or time < entered:
                 continue  # nobody on the field during a swap or a re-entry
-            dealt = taken[current][1 if charged else 0]
+            dealt = (angry if enraged else normal)[2][current][1 if charged else 0]
             hp -= dealt
             energy = min(max_energy, energy + math.ceil(dealt * settings["energyDeltaPerHealthLost"]))
             if hp <= 0:
@@ -330,9 +351,12 @@ def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, 
                 push(start, "attacker_move", generation)
     if active:
         stats[current]["time_ms"] += min(end_time, limit) - entered
+    for s in stats:
+        s["damage"] = round(s["damage"])
     total = sum(s["damage"] for s in stats)
     return {"damage": total, "defeated": defeated, "end_ms": min(end_time, limit),
-            "faints": sum(s["faints"] for s in stats), "rejoins": rejoins, "members": stats}
+            "faints": sum(s["faints"] for s in stats), "rejoins": rejoins, "members": stats,
+            "enraged_ms": enraged_ms, "calmed_ms": calmed_ms}
 
 
 def _scenarios(foe: dict, boss_fast: str | None, boss_charged: str | None) -> list[tuple[Move, Move]]:
@@ -365,15 +389,20 @@ def _estimate(members: list[list[tuple[int, int]]], limit_ms: int, swap_ms: int,
 def recommend(reference: Reference, entries: list[dict], species: str, tier: str, form: str | None = None,
               temp: str | None = None, weather: str = "", time_limit_s: float | None = None,
               rejoin_delay_s: float | None = None, boss_fast: str | None = None,
-              boss_charged: str | None = None, include_mega: bool = False, compare_mega: bool = True) -> dict:
+              boss_charged: str | None = None, include_mega: bool = False, compare_mega: bool = True,
+              shadow: dict | None = None, compare_shadow: bool = True, trainers: int = 1) -> dict:
     if include_mega and not reference.temp_boosts:
         raise RaidError("기준 데이터에 메가진화 보너스가 없습니다. `python -m boxscan reference rebuild`를 실행하세요.")
     if weather not in WEATHER_NAMES:
         raise RaidError("날씨를 다시 선택하세요.")
     foe = boss(reference, species, tier, form, temp)
+    if shadow is not None:
+        foe["shadow"] = _shadow_settings(shadow, tier, temp)
     limit_s = time_limit_s or RULESET["tiers"][tier]["time_limit"]
     if not 30 <= limit_s <= 600:
         raise RaidError("제한 시간은 30~600초 사이로 입력하세요.")
+    if not isinstance(trainers, int) or isinstance(trainers, bool) or not 1 <= trainers <= 20:
+        raise RaidError("함께하는 트레이너는 1~20명으로 입력하세요.")
     if rejoin_delay_s is not None and not 0 <= rejoin_delay_s <= 120:
         raise RaidError("재입장 지연은 0~120초 사이로 입력하세요.")
     scenarios = _scenarios(foe, boss_fast, boss_charged)
@@ -381,7 +410,8 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
     def candidate(fighter):
         options = []
         for index, _ in enumerate(fighter.charged):
-            runs = [simulate(reference, [(fighter, index)], foe, f, c, limit_s, weather) for f, c in scenarios]
+            runs = [simulate(reference, [(fighter, index)], foe, f, c, limit_s, weather, trainers=trainers)
+                    for f, c in scenarios]
             solo = [(r["damage"], max(r["members"][0]["time_ms"], 1)) for r in runs]
             options.append((sum(d for d, _ in solo) / len(solo), index, solo))
         options.sort(key=lambda option: option[0], reverse=True)
@@ -434,7 +464,7 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
     best = None
     for _, team in estimates[:FULL_SIM_PARTIES]:
         runs = [simulate(reference, [(c["fighter"], c["choice"]) for c in team], foe, f, ch, limit_s, weather,
-                         rejoin_delay_s) for f, ch in scenarios]
+                         rejoin_delay_s, trainers) for f, ch in scenarios]
         average = sum(r["damage"] for r in runs) / len(runs)
         if best is None or average > best[0]:
             best = (average, team, runs)
@@ -445,14 +475,65 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
               or len(megas) > MEGA_CANDIDATE_LIMIT}
     report = _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
                      shortfall=len(candidates) < PARTY_SIZE, include_mega=include_mega)
+    report["trainers"] = trainers
+    if trainers > 1:
+        report["assumptions"].insert(0, f"함께하는 트레이너 {trainers}명: 다른 트레이너도 나와 같은 피해를 같은 때 준다고 보고 "
+                                     "보스 HP가 그만큼 빨리 줄어듭니다. 결과의 피해는 내 몫입니다.")
+    if foe.get("shadow") and runs:
+        settings = foe["shadow"]
+        enraged = [r["enraged_ms"] for r in runs if r["enraged_ms"] is not None]
+        report["shadow"] = {**settings, "enraged_runs": len(enraged), "runs": len(runs),
+                            "enraged_s": round(sum(enraged) / len(enraged) / 1000, 1) if enraged else None}
+        if compare_shadow:
+            # The same party when the boss is calmed right away (or, if the user chose calming, never).
+            other = {**settings, "calm_after_ms": 0 if settings.get("calm_after_ms") is None else None}
+            other_foe = {**foe, "shadow": other}
+            other_runs = [simulate(reference, [(c["fighter"], c["choice"]) for c in team], other_foe, f, ch, limit_s,
+                                   weather, rejoin_delay_s, trainers) for f, ch in scenarios]
+            report["shadow"]["comparison"] = {
+                "calm_after_s": None if other["calm_after_ms"] is None else other["calm_after_ms"] / 1000,
+                "damage": round(sum(r["damage"] for r in other_runs) / len(other_runs), 1)}
     if include_mega and compare_mega:
         plain = recommend(reference, entries, species, tier, form, temp, weather, time_limit_s, rejoin_delay_s,
-                          boss_fast, boss_charged)
+                          boss_fast, boss_charged, shadow=shadow, compare_shadow=False, trainers=trainers)
         chosen = next((m for m in report["party"] if m["mega"]), None)
         report["mega_comparison"] = {
             "with_mega": report["result"]["damage"]["avg"], "without_mega": plain["result"]["damage"]["avg"],
             "member": chosen["name"] if chosen else None, "candidates": len(megas)}
     return report
+
+
+# Shadow raid enrage, community estimates (the official help gives no numbers): enraged around 60 %
+# HP left, Attack about x1.81, Defense about x3. They are inputs, shown in every result.
+SHADOW_DEFAULTS = {"enrage_at": 0.6, "attack": 1.81, "defense": 3.0}
+SHADOW_SOURCES = ["https://scopelyexplore.helpshift.com/hc/en/5-pokemon-go/faq/1187-what-are-shadow-raids/?hl=en",
+                  "https://bulbapedia.bulbagarden.net/wiki/Shadow_Raid"]
+
+
+def _shadow_settings(raw: dict, tier: str, temp: str | None) -> dict:
+    if tier not in ("1", "3", "5"):
+        raise RaidError("그림자 레이드는 1성·3성·5성만 계산합니다.")
+    if temp:
+        raise RaidError("그림자 레이드 보스는 메가진화하지 않습니다.")
+
+    def number(key, low, high, label):
+        value = raw.get(key, SHADOW_DEFAULTS.get(key))
+        if value is None:
+            return None
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            raise RaidError(f"{label}을(를) 숫자로 입력하세요.") from None
+        if not low <= value <= high:
+            raise RaidError(f"{label}은(는) {low:g}~{high:g} 사이로 입력하세요.")
+        return value
+
+    calm = raw.get("calm_after_s")
+    calm = number("calm_after_s", 0, 600, "진정 시점") if calm not in (None, "") else None
+    return {"enrage_at": number("enrage_at", 0.05, 0.95, "격앙 시점(남은 HP 비율)"),
+            "attack": number("attack", 1, 5, "격앙 공격 배율"),
+            "defense": number("defense", 1, 6, "격앙 방어 배율"),
+            "calm_after_ms": None if calm is None else int(calm * 1000)}
 
 
 def _shortlist(candidates: list[dict], per_measure: int | None = None, limit: int | None = None) -> list[dict]:
@@ -473,7 +554,8 @@ def compare_weather(reference: Reference, entries: list[dict], species: str, tie
     """The same request in every weather, strongest first, with the party each weather picks."""
     rows = []
     for weather, name in WEATHER_NAMES.items():
-        result = recommend(reference, entries, species, tier, **{**options, "weather": weather, "compare_mega": False})
+        result = recommend(reference, entries, species, tier,
+                           **{**options, "weather": weather, "compare_mega": False, "compare_shadow": False})
         if result["result"]:
             rows.append({"weather": weather, "name": name, "damage": result["result"]["damage"],
                          "party": [member["name"] for member in result["party"]]})
@@ -498,6 +580,15 @@ def _summary(values: list[float]) -> dict:
 
 def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
             shortfall=False, include_mega=False) -> dict:
+    shadow = foe.get("shadow")
+    shadow_notes = [] if not shadow else [
+        f"그림자 레이드: 보스 HP가 {shadow['enrage_at'] * 100:.0f}% 남으면 격앙해 공격 ×{shadow['attack']:g}, 방어 ×{shadow['defense']:g}가 됩니다. "
+        "공식 안내에는 수치가 없어 커뮤니티 추정값을 기본으로 쓰며, 화면에서 바꿀 수 있습니다.",
+        "격앙 시점은 내 피해만으로 계산합니다. 다른 트레이너가 함께 때리면 더 빨리 격앙합니다.",
+        ("정화 크리스탈로 진정하지 않는 경우입니다." if shadow.get("calm_after_ms") is None
+         else f"격앙 {shadow['calm_after_ms'] / 1000:g}초 뒤 정화 크리스탈로 진정한다고 보고 계산했습니다(사용자가 정한 값)."),
+        "격앙 중 HP 회복과 그림자 보스 자체의 공격 보정은 넣지 않았습니다.",
+    ]
     party = []
     for position, candidate in enumerate(team):
         fighter, choice = candidate["fighter"], candidate["choice"]
@@ -533,7 +624,7 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
         }
     return {
         "engine": ENGINE_VERSION, "ruleset": RULESET["version"], "reference": reference.version,
-        "boss": {k: foe[k] for k in ("species", "form_name", "temp", "tier", "tier_name", "hp")}
+        "boss": {k: foe[k] for k in ("species", "form_name", "temp", "tier", "tier_name", "hp")} | {"shadow": bool(shadow)}
         | {"types": [TYPE_NAMES.get(t, t) for t in foe["types"]],
            "attack": round(foe["attack"], 1), "defense": round(foe["defense"], 1)},
         "weather": weather, "weather_name": WEATHER_NAMES[weather],
@@ -552,6 +643,7 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
              else f"재입장: 모두 기절하면 {rejoin_delay_s:g}초 뒤 같은 파티로 다시 들어갑니다(사용자가 정한 값)."),
             "날씨 보너스는 내 기술과 보스 기술 모두에 같은 규칙(해당 타입 ×1.2)으로 적용합니다.",
             "박스에 그림자로 표시한 개체는 공격 ×1.2, 방어 ×0.833(게임 전투 설정 값)을 적용합니다. 표시하지 않은 개체는 일반 개체로 계산합니다.",
+            *shadow_notes,
             *(_MEGA_ASSUMPTIONS if include_mega else ["메가진화는 넣지 않았습니다. 켜면 박스에서 메가진화할 수 있는 개체 1마리를 메가진화 상태로 함께 비교합니다."]),
             "친구·파티 파워·다른 트레이너의 메가 보너스는 넣지 않았습니다.",
             f"보스 HP·CP 배율은 {RULESET['version']} 표를 쓰고, 제한 시간 기본값은 앱이 정한 시나리오 값입니다.",

@@ -215,6 +215,37 @@ def mega_reference(boost_types=None) -> Reference:
     return data
 
 
+class ShadowRaidTests(unittest.TestCase):
+    def setUp(self):
+        self.data = reference()
+        self.entries = [entry(1, "물몬"), entry(2, "물몬", level=35.0), entry(3, "풀몬", fast="LEAF_FAST", charged=("BLADE",))]
+
+    def test_enrage_cuts_damage_and_calming_restores_it(self):
+        plain = raid.recommend(self.data, self.entries, "불꽃몬", "5", trainers=6)
+        angry = raid.recommend(self.data, self.entries, "불꽃몬", "5", trainers=6, shadow={})
+        self.assertIsNotNone(angry["shadow"]["enraged_s"])
+        self.assertLess(angry["result"]["damage"]["avg"], plain["result"]["damage"]["avg"])
+        self.assertGreater(angry["shadow"]["comparison"]["damage"], angry["result"]["damage"]["avg"])  # calmed at once
+        calmed = raid.recommend(self.data, self.entries, "불꽃몬", "5", trainers=6, shadow={"calm_after_s": 0})
+        self.assertEqual(calmed["shadow"]["comparison"]["calm_after_s"], None)
+        self.assertTrue(angry["boss"]["shadow"])
+        self.assertTrue(any("그림자 레이드" in a for a in angry["assumptions"]))
+
+    def test_solo_damage_may_never_reach_the_enrage_point(self):
+        solo = raid.recommend(self.data, self.entries[:1], "불꽃몬", "5", shadow={"enrage_at": 0.1})
+        self.assertIsNone(solo["shadow"]["enraged_s"])
+
+    def test_trainers_share_the_boss_hp_and_settings_are_checked(self):
+        alone = raid.recommend(self.data, self.entries, "불꽃몬", "1")
+        crowd = raid.recommend(self.data, self.entries, "불꽃몬", "1", trainers=10)
+        self.assertLess(crowd["result"]["damage"]["avg"], alone["result"]["damage"]["avg"])  # the boss falls sooner
+        self.assertEqual(crowd["trainers"], 10)
+        for kwargs in ({"trainers": 0}, {"trainers": 21}, {"shadow": {"enrage_at": 2}}, {"shadow": {"attack": "x"}},
+                       {"shadow": {}, "tier": "mega"}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(raid.RaidError):
+                raid.recommend(self.data, self.entries, "불꽃몬", **{"tier": "3", **kwargs})
+
+
 class ShortlistTests(unittest.TestCase):
     def test_bulky_candidates_join_the_fast_ones(self):
         def candidate(name, dps, total):

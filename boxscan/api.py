@@ -156,18 +156,25 @@ def create_app(
         species = text("species")
         if not species:
             raise HTTPException(422, "보스 이름을 입력하세요.")
+        trainers = payload.get("trainers", 1)
+        if isinstance(trainers, str) and trainers.strip().isdigit():
+            trainers = int(trainers)
+        shadow = payload.get("shadow")
+        if shadow is not None and not isinstance(shadow, dict):
+            raise HTTPException(422, "그림자 레이드 설정이 올바르지 않습니다.")
+        extra = {"trainers": trainers, "shadow": shadow}
         try:
             result = raid.recommend(
                 data, box.list(), species, text("tier") or "5", form=text("form"), temp=text("temp"),
                 weather=text("weather") or "", time_limit_s=number("time_limit_s"),
                 rejoin_delay_s=number("rejoin_delay_s"), boss_fast=text("boss_fast"),
-                boss_charged=text("boss_charged"), include_mega=payload.get("include_mega") is True)
+                boss_charged=text("boss_charged"), include_mega=payload.get("include_mega") is True, **extra)
             if payload.get("compare_weather") is True:
                 result["weather_comparison"] = raid.compare_weather(
                     data, box.list(), species, text("tier") or "5", form=text("form"), temp=text("temp"),
                     time_limit_s=number("time_limit_s"), rejoin_delay_s=number("rejoin_delay_s"),
                     boss_fast=text("boss_fast"), boss_charged=text("boss_charged"),
-                    include_mega=payload.get("include_mega") is True)
+                    include_mega=payload.get("include_mega") is True, **extra)
         except raid.RaidError as error:
             raise HTTPException(422, str(error)) from None
         result["boss"]["temp_name"] = TEMP_NAMES.get(result["boss"]["temp"])
