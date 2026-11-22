@@ -184,6 +184,20 @@ class BackupApiTests(unittest.TestCase):
                                  headers={"Origin": "http://evil.test"})
         self.assertEqual(cross.status_code, 403)
 
+    def test_add_by_hand_gets_the_next_number_and_a_level(self):
+        before = len(self.box.list())
+        added = self.client.post("/api/pokemon", json={"note": "직접 입력", "values": {
+            "species": "하나몬", "cp": 1500, "max_hp": 120, "iv": {"attack": 15, "defense": 14, "stamina": 13},
+            "fast_move": "기술1번", "charged_moves": ["기술11번"], "nickname": "하나몬09"}})
+        self.assertEqual(added.status_code, 201, added.text)
+        body = added.json()
+        self.assertEqual((body["species"], body["cp_source"], len(self.box.list())), ("하나몬", "manual", before + 1))
+        self.assertTrue(body["code"])
+        detail = self.client.get(f"/api/pokemon/{body['id']}").json()
+        self.assertEqual(detail["revisions"][0]["source"], {"kind": "manual_add", "note": "직접 입력"})
+        self.assertEqual(self.client.post("/api/pokemon", json={"values": {"cp": 100}}).status_code, 422)  # no species
+        self.assertEqual(self.client.post("/api/pokemon", json={"values": {"species": "하나몬", "iv": {"attack": 1}}}).status_code, 422)
+
     def test_patch_edits_with_revision_and_marks_typed_cp(self):
         entry = self.box.list()[0]
         body = {"expected_revision": entry["revision"], "values": {"species": "하나몬", "cp": 150}}

@@ -30,35 +30,37 @@ function revisionItem(revision) {
   return item;
 }
 
+// Edit form for a saved entry; with no entry it adds a Pokémon typed in by hand.
 function editForm(entry, onDone) {
-  const iv = entry.iv ?? {};
-  const moves = entry.moves ?? {};
+  const iv = entry?.iv ?? {};
+  const moves = entry?.moves ?? {};
   const charged = moves.charged ?? [];
   const numeric = { inputmode: "numeric" };
   const message = element("div", { class: "save-message", role: "status" });
-  const submit = element("button", { type: "submit" }, "수정 저장");
+  const submit = element("button", { type: "submit" }, entry ? "수정 저장" : "박스에 추가");
   const cancel = element("button", { type: "button", class: "secondary" }, "취소");
   const form = element("form", { class: "save-form edit-form" },
     element("div", { class: "fields" },
-      field("종", "species", entry.species, { maxlength: "30" }),
-      field("CP", "cp", entry.cp, numeric),
-      field("최대 HP", "max_hp", entry.max_hp, numeric),
+      field("종", "species", entry?.species, { maxlength: "30" }),
+      field("CP", "cp", entry?.cp, numeric),
+      field("최대 HP", "max_hp", entry?.max_hp, numeric),
       field("IV 공격", "iv_attack", iv.attack, numeric),
       field("IV 방어", "iv_defense", iv.defense, numeric),
       field("IV HP", "iv_stamina", iv.stamina, numeric),
       field("노말어택", "fast_move", moves.fast?.name, { maxlength: "30" }),
       field("스페셜어택 1", "charged_1", charged[0]?.name, { maxlength: "30" }),
       field("스페셜어택 2", "charged_2", charged[1]?.name, { maxlength: "30" }),
-      field("게임 별명", "nickname", entry.nickname, { maxlength: "30" })),
+      field("게임 별명", "nickname", entry?.nickname, { maxlength: "30" })),
     element("div", { class: "checks" },
-      checkbox("이로치 *", "shiny", entry.shiny === true),
-      checkbox("반짝반짝 포켓몬 ♣", "lucky", entry.lucky === true),
-      checkbox("배경 ◆", "background", entry.background === true),
-      checkbox("그림자", "shadow", entry.shadow === true)),
-    maxStateSelect(entry.max_state ?? ""),
-    element("div", { class: "field wide" }, maxMovesEditor(entry.max_moves ?? [])),
-    field("수정 메모 (선택)", "note", "", { maxlength: "200" }),
-    element("p", { class: "muted" }, "비운 칸은 값을 지웁니다. 레벨과 기술 * 표시는 저장할 때 다시 계산합니다. 이전 값은 이력에 남습니다."),
+      checkbox("이로치 *", "shiny", entry?.shiny === true),
+      checkbox("반짝반짝 포켓몬 ♣", "lucky", entry?.lucky === true),
+      checkbox("배경 ◆", "background", entry?.background === true),
+      checkbox("그림자", "shadow", entry?.shadow === true)),
+    maxStateSelect(entry?.max_state ?? ""),
+    element("div", { class: "field wide" }, maxMovesEditor(entry?.max_moves ?? [])),
+    field(entry ? "수정 메모 (선택)" : "메모 (선택)", "note", "", { maxlength: "200" }),
+    element("p", { class: "muted" }, entry ? "비운 칸은 값을 지웁니다. 레벨과 기술 * 표시는 저장할 때 다시 계산합니다. 이전 값은 이력에 남습니다."
+      : "종은 꼭 입력하세요. 레벨과 기술 * 표시는 저장할 때 종·CP·최대 HP·IV로 계산합니다. 관리 번호는 그 종의 다음 번호가 붙습니다."),
     message,
     element("div", { class: "actions" }, submit, cancel));
   cancel.addEventListener("click", () => onDone(false));
@@ -69,11 +71,11 @@ function editForm(entry, onDone) {
     submit.disabled = true;
     message.replaceChildren();
     try {
-      await jsonResponse(await fetch(`/api/pokemon/${entry.id}`, {
-        method: "PATCH",
+      const added = await jsonResponse(await fetch(entry ? `/api/pokemon/${entry.id}` : "/api/pokemon", {
+        method: entry ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          expected_revision: entry.revision,
+          expected_revision: entry?.revision,
           note: get("note") || null,
           values: {
             species: get("species") || null,
@@ -92,7 +94,7 @@ function editForm(entry, onDone) {
           },
         }),
       }));
-      onDone(true);
+      onDone(true, added);
     } catch (error) {
       message.textContent = error.status === 409 ? `${error.message} 목록을 새로 불러옵니다.` : error.message;
       if (error.status === 409) setTimeout(() => load(), 1500);
@@ -345,6 +347,25 @@ async function load() {
     target.scrollIntoView({ block: "center" });
   }
 }
+
+// Add a Pokémon by hand (without a scan).
+const addButton = document.querySelector("#add-button");
+const addArea = document.querySelector("#add-area");
+addButton.addEventListener("click", () => {
+  if (addArea.childElementCount) {
+    addArea.replaceChildren();
+    return;
+  }
+  addArea.replaceChildren(element("h3", {}, "포켓몬 직접 추가"), editForm(null, async (saved, added) => {
+    addArea.replaceChildren();
+    if (saved && added) {
+      status.textContent = `${added.species} ${added.code}번으로 추가했습니다.`;
+      location.hash = added.id;
+      await load();
+    }
+  }));
+  addArea.querySelector("input[name=species]")?.focus();
+});
 
 // Backups
 const backupList = document.querySelector("#backup-list");

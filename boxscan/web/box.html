@@ -32,8 +32,12 @@
             <option value="species">종 이름순</option>
           </select></label>
       </div>
-      <a class="button" href="/api/exports/box.xlsx" download>Excel로 내보내기</a>
+      <div class="actions toolbar-right">
+        <button type="button" id="add-button" class="secondary">+ 직접 추가</button>
+        <a class="button" href="/api/exports/box.xlsx" download>Excel로 내보내기</a>
+      </div>
     </div>
+    <div id="add-area" class="add-area"></div>
     <details class="backup">
       <summary>백업과 복원</summary>
       <form id="backup-form">

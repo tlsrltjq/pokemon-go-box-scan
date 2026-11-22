@@ -196,6 +196,20 @@ class BoxStore:
         return {"pokemon_id": row["id"], "code": code(row["code_number"]), "species": json.loads(row["data"]).get("species"),
                 "revision": row["approved_revision"], "deleted": row["deleted_at"] is not None}
 
+    def add(self, values: dict, note: str | None = None) -> dict:
+        """A new entry typed in by hand (no scan). It gets the next number of its species."""
+        stamp = now()
+        with self._write() as db:
+            pokemon_id = str(uuid.uuid4())
+            after = merge({}, values)
+            db.execute("INSERT INTO pokemon (id, revision, data, created_at, updated_at) VALUES (?, 1, ?, ?, ?)",
+                       (pokemon_id, json.dumps(after, ensure_ascii=False), stamp, stamp))
+            self._give_code(db, pokemon_id, after.get("species"))
+            db.execute("INSERT INTO revisions VALUES (?, 1, 'created', NULL, ?, ?, ?)",
+                       (pokemon_id, json.dumps(after, ensure_ascii=False),
+                        json.dumps({"kind": "manual_add", "note": note}, ensure_ascii=False), stamp))
+            return self._entry(db.execute(f"{SELECT} WHERE p.id = ?", (pokemon_id,)).fetchone())
+
     def approve(self, scan_id: str, individual: int, values: dict, source: dict,
                 target: str | None = None, expected_revision: int | None = None) -> dict:
         """Create a new entry, or update `target` when given. Returns the stored entry.

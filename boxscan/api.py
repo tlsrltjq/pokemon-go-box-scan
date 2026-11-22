@@ -421,6 +421,25 @@ def create_app(
     def pokemon_list(species: str | None = None):
         return {"pokemon": box.list(species)}
 
+    @app.post("/api/pokemon", status_code=201)
+    async def pokemon_add(request: Request):
+        payload = await _json_body(request)
+        try:
+            data = reference.load(store.root)
+        except (OSError, ValueError, KeyError):
+            data = None
+        try:
+            values = review.normalize(payload.get("values"), data)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+        if not values.get("species"):
+            raise HTTPException(422, "종 이름을 입력하세요.")
+        note = payload.get("note")
+        if note is not None and (not isinstance(note, str) or len(note) > 200):
+            raise HTTPException(422, "메모는 200자 이하로 적어 주세요.")
+        values["cp_source"] = "manual" if values.get("cp") else None
+        return box.add(values, note or None)
+
     @app.get("/api/pokemon/{pokemon_id}")
     def pokemon_detail(pokemon_id: UUID):
         entry = box.get(str(pokemon_id))
