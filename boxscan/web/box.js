@@ -4,6 +4,7 @@ const search = document.querySelector("#search");
 const sort = document.querySelector("#sort");
 const CHANGES = { created: "새로 저장", updated: "갱신", deleted: "박스에서 제거" };
 let entries = [];
+let candies = {};
 
 function moveLine(label, move) {
   if (!move) return null;
@@ -109,7 +110,7 @@ function editForm(entry, onDone) {
 // (edit form, history, notes) in a row right below.
 const COLUMNS = [
   ["species", "종·번호"], ["cp", "CP"], ["iv", "IV"], ["level", "레벨"], ["hp", "최대 HP"],
-  ["fast", "노말어택"], ["charged", "스페셜어택"], ["state", "상태"], ["nickname", "별명"], ["recent", "갱신"], [null, ""],
+  ["fast", "노말어택"], ["charged", "스페셜어택"], ["candy", "사탕 / XL"], ["state", "상태"], ["nickname", "별명"], ["recent", "갱신"], [null, ""],
 ];
 const opened = new Set();
 
@@ -258,6 +259,7 @@ function entryRows(entry) {
     element("td", {}, moveName(moves.fast)),
     element("td", {}, ...(moves.charged?.length ? moves.charged.flatMap((move, i) => [i ? ", " : null, moveName(move)]).filter(Boolean)
       : [element("span", { class: "muted" }, "-")])),
+    element("td", { class: "num", title: entry.candy_family ? `${entry.candy_family}의 사탕` : "" }, candyCell(entry)),
     element("td", {}, stateChips(entry)),
     element("td", {}, entry.nickname ?? "", hasCode(entry) || !entry.code ? null
       : element("span", { class: "muted", title: "추천 별명" }, ` → ${entry.species ?? ""}${entry.code}`)),
@@ -271,6 +273,12 @@ function entryRows(entry) {
   row.addEventListener("click", toggle);
   row.addEventListener("keydown", event => { if (event.key === "Enter") toggle(); });
   return isOpen ? [row, detailRow(entry)] : [row];
+}
+
+function candyCell(entry) {
+  const found = candies[entry.candy_family];
+  if (!found || (found.candy == null && found.xl == null)) return element("span", { class: "muted" }, "-");
+  return `${found.candy ?? "-"} / ${found.xl ?? "-"}`;
 }
 
 function tableHead() {
@@ -322,6 +330,7 @@ const SORTS = {
   iv: (a, b) => (b.iv ? ivPercent(b.iv) : -1) - (a.iv ? ivPercent(a.iv) : -1) || (b.cp ?? -1) - (a.cp ?? -1),
   level: (a, b) => levelValue(b) - levelValue(a) || (b.cp ?? -1) - (a.cp ?? -1),
   hp: (a, b) => (b.max_hp ?? -1) - (a.max_hp ?? -1),
+  candy: (a, b) => (candies[b.candy_family]?.candy ?? -1) - (candies[a.candy_family]?.candy ?? -1),
   species: (a, b) => (a.species ?? "").localeCompare(b.species ?? "", "ko") || (a.code ?? "").localeCompare(b.code ?? "", "ko", { numeric: true }),
 };
 
@@ -336,7 +345,11 @@ function render() {
 }
 
 async function load() {
-  entries = (await jsonResponse(await fetch("/api/pokemon"))).pokemon;
+  const [pokemon, resources] = await Promise.all([
+    fetch("/api/pokemon").then(jsonResponse), fetch("/api/candies").then(jsonResponse)]);
+  entries = pokemon.pokemon;
+  candies = resources.candies;
+  showCandies(resources);
   render();
   const id = location.hash.slice(1);
   if (id && entries.some(entry => entry.id === id)) {
@@ -346,6 +359,43 @@ async function load() {
     target.classList.add("highlight");
     target.scrollIntoView({ block: "center" });
   }
+}
+
+// Candy per family and the account's stardust, editable by hand.
+function showCandies(resources) {
+  const panel = document.querySelector("#candy-panel");
+  const families = Object.entries(resources.candies);
+  panel.querySelector(".summary-meta").textContent = `${families.length}계열` +
+    (resources.stardust ? ` · 별의모래 ${resources.stardust.value.toLocaleString()}` : "");
+  const body = panel.querySelector("tbody");
+  body.replaceChildren(...families.map(([family, values]) => {
+    const input = (name, value) => element("input", { name, value: value ?? "", inputmode: "numeric", class: "candy-input",
+      "aria-label": `${family} ${name}` });
+    const save = element("button", { type: "button", class: "secondary" }, "저장");
+    const row = element("tr", {},
+      element("th", { scope: "row" }, family),
+      element("td", {}, input("candy", values.candy)),
+      element("td", {}, input("xl", values.xl)),
+      element("td", {}, input("energy", values.energy), values.energy_kind ? ` ${values.energy_kind}` : ""),
+      element("td", { class: "muted" }, new Date(values.updated_at).toLocaleDateString("ko-KR")),
+      element("td", {}, save));
+    save.addEventListener("click", async () => {
+      const get = name => row.querySelector(`input[name=${name}]`).value.trim();
+      save.disabled = true;
+      try {
+        await jsonResponse(await fetch(`/api/candies/${encodeURIComponent(family)}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ candy: get("candy"), xl: get("xl"), energy: get("energy"), energy_kind: values.energy_kind }),
+        }));
+        await load();
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        save.disabled = false;
+      }
+    });
+    return row;
+  }));
 }
 
 // Add a Pokémon by hand (without a scan).

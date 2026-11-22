@@ -415,11 +415,39 @@ def create_app(
                                 payload.get("expected_revision"))
         except Conflict as error:
             raise HTTPException(409, str(error)) from None
+        resources = dict(candidate.get("resources") or {})
+        if resources and not entry.get("duplicate"):
+            if resources.get("family") and values.get("species") and data:
+                # Saved with a corrected species: the candy belongs to that species' family.
+                expected = data.candy_name(values["species"])
+                resources["family"] = resources["family"] if resources["family"] == expected else expected
+            box.record_resources(resources, {"scan_id": str(scan_id), "individual": index})
         return entry
+
+    def _with_family(entries: list[dict]) -> list[dict]:
+        try:
+            data = reference.load(store.root)
+        except (OSError, ValueError, KeyError):
+            data = None
+        for entry in entries:
+            entry["candy_family"] = data.candy_name(entry.get("species")) if data else None
+        return entries
 
     @app.get("/api/pokemon")
     def pokemon_list(species: str | None = None):
-        return {"pokemon": box.list(species)}
+        return {"pokemon": _with_family(box.list(species))}
+
+    @app.get("/api/candies")
+    def candy_list():
+        return box.candies()
+
+    @app.patch("/api/candies/{family}")
+    async def candy_edit(family: str, request: Request):
+        payload = await _json_body(request)
+        try:
+            return box.set_candy(family, payload)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
 
     @app.post("/api/pokemon", status_code=201)
     async def pokemon_add(request: Request):
@@ -644,6 +672,7 @@ def _analysis(folder: Path, scan_id: str, status: str | None, error: str | None)
             "moves": individual.get("moves"),
             "code": individual.get("code"),
             "nickname": individual.get("nickname"),
+            "resources": individual.get("resources"),
         })
     summary["unassigned"] = len(result.get("unassigned_appraisals", []))
     summary["recognizer"] = result.get("recognizer")

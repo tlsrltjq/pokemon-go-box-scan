@@ -372,6 +372,9 @@ function candidateRow(individual, index) {
       individual.code_match ? element("span", { class: individual.code_match.status === "match" ? "muted" : "warn-text" },
         CODE_NOTES[individual.code_match.status](individual.code_match)) : null,
       values.mega_move ? element("span", { class: "muted" }, `메가진화 추가 ${values.mega_move} 함께 저장`) : null,
+      individual.resources?.candy != null || individual.resources?.xl != null
+        ? element("span", { class: "muted", title: "저장할 때 이 계열의 사탕 기록도 갱신합니다" },
+          formatCandy(individual.resources.family, individual.resources)) : null,
       values.shadow_evidence.length ? element("span", { class: "muted" }, `그림자 단서: ${values.shadow_evidence.join(", ")}`) : null,
       detailToggle(panel)),
     diff, message);

@@ -175,6 +175,50 @@ def nickname_code(nickname: str, species: str | None = None) -> int | None:
     return int(match[1]) if match and int(match[1]) > 0 else None
 
 
+# Resources on the detail screen: a number above its label ("20" over "그란돈의 사탕"). OCR often reads
+# 사탕 as 사팅/사당/사항 and puts an icon character in front of the number.
+CANDY_LABEL = re.compile(r"^([가-힣]{1,8}?)\s*의\s*사[탕팅당항]\s*(XL)?$")
+ENERGY_LABEL = re.compile(r"^([가-힣]{1,8}?)\s*(메가|원시)\s*에너지$")
+STARDUST_LABEL = re.compile(r"^[별벌빌변]의\s*모[래레게계]$")
+AMOUNT = re.compile(r"^[^0-9]{0,2}\s*(\d{1,3}(?:,\d{3})*|\d+)$")
+
+
+def _amount_above(label: dict, lines: list[dict]) -> int | None:
+    lx, ly, lw, lh = label["box"]
+    centre = lx + lw / 2
+    best = None
+    for line in lines:
+        x, y, w, h = line["box"]
+        gap = ly - (y + h)
+        match = AMOUNT.match(line["text"].strip())
+        if match and -2 <= gap <= 3 * max(lh, 1) and abs(x + w / 2 - centre) <= max(lw, 60):
+            if best is None or gap < best[0]:
+                best = (gap, int(match[1].replace(",", "")))
+    return best[1] if best else None
+
+
+def parse_resources(lines: list[dict]) -> dict:
+    """Candy, candy XL and mega/primal energy of the family, and the account's stardust."""
+    found: dict = {}
+    for line in lines:
+        text = line["text"].strip()
+        if match := CANDY_LABEL.match(text):
+            amount = _amount_above(line, lines)
+            if amount is not None:
+                found.setdefault("family", match[1])
+                found["xl" if match[2] else "candy"] = amount
+        elif match := ENERGY_LABEL.match(text):
+            amount = _amount_above(line, lines)
+            if amount is not None:
+                found.setdefault("family", match[1])
+                found["energy"], found["energy_kind"] = amount, match[2]
+        elif STARDUST_LABEL.match(text):
+            amount = _amount_above(line, lines)
+            if amount is not None:
+                found["stardust"] = amount
+    return found
+
+
 def _cp_candidates(lines: list[dict], width: int | None) -> list[int]:
     if not lines:
         return []
@@ -205,6 +249,8 @@ def parse_frame(lines: list[dict], width: int | None = None) -> dict:
         found["code"] = code
     if candidates := _cp_candidates(lines, width):
         found["cp_candidates"] = candidates
+    if resources := parse_resources(lines):
+        found["resources"] = resources
     for text in texts:
         if "cp" not in found and (match := CP.search(text)):
             found["cp"] = int(match[1])
@@ -312,8 +358,19 @@ def _summarize(group: list[dict]) -> dict:
         "background": _seen(group, "background"),
         "mega_timer": _seen(group, "mega_timer"),
         "code": vote([f["code"] for f in group if "code" in f]),
+        "resources": _resources(group),
         "nickname": vote([f["nickname"] for f in group if "nickname" in f]),
     }
+
+
+def _resources(group: list[dict]) -> dict | None:
+    """The most often read candy, XL, energy and stardust across the group's frames."""
+    found = {}
+    for key in ("family", "candy", "xl", "energy", "energy_kind", "stardust"):
+        values = [f["resources"][key] for f in group if key in f.get("resources", {})]
+        if values:
+            found[key] = vote(values)["value"]
+    return found or None
 
 
 def _seen(group: list[dict], key: str) -> dict:

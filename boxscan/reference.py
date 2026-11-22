@@ -94,6 +94,16 @@ class Reference:
     # Mega / primal raid boosts: {"same_type", "different_type", "special_move": [by mega level],
     #  "types": {pokemon id: boosted types} for primal-style boosts that differ from the Pokémon's types}
     temp_boosts: dict | None = None
+    # Candy family: pokemon id -> id of the Pokémon the candy is named after (마기라스 -> 애버라스)
+    families: dict[int, int] | None = None
+
+    def candy_name(self, korean_name: str | None) -> str | None:
+        """The species whose name the candy carries: 마기라스 -> 애버라스."""
+        pokemon_id = self.korean_names.get((korean_name or "").strip())
+        base = (self.families or {}).get(pokemon_id, pokemon_id) if pokemon_id else None
+        if base is None:
+            return None
+        return next((name for name, number in self.korean_names.items() if number == base), None)
 
     def forms(self, korean_name: str) -> list[BaseStats]:
         pokemon_id = self.korean_names.get(korean_name.strip())
@@ -158,11 +168,26 @@ def parse(files: dict[str, bytes], version: str = "", fetched_at: str = "") -> R
     types, move_stats, type_chart, weather, battle = _battle_data(master)
     max_moves, max_move_by_type, species_max_moves = _max_data(master, files["move_names.csv"])
     temp_boosts = _temp_boosts(master, enum_ids)
+    families = _families(master, enum_ids)
     if len(type_chart) != 18 or not move_stats or "energyDeltaPerHealthLost" not in battle:
         raise ValueError("전투 계산용 데이터(상성·기술·전투 설정)를 읽지 못했습니다.")
     return Reference(version, fetched_at, stats, cpm, names, notes, move_names, move_power, learnsets,
                      temp_stats, form_changes, mega_moves, types, move_stats, type_chart, weather, battle,
-                     max_moves, max_move_by_type, species_max_moves, temp_boosts)
+                     max_moves, max_move_by_type, species_max_moves, temp_boosts, families)
+
+
+def _families(master: list[dict], enum_ids: dict[str, int]) -> dict[int, int]:
+    """familyId FAMILY_LARVITAR on 마기라스 -> the id of LARVITAR (애버라스), whose name the candy carries."""
+    families: dict[int, int] = {}
+    for item in master:
+        match = TEMPLATE.match(item["templateId"])
+        settings = item.get("data", {}).get("pokemonSettings")
+        family = (settings or {}).get("familyId")
+        if match and family:
+            base = enum_ids.get(str(family).removeprefix("FAMILY_"))
+            if base:
+                families.setdefault(int(match[1]), base)
+    return families
 
 
 def _temp_boosts(master: list[dict], enum_ids: dict[str, int]) -> dict:
@@ -488,6 +513,7 @@ def to_json(reference: Reference) -> dict:
         "max_move_by_type": reference.max_move_by_type,
         "species_max_moves": reference.species_max_moves,
         "temp_boosts": reference.temp_boosts,
+        "families": {str(k): v for k, v in (reference.families or {}).items()},
     }
 
 
@@ -507,7 +533,8 @@ def from_json(data: dict) -> Reference:
                      {int(k): v for k, v in (data.get("mega_moves") or {}).items()},
                      data.get("types"), data.get("move_stats"), data.get("type_chart"),
                      data.get("weather"), data.get("battle"), data.get("max_moves"),
-                     data.get("max_move_by_type"), data.get("species_max_moves"), data.get("temp_boosts"))
+                     data.get("max_move_by_type"), data.get("species_max_moves"), data.get("temp_boosts"),
+                     {int(k): v for k, v in (data.get("families") or {}).items()})
 
 
 def rebuild(data_dir: Path) -> dict:

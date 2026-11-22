@@ -328,3 +328,7 @@ main.wide { max-width: 96rem; }
 .toolbar-right { margin-top: 0; align-items: center; }
 .add-area:not(:empty) { background: var(--surface); border: 1px solid var(--border); border-radius: 1rem; padding: .9rem 1.1rem; margin-top: 1rem; }
 .add-area h3 { margin: 0 0 .3rem; font-size: 1.05rem; }
+
+.candy-input { width: 5.5rem; margin: 0; font: inherit; padding: .25rem .4rem; border: 1px solid var(--border); border-radius: .4rem; background: var(--surface); color: var(--text); }
+.candy-table td, .candy-table th { vertical-align: middle; }
+.candy-table button { min-height: 2rem; padding: .2rem .6rem; font-size: .82rem; }

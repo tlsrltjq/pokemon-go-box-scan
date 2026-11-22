@@ -110,6 +110,18 @@ class BoxStoreTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 self.box.set_code(a["id"], bad, self.box.get(a["id"])["revision"])
 
+    def test_candy_keeps_unread_values_and_can_be_corrected(self):
+        self.box.record_resources({"family": "애버라스", "candy": 98, "xl": 12, "stardust": 1_180_103}, {"scan_id": "a"})
+        self.box.record_resources({"family": "애버라스", "candy": 120}, {"scan_id": "b"})  # XL not read this time
+        found = self.box.candies()
+        self.assertEqual((found["candies"]["애버라스"]["candy"], found["candies"]["애버라스"]["xl"]), (120, 12))
+        self.assertEqual(found["stardust"]["value"], 1_180_103)
+        fixed = self.box.set_candy("애버라스", {"candy": "130", "xl": "", "energy": None})
+        self.assertEqual((fixed["candy"], fixed["xl"]), (130, None))
+        for bad in ({"candy": -1}, {"candy": "많음"}, {"energy_kind": "기타"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.box.set_candy("애버라스", bad)
+
     def test_box_from_before_per_species_codes_is_numbered_on_open(self):
         import sqlite3
         for n, species in enumerate(("마기라스", "망나뇽", "마기라스")):
@@ -321,6 +333,19 @@ class ApprovalApiTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/pokemon/{first['id']}").json()["code"], "02")
         self.assertEqual(self.client.post(url, json={"number": 0, "expected_revision": done.json()["revision"]}).status_code, 422)
         self.assertEqual(self.client.post(url, json={"number": 5}).status_code, 422)
+
+    def test_saving_records_the_candy_read_on_screen(self):
+        path = self.store.root / self.scan_id / "analysis.json"
+        result = json.loads(path.read_text(encoding="utf-8"))
+        result["individuals"][0]["resources"] = {"family": "하나몬", "candy": 33, "xl": 6, "stardust": 1_189_489}
+        path.write_text(json.dumps(result), encoding="utf-8")
+        self.assertEqual(self.approve(0, {"values": {"species": "하나몬", "cp": 100}}).status_code, 200)
+        candies = self.client.get("/api/candies").json()
+        self.assertEqual((candies["candies"]["하나몬"]["candy"], candies["stardust"]["value"]), (33, 1_189_489))
+        edited = self.client.patch("/api/candies/하나몬", json={"candy": 40, "xl": 6})
+        self.assertEqual((edited.status_code, edited.json()["candy"]), (200, 40))
+        self.assertEqual(self.client.patch("/api/candies/하나몬", json={"candy": "x"}).status_code, 422)
+        self.assertIn("candy_family", self.client.get("/api/pokemon").json()["pokemon"][0])
 
     def test_rejects_invalid_requests(self):
         self.assertEqual(self.approve(5, {"values": {"cp": 100}}).status_code, 404)

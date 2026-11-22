@@ -129,6 +129,16 @@ class FieldParserTests(unittest.TestCase):
         shield = boxed(("맥스기술", 20, 400, 60, 12), ("레벨 1", 30, 425, 30, 10), ("거수탄", 20, 440, 60, 12))
         self.assertEqual(parse_max_moves(shield), [{"name": "거수탄", "level": 1, "locked": False}])
 
+    def test_candy_xl_energy_and_stardust_are_read_from_numbers_above_labels(self):
+        lines = boxed(("1,573,429", 96, 124, 117, 28), ("별의모래", 140, 160, 60, 18),
+                      ("•20", 340, 124, 40, 28), ("그란든의 사당", 320, 160, 110, 18),
+                      ("12", 120, 205, 40, 28), ("그란돈의 사탕XL", 95, 240, 120, 18),
+                      ("0", 350, 205, 20, 28), ("그란돈 원시에너지", 310, 240, 130, 18),
+                      ("강화", 60, 300, 40, 18), ("₩ 5,000", 200, 300, 70, 18))
+        self.assertEqual(parse_frame(lines)["resources"], {"stardust": 1573429, "family": "그란든", "candy": 20,
+                                                           "xl": 12, "energy": 0, "energy_kind": "원시"})
+        self.assertNotIn("resources", parse_frame(boxed(("그란돈의 사탕", 320, 160, 110, 18))))  # no number above
+
     def test_unlock_button_misread_is_not_a_move(self):
         lines = MOVE_SCREEN + boxed(("해바", 77, 530, 24, 11), ("100", 290, 530, 25, 11))
         self.assertNotIn("해바", [m["name"] for m in parse_frame(lines, 332)["moves"]])

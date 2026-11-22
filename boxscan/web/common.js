@@ -92,6 +92,16 @@ function readMaxMoves(form) {
   }).filter(Boolean);
 }
 
+// "애버라스 사탕 98 · XL 12 · 원시에너지 0"
+function formatCandy(family, values) {
+  if (!values) return "";
+  const parts = [];
+  if (values.candy != null) parts.push(`사탕 ${values.candy.toLocaleString()}`);
+  if (values.xl != null) parts.push(`XL ${values.xl.toLocaleString()}`);
+  if (values.energy != null) parts.push(`${values.energy_kind ?? ""}에너지 ${values.energy.toLocaleString()}`);
+  return parts.length ? `${family ? `${family} ` : ""}${parts.join(" · ")}` : "";
+}
+
 function formatBytes(bytes) {
   return bytes >= 1024 ** 2 ? `${(bytes / 1024 ** 2).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`;
 }

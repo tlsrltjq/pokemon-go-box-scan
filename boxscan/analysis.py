@@ -3,6 +3,7 @@
 The result is written to analysis.json in the scan folder as candidates for review.
 It does not create or change approved box entries.
 """
+import difflib
 import json
 import subprocess
 from collections.abc import Callable
@@ -113,6 +114,16 @@ def apply_reference(individual: dict, data: reference.Reference | None) -> None:
         number = nickname_code(nickname, resolved["species"])
         individual["code"] = ({**(individual.get("code") or {"votes": 1, "observations": 1}), "value": f"{number:02d}"}
                               if number else None)
+    # The candy label names the family ("애버라스의 사탕" on 마기라스); OCR may garble it, so prefer the
+    # family of the species read elsewhere when the two look alike.
+    resources = individual.get("resources")
+    if resources and resources.get("family") and data:
+        expected = data.candy_name(resolved["species"])
+        read = resources["family"]
+        if expected and (read == expected or difflib.SequenceMatcher(None, read, expected).ratio() >= 0.5):
+            resources["family"] = expected
+        elif read not in data.korean_names:
+            resources["family"] = None
     individual["state"] = {
         "screen_name": screen_name,
         "temp_evolution": temp,

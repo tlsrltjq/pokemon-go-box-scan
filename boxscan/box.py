@@ -48,6 +48,20 @@ CREATE TABLE IF NOT EXISTS codes (
     current INTEGER NOT NULL,  -- 1 for the entry's code, 0 for a reserved earlier one
     PRIMARY KEY (species, number)
 );
+CREATE TABLE IF NOT EXISTS candies (
+    family TEXT PRIMARY KEY,  -- the species the candy is named after: 애버라스 for 마기라스
+    candy INTEGER,
+    xl INTEGER,
+    energy INTEGER,
+    energy_kind TEXT,  -- 메가 or 원시
+    updated_at TEXT NOT NULL,
+    source TEXT
+);
+CREATE TABLE IF NOT EXISTS account (
+    key TEXT PRIMARY KEY,  -- stardust
+    value INTEGER,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS approvals (
     scan_id TEXT NOT NULL,
     individual INTEGER NOT NULL,
@@ -183,6 +197,54 @@ class BoxStore:
             "updated_at": row["updated_at"],
             **data,
         }
+
+    def record_resources(self, resources: dict, source: dict) -> None:
+        """Keep the latest candy, XL, energy and stardust read on screen. A value that was not read
+        keeps the saved one."""
+        stamp = now()
+        with self._write() as db:
+            family = resources.get("family")
+            if family:
+                old = db.execute("SELECT * FROM candies WHERE family = ?", (family,)).fetchone()
+                pick = lambda key: resources.get(key) if resources.get(key) is not None else (old[key] if old else None)
+                db.execute("INSERT OR REPLACE INTO candies VALUES (?, ?, ?, ?, ?, ?, ?)",
+                           (family, pick("candy"), pick("xl"), pick("energy"), pick("energy_kind"), stamp,
+                            json.dumps(source, ensure_ascii=False)))
+            if resources.get("stardust") is not None:
+                db.execute("INSERT OR REPLACE INTO account VALUES ('stardust', ?, ?)", (resources["stardust"], stamp))
+
+    def set_candy(self, family: str, values: dict) -> dict:
+        """Correct a family's candy by hand; every field is replaced (empty clears it)."""
+        family = (family or "").strip()
+        if not family or len(family) > 20:
+            raise ValueError("사탕 이름을 확인하세요.")
+        clean = {}
+        for key in ("candy", "xl", "energy"):
+            value = values.get(key)
+            if value in (None, ""):
+                clean[key] = None
+            elif isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 9_999_999:
+                clean[key] = value
+            elif isinstance(value, str) and value.strip().isdigit() and int(value) <= 9_999_999:
+                clean[key] = int(value)
+            else:
+                raise ValueError("사탕 수는 0 이상의 숫자로 입력하세요.")
+        kind = values.get("energy_kind")
+        if kind not in (None, "", "메가", "원시"):
+            raise ValueError("에너지 종류가 올바르지 않습니다.")
+        with self._write() as db:
+            db.execute("INSERT OR REPLACE INTO candies VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (family, clean["candy"], clean["xl"], clean["energy"], kind or None, now(),
+                        json.dumps({"kind": "manual_edit"})))
+        return self.candies()["candies"][family]
+
+    def candies(self) -> dict:
+        with self._read() as db:
+            rows = db.execute("SELECT * FROM candies ORDER BY family").fetchall()
+            dust = db.execute("SELECT * FROM account WHERE key = 'stardust'").fetchone()
+        return {"candies": {row["family"]: {key: row[key] for key in ("candy", "xl", "energy", "energy_kind", "updated_at")}
+                            for row in rows},
+                "stardust": {"value": dust["value"], "updated_at": dust["updated_at"]} if dust else None}
 
     def saved_counts(self) -> dict[str, int]:
         """How many candidates of each scan were saved to the box (removed entries included)."""
