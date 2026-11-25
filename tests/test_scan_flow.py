@@ -5,18 +5,40 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import struct
 import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
+from boxscan import backup
 from boxscan.api import create_app
 from boxscan.store import JobStore
 from boxscan.video import run_next
 
 FFMPEG = shutil.which(os.environ.get("BOXSCAN_FFMPEG", "ffmpeg"))
+
+
+def has_encoder(name: str) -> bool:
+    if not FFMPEG:
+        return False
+    listed = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=20)
+    return f" {name} " in listed.stdout
+
+
+def jpeg_size(data: bytes) -> tuple[int, int]:
+    """Width and height from the first start-of-frame marker."""
+    index = 2
+    while index < len(data):
+        marker, length = data[index + 1], struct.unpack(">H", data[index + 2:index + 4])[0]
+        if 0xC0 <= marker <= 0xC3:
+            height, width = struct.unpack(">HH", data[index + 5:index + 9])
+            return width, height
+        index += 2 + length
+    raise ValueError("no SOF marker")
 
 
 class ScanFlowTests(unittest.TestCase):
@@ -179,3 +201,66 @@ class ScanFlowTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertTrue(result["error"])
         self.assertEqual(result["frames"], [])
+
+    @unittest.skipUnless(has_encoder("libx265"), "FFmpeg without libx265")
+    def test_iphone_original_portrait_hevc_mov_is_accepted(self):
+        # Same container, codec and aspect ratio as an iPhone's own screen recording (synthetic content).
+        sample = self.root / "IMG_0001.MOV"
+        subprocess.run(
+            [FFMPEG, "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1170x2532:r=30", "-t", "3",
+             "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error",
+             "-tag:v", "hvc1", "-pix_fmt", "yuv420p", str(sample)],
+            check=True, timeout=120,
+        )
+        response = self.upload(sample.name, sample.read_bytes())
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(run_next(self.store, FFMPEG))
+        result = self.client.get(f"/api/scans/{response.json()['id']}").json()
+        self.assertEqual(result["status"], "ready", result)
+        self.assertIsNone(result["notice"])
+        self.assertEqual(len(result["frames"]), 3)
+        # Review frames keep the portrait shape at the size the IV and OCR rules were tuned on.
+        self.assertEqual(jpeg_size(self.client.get(result["frames"][0]).content), (332, 720))
+
+    @unittest.skipUnless(FFMPEG, "FFmpeg not installed")
+    def test_video_longer_than_limit_keeps_first_part_and_says_so(self):
+        long_sample = self.root / "long.mp4"
+        subprocess.run(
+            [FFMPEG, "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=96x128:r=12",
+             "-t", "5", "-c:v", "mpeg4", str(long_sample)],
+            check=True, timeout=20,
+        )
+        with mock.patch("boxscan.video.MAX_VIDEO_SECONDS", 3), mock.patch("boxscan.video.MAX_FRAMES", 3):
+            long_id = self.upload("long.mp4", long_sample.read_bytes()).json()["id"]
+            self.assertTrue(run_next(self.store, FFMPEG))
+            fits_id = self.upload("fits.mp4", self.make_sample()).json()["id"]  # exactly 3 seconds
+            self.assertTrue(run_next(self.store, FFMPEG))
+        long_scan = self.client.get(f"/api/scans/{long_id}").json()
+        self.assertEqual(long_scan["status"], "ready")
+        self.assertIsNone(long_scan["error"])
+        self.assertEqual(len(long_scan["frames"]), 3)
+        self.assertIn("나눠서", long_scan["notice"])
+        fits = self.client.get(f"/api/scans/{fits_id}").json()
+        self.assertEqual(len(fits["frames"]), 3)
+        self.assertIsNone(fits["notice"])
+
+    @unittest.skipUnless(FFMPEG, "FFmpeg not installed")
+    def test_more_than_99_iv_evidence_images_stay_reachable(self):
+        scan_id = self.upload("샘플.mp4", self.make_sample()).json()["id"]
+
+        def fake_analyzer(analyzed_id):
+            folder = self.store.root / analyzed_id
+            (folder / "iv-100.jpg").write_bytes((folder / "frame-001.jpg").read_bytes())
+            window = {"start_seconds": 1, "end_seconds": 2, "stable_seconds": 1.0,
+                      "iv": {"attack": 15, "defense": 15, "stamina": 15}, "evidence": "iv-100.jpg"}
+            individual = {"frames": [1, 2], "start_seconds": 0, "end_seconds": 3,
+                          "cp": None, "max_hp": None, "species": None, "appraisals": [window]}
+            (folder / "analysis.json").write_text(json.dumps({
+                "individuals": [individual], "unassigned_appraisals": [], "frames": []}), encoding="utf-8")
+
+        self.assertTrue(run_next(self.store, FFMPEG, fake_analyzer))
+        (individual,) = self.client.get(f"/api/scans/{scan_id}").json()["analysis"]["individuals"]
+        link = individual["appraisals"][0]["evidence"]
+        self.assertEqual(link, f"/api/scans/{scan_id}/evidence/100")
+        self.assertEqual(self.client.get(link).headers["Content-Type"], "image/jpeg")
+        self.assertTrue(any(pattern.match(f"scans/{scan_id}/iv-100.jpg") for pattern in backup.MEMBERS))

@@ -20,7 +20,7 @@ from .box import BoxStore, CodeTaken, Conflict
 from .store import JobStore
 from .video import MAX_FRAMES
 
-MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+MAX_UPLOAD_BYTES = 2 * 1024 ** 3  # an iPhone's original screen recording of up to ten minutes
 AUTO_BACKUP_CHECK_SECONDS = 3600
 MAX_BACKUP_UPLOAD_BYTES = 8 * 1024 ** 3
 
@@ -277,7 +277,7 @@ def create_app(
                 async for chunk in request.stream():
                     size += len(chunk)
                     if size > MAX_UPLOAD_BYTES:
-                        raise HTTPException(413, "영상은 200 MiB 이하로 잘라서 올려 주세요.")
+                        raise HTTPException(413, "영상은 2 GiB 이하로 잘라서 올려 주세요.")
                     output.write(chunk)
             if not size:
                 raise HTTPException(422, "빈 파일입니다.")
@@ -355,7 +355,9 @@ def create_app(
                        if (store.root / str(scan_id) / LIVE_FILE).is_file()
                        or job["analysis_status"] == "live" else None)
         job["frames"] = []
+        job["notice"] = None
         if job["status"] == "ready":
+            job["notice"], job["error"] = job["error"], None
             job["frames"] = [
                 f"/api/scans/{scan_id}/frames/{int(path.stem.split('-')[-1])}"
                 for path in store.frames(str(scan_id))
@@ -638,7 +640,7 @@ def create_app(
     def evidence(scan_id: UUID, number: int):
         job = store.get(str(scan_id))
         path = store.root / str(scan_id) / f"iv-{number:02d}.jpg"
-        if not job or job["status"] != "ready" or not 1 <= number <= 99 or not path.is_file():
+        if not job or job["status"] != "ready" or not 1 <= number <= 999 or not path.is_file():
             raise HTTPException(404, "판독 근거 프레임을 찾을 수 없습니다.")
         return FileResponse(path, media_type="image/jpeg")
 
@@ -673,7 +675,7 @@ def _analysis(folder: Path, scan_id: str, status: str | None, error: str | None)
             "iv": window["iv"],
             "stable_seconds": window["stable_seconds"],
             "start_seconds": window["start_seconds"],
-            "evidence": f"{base}/evidence/{int(evidence[3:5])}" if evidence else None,
+            "evidence": f"{base}/evidence/{int(evidence[3:-4])}" if evidence else None,
         }
 
     for individual in result["individuals"]:

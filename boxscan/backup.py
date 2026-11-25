@@ -37,7 +37,7 @@ MEMBERS = [
     re.compile(r"^box\.sqlite3$"),
     re.compile(r"^scans\.sqlite3$"),
     re.compile(r"^reference/[0-9a-f]{12}/(?:reference|manifest)\.json$"),
-    re.compile(r"^scans/[0-9a-f-]{36}/(?:frame-\d{3}\.jpg|iv-\d{2}\.jpg|analysis\.json|source)$"),
+    re.compile(r"^scans/[0-9a-f-]{36}/(?:frame-\d{3}\.jpg|iv-\d{2,3}\.jpg|analysis\.json|source)$"),
 ]
 MAX_TOTAL_BYTES = 8 * 1024 ** 3
 

@@ -1,6 +1,7 @@
 const form = document.querySelector("#upload");
 const input = document.querySelector("#video");
 const button = form.querySelector("button");
+const MAX_UPLOAD_BYTES = 2 * 1024 ** 3;  // same limit as the server; fail before sending
 const status = document.querySelector("#status");
 const framesSection = document.querySelector("#frames-section");
 const framesStatus = document.querySelector("#frames-status");
@@ -540,7 +541,7 @@ async function monitor(id) {
       const shown = scan.live ? scan.frames.slice(-LIVE_RECENT) : scan.frames;
       framesStatus.textContent = scan.live
         ? `실시간 캡처 ${scan.frames.length}장` + (shown.length < scan.frames.length ? ` 중 최근 ${shown.length}장` : "")
-        : `1초마다 추출한 ${scan.frames.length}장`;
+        : `1초마다 추출한 ${scan.frames.length}장` + (scan.notice ? ` · ${scan.notice}` : "");
       if (gallery.lastElementChild?.querySelector("a")?.getAttribute("href") !== shown.at(-1)
           || gallery.childElementCount !== shown.length) showFrames(shown);
       showAnalysis(scan.analysis);
@@ -574,6 +575,10 @@ form.addEventListener("submit", event => {
   run(async () => {
     const file = input.files[0];
     if (!file) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      status.textContent = "영상은 2 GiB 이하로 잘라서 올려 주세요.";
+      return;
+    }
     gallery.replaceChildren();
     cards.replaceChildren();
     framesSection.hidden = true;

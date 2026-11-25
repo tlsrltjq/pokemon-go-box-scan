@@ -74,11 +74,13 @@ class JobStore:
             """).fetchone()
             return row[0] if row else None
 
-    def finish(self, scan_id: str, error: str | None = None) -> None:
+    def finish(self, scan_id: str, error: str | None = None, notice: str | None = None) -> None:
+        """A failed scan keeps its error. A ready scan may keep a notice (e.g. a truncated video)
+        in the same column; the API reports it as `notice` and never as a failure."""
         with closing(sqlite3.connect(self.database)) as db, db:
             db.execute(
                 "UPDATE scans SET status = ?, error = ? WHERE id = ? AND status = 'running'",
-                ("failed" if error else "ready", error, scan_id),
+                ("failed" if error else "ready", error or notice, scan_id),
             )
 
     def set_analysis(self, scan_id: str, status: str, error: str | None = None) -> None:

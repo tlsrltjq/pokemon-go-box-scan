@@ -5,9 +5,14 @@ from collections.abc import Callable
 
 from .store import JobStore
 
-MAX_VIDEO_SECONDS = 72
+# Ten minutes, the same as a live capture. A screen recording saved on the iPhone while the Mac
+# was off can hold a long batch; anything after this is not read and the scan says so.
+MAX_VIDEO_SECONDS = 600
 SAMPLE_SECONDS = 1
 MAX_FRAMES = MAX_VIDEO_SECONDS // SAMPLE_SECONDS
+EXTRACT_TIMEOUT_SECONDS = 600  # a 3-minute 1179×2556 HEVC recording took about 20 s on an M5
+TRUNCATED = (f"영상이 {MAX_VIDEO_SECONDS // 60}분보다 길어 처음 {MAX_VIDEO_SECONDS // 60}분만 읽었습니다. "
+             "나머지는 영상을 나눠서 다시 올려 주세요.")
 
 
 Analyzer = Callable[[str], object]
@@ -25,6 +30,7 @@ def run_next(store: JobStore, ffmpeg: str, analyzer: Analyzer | None = None) -> 
         return False
 
     folder = store.root / scan_id
+    notice = None
     try:
         subprocess.run(
             [
@@ -32,21 +38,27 @@ def run_next(store: JobStore, ffmpeg: str, analyzer: Analyzer | None = None) -> 
                 "-protocol_whitelist", "file", "-threads", "2",
                 "-f", "mov", "-i", str(folder / "source"),
                 "-map", "0:v:0", "-an", "-sn", "-dn", "-filter_threads", "1",
-                "-t", str(MAX_VIDEO_SECONDS),
+                # One frame past the limit tells a longer video apart from one that fits.
+                "-t", str(MAX_VIDEO_SECONDS + SAMPLE_SECONDS),
                 "-vf", (
                     f"fps=1/{SAMPLE_SECONDS}:start_time=0:round=up,"
                     "scale=720:720:force_original_aspect_ratio=decrease:force_divisible_by=2"
                 ),
-                "-frames:v", str(MAX_FRAMES), "-q:v", "3",
+                "-frames:v", str(MAX_FRAMES + 1), "-q:v", "3",
                 str(folder / "frame-%03d.jpg"),
             ],
             capture_output=True,
             check=True,
-            timeout=120,
+            timeout=EXTRACT_TIMEOUT_SECONDS,
         )
-        error = None if store.frames(scan_id) else "영상에서 프레임을 찾지 못했습니다."
+        frames = store.frames(scan_id)
+        error = None if frames else "영상에서 프레임을 찾지 못했습니다."
+        if len(frames) > MAX_FRAMES:
+            for path in frames[MAX_FRAMES:]:
+                path.unlink(missing_ok=True)
+            notice = TRUNCATED
     except subprocess.TimeoutExpired:
-        error = "영상 처리 제한 시간(120초)을 초과했습니다."
+        error = f"영상 처리 제한 시간({EXTRACT_TIMEOUT_SECONDS}초)을 초과했습니다."
     except subprocess.CalledProcessError:
         error = "영상을 읽을 수 없습니다. 재생 가능한 MOV 또는 MP4를 선택하세요."
     except OSError:
@@ -54,7 +66,7 @@ def run_next(store: JobStore, ffmpeg: str, analyzer: Analyzer | None = None) -> 
     if error:
         for path in store.frames(scan_id):
             path.unlink(missing_ok=True)
-    store.finish(scan_id, error)
+    store.finish(scan_id, error, notice)
     if not error:
         record_analysis(store, scan_id, analyzer)
     return True
