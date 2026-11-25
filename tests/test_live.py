@@ -244,6 +244,25 @@ class SuspectMoveTests(unittest.TestCase):
         self.assertEqual(alone["moves"]["charged"], [])  # even alone: an empty slot beats a wrong move
 
 
+class HiddenCpTests(unittest.TestCase):
+    def test_power_up_cost_replaces_a_cp_hidden_behind_the_pokemon(self):
+        from test_reference_level import IV, synthetic_reference
+        data = synthetic_reference()
+
+        def individual(power_up):
+            return {"species": {"value": "테스트몬1"}, "cp": {"value": 24, "votes": 2, "observations": 2},
+                    "cp_candidates": [24], "max_hp": {"value": 58}, "appraisals": [{"iv": IV}],
+                    "moves": {"fast": None, "charged": []}, "power_up": power_up}
+
+        hidden = individual({"stardust": 4000, "candy": 3})  # "CP24" for 246: the last digit was covered
+        analysis.apply_reference(hidden, data)
+        self.assertEqual((hidden["cp"]["value"], hidden["cp"]["corrected_from"], hidden["cp"]["source"]), (246, 24, "power_up"))
+        self.assertEqual((hidden["level"]["status"], hidden["level"]["levels"]), ("RESOLVED_BY_CONSTRAINTS", [25.5]))
+        unread = individual(None)  # no cost read: nothing is guessed
+        analysis.apply_reference(unread, data)
+        self.assertEqual((unread["cp"]["value"], unread["level"]["status"]), (24, "CONFLICT"))
+
+
 class CpCorrectionTests(unittest.TestCase):
     def test_a_cp_that_fits_hp_and_iv_replaces_a_glitchy_vote(self):
         from boxscan import level

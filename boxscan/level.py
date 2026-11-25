@@ -1,8 +1,9 @@
 """Level candidates from species, IV, CP and max HP (spec v1.2 section 5.3).
 
 Every level in the CPM table is tried. A level stays a candidate when the CP formula gives the
-observed CP and, if max HP was read, the HP formula gives the observed max HP. Power-up costs,
-best buddy boosts and mega forms are not used yet.
+observed CP and, if max HP was read, the HP formula gives the observed max HP. Mega forms use
+their own stats. When the CP number is hidden behind the Pokémon, the next power-up's cost, max HP
+and IV can still fix the level (`from_power_up`). Best buddy boosts are not used yet.
 """
 import math
 
@@ -36,6 +37,52 @@ def candidates(base: BaseStats, iv: dict, observed_cp: int, observed_max_hp: int
         if level <= MAX_LEVEL and cp(base, iv, cpm) == observed_cp
         and (observed_max_hp is None or hp(base, iv, cpm) == observed_max_hp)
     ]
+
+
+def _power_up_matches(upgrades: dict, level: float, stardust: int, candy: int | None,
+                      pokemon_id: int | None = None) -> bool:
+    """Whether the next power-up from this level costs what the screen shows. Lucky halves the
+    stardust; shadow and purified Pokémon pay more and less (game master multipliers). Their state is
+    not always known here, so every combination is allowed and the HP check narrows it down."""
+    index = int(level) - 1
+    if index >= len(upgrades["stardust"]):
+        return False
+    costs = {**upgrades, **(upgrades.get("overrides") or {}).get(str(pokemon_id), {})}  # 무한다이노 pays more candy
+    if level >= upgrades["xl_from"]:  # from level 40 a power-up costs 사탕XL instead of candy
+        xl_index = int(level) - int(upgrades["xl_from"])
+        base_candy = costs["xl"][xl_index] if xl_index < len(costs["xl"]) else None
+    else:
+        base_candy = costs["candy"][index] if index < len(costs["candy"]) else None
+    for state in (1.0, upgrades["shadow"], upgrades["purified"]):
+        for lucky in (1.0, 0.5):
+            if round(upgrades["stardust"][index] * state * lucky) != stardust:
+                continue
+            if candy is None or base_candy is None or candy in {round(base_candy * state), math.ceil(base_candy * state)}:
+                return True
+    return False
+
+
+def from_power_up(reference: Reference | None, species: str | None, iv: dict | None, max_hp: int | None,
+                  power_up: dict | None, form: str | None = None, cp_hints: list[int] | None = None) -> dict | None:
+    """The level and CP when the CP number could not be read: the power-up cost limits the level to
+    about two levels, and max HP with IV usually leaves one. Partly read CP numbers ("167" for 1675)
+    break a remaining tie. Returns None unless exactly one level and CP fit."""
+    if not (reference and reference.upgrades and species and iv and max_hp and power_up
+            and power_up.get("stardust")):
+        return None
+    fits = set()
+    for base in _stat_options(reference, species, None, form):
+        for level, cpm in sorted(reference.cpm.items()):
+            if level < MAX_LEVEL and hp(base, iv, cpm) == max_hp and _power_up_matches(
+                    reference.upgrades, level, power_up["stardust"], power_up.get("candy"), base.pokemon_id):
+                fits.add((level, cp(base, iv, cpm), base.form))
+    if len({(level, value) for level, value, _ in fits}) > 1 and cp_hints:
+        hinted = {fit for fit in fits if any(len(str(h)) >= 2 and str(h) in str(fit[1]) for h in cp_hints)}
+        fits = hinted or fits
+    if len({(level, value) for level, value, _ in fits}) != 1:
+        return None
+    level, value, form_used = sorted(fits, key=lambda fit: fit[2] != "Normal")[0]
+    return {"level": level, "cp": value, "form": form_used}
 
 
 def _stat_options(reference: Reference, species: str, temp_evolution: str | None,

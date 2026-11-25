@@ -151,6 +151,14 @@ class FieldParserTests(unittest.TestCase):
                                                            "xl": 12, "energy": 0, "energy_kind": "원시"})
         self.assertNotIn("resources", parse_frame(boxed(("그란돈의 사탕", 320, 160, 110, 18))))  # no number above
 
+    def test_power_up_cost_is_read_on_the_button_row_only(self):
+        lines = boxed(("강화", 60, 300, 40, 18), ("₩ 4,000", 200, 300, 70, 18), ("• 3", 330, 300, 30, 18),
+                      ("해방", 60, 400, 40, 18), ("100,000", 200, 400, 70, 18), ("• 50", 330, 400, 30, 18))
+        self.assertEqual(parse_frame(lines)["power_up"], {"stardust": 4000, "candy": 3})
+        self.assertNotIn("power_up", parse_frame(boxed(("해방", 60, 400, 40, 18), ("100,000", 200, 400, 70, 18))))
+        no_candy = parse_frame(boxed(("강화", 60, 300, 40, 18), ("1,900", 200, 300, 70, 18)))["power_up"]
+        self.assertEqual(no_candy, {"stardust": 1900, "candy": None})
+
     def test_unlock_button_misread_is_not_a_move(self):
         lines = MOVE_SCREEN + boxed(("해바", 77, 530, 24, 11), ("100", 290, 530, 25, 11))
         self.assertNotIn("해바", [m["name"] for m in parse_frame(lines, 332)["moves"]])

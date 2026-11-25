@@ -46,6 +46,10 @@ NAME_EDGES = re.compile(r"^[^가-힣]+|[^가-힣]+$")
 MOVE_NAME = re.compile(r"^[가-힣]{2,12}$")
 COST = re.compile(r"\d{1,3}(?:,\d{3})+")
 BUTTONS = {"해방", "해빙", "해벙", "애방", "해바", "해밤", "강화", "강차", "감화", "교환", "교한", "교체", "합체"}
+# The 강화 button row: the next power-up's stardust on the left and candy (or XL) on the right,
+# "강화  ₩ 4,000  • 3". OCR often turns the icons into ₩ or •.
+POWER_UP_BUTTON = re.compile(r"^(?:강화|강차|감화)$")
+NUMBER = re.compile(r"\d[\d,]*")
 # "체육관 배틀 & 레이드배틀" tab header, also when OCR garbles it.
 MOVE_HEADER = re.compile(r"체육관|채육관|제육|레이드|레미드")
 
@@ -105,6 +109,27 @@ def parse_moves(lines: list[dict], width: int | None) -> list[dict]:
             row["role"] = "charged"
         del row["y"], row["height"]
     return rows
+
+
+def parse_power_up(lines: list[dict]) -> dict | None:
+    """Stardust and candy of the next power-up, read on the 강화 button's row."""
+    def centre(line):
+        return line["box"][1] + line["box"][3] / 2
+
+    for button in lines:
+        if not POWER_UP_BUTTON.match(button["text"].strip()):
+            continue
+        x, _, w, h = button["box"]
+        numbers = []
+        for other in sorted(lines, key=lambda line: line["box"][0]):
+            if other is button or other["box"][0] <= x + w or abs(centre(other) - centre(button)) > max(10, h * 0.8):
+                continue
+            found = NUMBER.findall(other["text"])
+            if found and (value := found[-1].replace(",", "")).isdigit():
+                numbers.append(int(value))
+        if numbers and numbers[0] >= 90:  # the smallest cost is 200 stardust (90 lucky and purified)
+            return {"stardust": numbers[0], "candy": numbers[1] if len(numbers) > 1 else None}
+    return None
 
 
 def parse_max_moves(lines: list[dict]) -> list[dict]:
@@ -251,6 +276,8 @@ def parse_frame(lines: list[dict], width: int | None = None) -> dict:
         found["cp_candidates"] = candidates
     if resources := parse_resources(lines):
         found["resources"] = resources
+    if power_up := parse_power_up(lines):
+        found["power_up"] = power_up
     for text in texts:
         if "cp" not in found and (match := CP.search(text)):
             found["cp"] = int(match[1])
@@ -359,11 +386,22 @@ def _summarize(group: list[dict]) -> dict:
         "mega_timer": _seen(group, "mega_timer"),
         "code": vote([f["code"] for f in group if "code" in f]),
         "resources": _resources(group),
+        "power_up": _power_up(group),
         "nickname": vote([f["nickname"] for f in group if "nickname" in f]),
     }
 
 
 XL_HIDDEN_MIN_FRAMES = 2
+
+
+def _power_up(group: list[dict]) -> dict | None:
+    """The most often read power-up stardust and candy across the group's frames."""
+    dust = vote([f["power_up"]["stardust"] for f in group if f.get("power_up")])
+    if dust is None:
+        return None
+    candy = vote([f["power_up"]["candy"] for f in group if f.get("power_up") and f["power_up"].get("candy") is not None])
+    return {"stardust": dust["value"], "candy": candy["value"] if candy else None,
+            "votes": dust["votes"], "observations": dust["observations"]}
 
 
 def _resources(group: list[dict]) -> dict | None:

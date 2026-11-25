@@ -149,6 +149,17 @@ def apply_reference(individual: dict, data: reference.Reference | None) -> None:
                                     "corrected_from": voted}
                 individual["level"] = found
                 break
+    if individual["level"]["status"] in (level.CONFLICT, level.MISSING_INPUT) and iv and max_hp and not temp:
+        # The CP number is often hidden behind the Pokémon ("CP167" for 1675). The power-up cost on the
+        # same screen, max HP and IV can still fix the level, and with it the CP.
+        voted = (individual.get("cp") or {}).get("value")
+        fit = level.from_power_up(data, resolved["species"], iv, max_hp, individual.get("power_up"),
+                                  resolved["form"], individual.get("cp_candidates"))
+        if fit:
+            individual["cp"] = {**(individual.get("cp") or {"votes": 0, "observations": 0}), "value": fit["cp"],
+                                "corrected_from": voted, "source": "power_up"}
+            individual["level"] = level.estimate(data, resolved["species"], iv, fit["cp"], max_hp, temp,
+                                                 resolved["form"])
     move_dictionary.annotate(individual["moves"], data, resolved["species"],
                              resolved["form"] or individual["level"].get("form"))
     # A charged move the species cannot learn, or a name not in the dictionary ("히푸이"), is usually

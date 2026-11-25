@@ -50,6 +50,7 @@ MAX_LEVEL = 55.0
 CPM_TOLERANCE = 1e-6
 USER_AGENT = "boxscan-reference/0.3"
 TEMPLATE = re.compile(r"^V(\d{4})_POKEMON_")
+UPGRADE_OVERRIDE = re.compile(r"^POKEMON_UPGRADE_OVERRIDE_SETTINGS_V(\d{4})_POKEMON_")
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,10 @@ class Reference:
     temp_boosts: dict | None = None
     # Candy family: pokemon id -> id of the Pokémon the candy is named after (마기라스 -> 애버라스)
     families: dict[int, int] | None = None
+    # Power-up cost per whole level from POKEMON_UPGRADE_SETTINGS: {"stardust": [...], "candy": [...],
+    #  "xl": [...], "xl_from": 40, "shadow": 1.2, "purified": 0.9, "overrides": {"890": {"candy", "xl"}}};
+    #  index = level - 1 (xl: level - xl_from). Overrides are species with their own candy cost (무한다이노).
+    upgrades: dict | None = None
 
     def candy_name(self, korean_name: str | None) -> str | None:
         """The species whose name the candy carries: 마기라스 -> 애버라스."""
@@ -169,11 +174,35 @@ def parse(files: dict[str, bytes], version: str = "", fetched_at: str = "") -> R
     max_moves, max_move_by_type, species_max_moves = _max_data(master, files["move_names.csv"])
     temp_boosts = _temp_boosts(master, enum_ids)
     families = _families(master, enum_ids)
+    upgrades = _upgrades(master)
     if len(type_chart) != 18 or not move_stats or "energyDeltaPerHealthLost" not in battle:
         raise ValueError("전투 계산용 데이터(상성·기술·전투 설정)를 읽지 못했습니다.")
     return Reference(version, fetched_at, stats, cpm, names, notes, move_names, move_power, learnsets,
                      temp_stats, form_changes, mega_moves, types, move_stats, type_chart, weather, battle,
-                     max_moves, max_move_by_type, species_max_moves, temp_boosts, families)
+                     max_moves, max_move_by_type, species_max_moves, temp_boosts, families, upgrades)
+
+
+def _upgrades(master: list[dict]) -> dict | None:
+    """The power-up cost table. The screen shows the next power-up's stardust and candy, which fixes
+    the level to a range of two levels when the CP number is hidden behind the Pokémon."""
+    table, overrides = None, {}
+    for item in master:
+        data = item.get("data", {}).get("pokemonUpgrades") or {}
+        if item["templateId"] == "POKEMON_UPGRADE_SETTINGS":
+            if not data.get("stardustCost") or not data.get("candyCost"):
+                return None
+            table = {"stardust": [int(v) for v in data["stardustCost"]], "candy": [int(v) for v in data["candyCost"]],
+                     "xl": [int(v) for v in data.get("xlCandyCost") or []],
+                     "xl_from": float(data.get("xlCandyMinPokemonLevel", 40)),
+                     "shadow": float(data.get("shadowStardustMultiplier", 1.2)),
+                     "purified": float(data.get("purifiedStardustMultiplier", 0.9))}
+        elif (match := UPGRADE_OVERRIDE.match(item["templateId"])) and data.get("candyCost"):
+            override = overrides[str(int(match[1]))] = {"candy": [int(v) for v in data["candyCost"]]}
+            if data.get("xlCandyCost"):
+                override["xl"] = [int(v) for v in data["xlCandyCost"]]
+    if table:
+        table["overrides"] = overrides
+    return table
 
 
 def _families(master: list[dict], enum_ids: dict[str, int]) -> dict[int, int]:
@@ -519,6 +548,7 @@ def to_json(reference: Reference) -> dict:
         "species_max_moves": reference.species_max_moves,
         "temp_boosts": reference.temp_boosts,
         "families": {str(k): v for k, v in (reference.families or {}).items()},
+        "upgrades": reference.upgrades,
     }
 
 
@@ -539,7 +569,7 @@ def from_json(data: dict) -> Reference:
                      data.get("types"), data.get("move_stats"), data.get("type_chart"),
                      data.get("weather"), data.get("battle"), data.get("max_moves"),
                      data.get("max_move_by_type"), data.get("species_max_moves"), data.get("temp_boosts"),
-                     {int(k): v for k, v in (data.get("families") or {}).items()})
+                     {int(k): v for k, v in (data.get("families") or {}).items()}, data.get("upgrades"))
 
 
 def rebuild(data_dir: Path) -> dict:

@@ -11,6 +11,10 @@ from boxscan.reference import BaseStats, Reference
 WHOLE = [round(0.1 + 0.014 * (level - 1), 6) for level in range(1, 81)]  # game master lists 80
 IV = {"attack": 10, "defense": 5, "stamina": 12}
 MOVE_COUNT = 110
+UPGRADE_CANDY = [1] * 10 + [2] * 10 + [3] * 5 + [4] * 5 + [6, 6, 8, 8, 10, 10, 12, 12, 15] + [0] * 11
+UPGRADE_DUST = [200, 200, 400, 400, 600, 600, 800, 800, 1000, 1000, 1300, 1300, 1600, 1600, 1900, 1900, 2200, 2200,
+                2500, 2500, 3000, 3000, 3500, 3500, 4000, 4000, 4500, 4500, 5000, 5000, 6000, 6000, 7000, 7000, 8000,
+                8000, 9000, 9000, 10000, 10000, 11000, 11000, 12000, 12000, 13000, 13000, 14000, 14000, 15000]
 
 
 def master(count: int, whole=WHOLE) -> list[dict]:
@@ -26,7 +30,13 @@ def master(count: int, whole=WHOLE) -> list[dict]:
                  "attackBoostFromMegaSameType": 1.3, "attackBoostFromMegaDifferentType": 1.1,
                  "tempEvoSpecialAttackBoosts": [{"gymsAndRaidsMultiplier": 1.0}, {"gymsAndRaidsMultiplier": 1.1}]}}},
              {"templateId": "PRIMAL_EVO_SETTINGS", "data": {"primalEvoSettings": {"typeBoosts": [
-                 {"pokemonId": "MON5", "boostType": ["POKEMON_TYPE_FIRE", "POKEMON_TYPE_GRASS"]}]}}}]
+                 {"pokemonId": "MON5", "boostType": ["POKEMON_TYPE_FIRE", "POKEMON_TYPE_GRASS"]}]}}},
+             # Power-up costs as in the game: per whole level, stardust and candy (XL from level 40).
+             {"templateId": "POKEMON_UPGRADE_SETTINGS", "data": {"pokemonUpgrades": {
+                 "candyCost": UPGRADE_CANDY, "stardustCost": UPGRADE_DUST, "xlCandyCost": [10, 10, 12, 12, 15, 15, 17, 17, 20, 20],
+                 "xlCandyMinPokemonLevel": 40, "shadowStardustMultiplier": 1.2, "purifiedStardustMultiplier": 0.9}}},
+             {"templateId": "POKEMON_UPGRADE_OVERRIDE_SETTINGS_V0005_POKEMON_MON5", "data": {"pokemonUpgrades": {
+                 "candyCost": [30 * c for c in UPGRADE_CANDY], "stardustCost": UPGRADE_DUST}}}]
     for attack in reference.TYPE_ORDER:  # synthetic type chart: everything neutral
         items.append({"templateId": f"POKEMON_TYPE_{attack}", "data": {"typeEffective": {
             "attackType": f"POKEMON_TYPE_{attack}", "attackScalar": [1.0] * 18}}})
@@ -211,6 +221,39 @@ class ReferenceTests(unittest.TestCase):
                 reference.update(data_dir, fetch=lambda url: b"not json")
             self.assertEqual(reference.load(data_dir).version, manifest["version"])
             self.assertIsNone(reference.load(data_dir / "empty"))
+
+
+class PowerUpLevelTests(unittest.TestCase):
+    """The CP number hidden behind the Pokémon: the power-up cost, max HP and IV fix the level."""
+    def setUp(self):
+        self.data = synthetic_reference()
+
+    def test_cost_table_and_species_override_are_read(self):
+        upgrades = self.data.upgrades
+        self.assertEqual((upgrades["stardust"][24], upgrades["candy"][24], upgrades["xl"][1]), (4000, 3, 10))
+        self.assertEqual(upgrades["overrides"]["5"]["candy"][24], 90)
+        self.assertNotIn("xl", upgrades["overrides"]["5"])  # not in the override: the shared XL table applies
+
+    def test_level_and_cp_follow_from_cost_hp_and_iv(self):
+        found = level.from_power_up(self.data, "테스트몬1", IV, 58, {"stardust": 4000, "candy": 3})
+        self.assertEqual(found, {"level": 25.5, "cp": 246, "form": "Normal"})
+        lucky = level.from_power_up(self.data, "테스트몬1", IV, 58, {"stardust": 2000, "candy": 3})
+        self.assertEqual(lucky["cp"], 246)  # a lucky Pokémon pays half the stardust
+        shadow = level.from_power_up(self.data, "테스트몬1", IV, 58, {"stardust": 4800, "candy": 4})
+        self.assertEqual(shadow["cp"], 246)  # shadow: x1.2 stardust and candy
+        xl = level.from_power_up(self.data, "테스트몬1", IV, 87, {"stardust": 11000, "candy": 10})
+        self.assertEqual((xl["level"], xl["cp"]), (41.0, 546))  # from level 40 the candy is 사탕XL
+
+    def test_nothing_is_guessed_when_the_reading_does_not_fit(self):
+        self.assertIsNone(level.from_power_up(self.data, "테스트몬1", IV, 70, {"stardust": 4000, "candy": 3}))
+        self.assertIsNone(level.from_power_up(self.data, "테스트몬1", IV, 58, {"stardust": 4000, "candy": 7}))
+        self.assertIsNone(level.from_power_up(self.data, "테스트몬1", IV, 58, None))
+        self.assertIsNone(level.from_power_up(self.data, "테스트몬1", None, 58, {"stardust": 4000}))
+
+    def test_a_species_with_its_own_candy_cost(self):
+        found = level.from_power_up(self.data, "테스트몬5", IV, 60, {"stardust": 4000, "candy": 90})
+        self.assertEqual((found["level"], found["cp"]), (25.5, 264))
+        self.assertIsNone(level.from_power_up(self.data, "테스트몬5", IV, 60, {"stardust": 4000, "candy": 3}))
 
 
 class LevelTests(unittest.TestCase):
