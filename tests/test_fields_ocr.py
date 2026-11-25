@@ -38,6 +38,18 @@ class FieldParserTests(unittest.TestCase):
         self.assertEqual(found["screen"], "APPRAISAL")
         self.assertEqual(found["species"], "테스트몬")
 
+    def test_hidden_candy_xl_counts_as_zero_only_with_repeated_candy_readings(self):
+        def with_candy(number, **resources):
+            return {**frame(number, "CP1000"), "resources": {"family": "루기아", "candy": 19, **resources}}
+
+        (hidden,) = group_frames([with_candy(1), with_candy(2)])
+        self.assertEqual((hidden["resources"]["xl"], hidden["resources"]["xl_hidden"]), (0, True))
+        (once,) = group_frames([with_candy(1), frame(2, "CP1000")])
+        self.assertNotIn("xl", once["resources"])  # one reading is too little to say XL is gone
+        (shown,) = group_frames([with_candy(1), with_candy(2, xl=7)])
+        self.assertEqual(shown["resources"]["xl"], 7)
+        self.assertNotIn("xl_hidden", shown["resources"])
+
     def test_lucky_label_needs_repeated_evidence(self):
         self.assertTrue(parse_frame(lines("Ⓡ별명", "반짝반짝 포컷몬", "CP1000"))["lucky"])
         lucky = [frame(n, "CP1000", "반짝반짝 포켓몬") for n in (1, 2)]

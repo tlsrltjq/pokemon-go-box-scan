@@ -97,7 +97,7 @@ function formatCandy(family, values) {
   if (!values) return "";
   const parts = [];
   if (values.candy != null) parts.push(`사탕 ${values.candy.toLocaleString()}`);
-  if (values.xl != null) parts.push(`XL ${values.xl.toLocaleString()}`);
+  if (values.xl != null) parts.push(`XL ${values.xl.toLocaleString()}${values.xl_hidden ? " (화면에 없어 0)" : ""}`);
   if (values.energy != null) parts.push(`${values.energy_kind ?? ""}에너지 ${values.energy.toLocaleString()}`);
   return parts.length ? `${family ? `${family} ` : ""}${parts.join(" · ")}` : "";
 }

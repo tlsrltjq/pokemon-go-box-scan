@@ -115,6 +115,8 @@ class BoxStoreTests(unittest.TestCase):
         self.box.record_resources({"family": "애버라스", "candy": 120}, {"scan_id": "b"})  # XL not read this time
         found = self.box.candies()
         self.assertEqual((found["candies"]["애버라스"]["candy"], found["candies"]["애버라스"]["xl"]), (120, 12))
+        self.box.record_resources({"family": "애버라스", "candy": 120, "xl": 0, "xl_hidden": True}, {"scan_id": "c"})
+        self.assertEqual(self.box.candies()["candies"]["애버라스"]["xl"], 0)  # all XL used: the hidden count replaces 12
         self.assertEqual(found["stardust"]["value"], 1_180_103)
         fixed = self.box.set_candy("애버라스", {"candy": "130", "xl": "", "energy": None})
         self.assertEqual((fixed["candy"], fixed["xl"]), (130, None))

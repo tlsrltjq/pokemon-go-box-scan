@@ -363,6 +363,9 @@ def _summarize(group: list[dict]) -> dict:
     }
 
 
+XL_HIDDEN_MIN_FRAMES = 2
+
+
 def _resources(group: list[dict]) -> dict | None:
     """The most often read candy, XL, energy and stardust across the group's frames."""
     found = {}
@@ -370,6 +373,11 @@ def _resources(group: list[dict]) -> dict | None:
         values = [f["resources"][key] for f in group if key in f.get("resources", {})]
         if values:
             found[key] = vote(values)["value"]
+    # The game hides the 사탕XL count when it is 0. When the candy row was read on several frames and
+    # XL never was, record 0 so a saved count from before is not kept; one frame is too little to say.
+    candy_frames = sum(1 for f in group if "candy" in f.get("resources", {}))
+    if "xl" not in found and candy_frames >= XL_HIDDEN_MIN_FRAMES:
+        found["xl"], found["xl_hidden"] = 0, True
     return found or None
 
 
