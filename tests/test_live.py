@@ -226,6 +226,23 @@ class SuspectMoveTests(unittest.TestCase):
             analysis.apply_reference(alone, None)
         self.assertEqual([m["value"] for m in alone["moves"]["charged"]], ["히푸이"])  # nothing better: kept, shown in orange
 
+    def test_mega_evolution_requirement_is_never_taken_as_a_learned_move(self):
+        def annotate(moves, data, species, form):  # 레쿠쟈: 화룡점정 is shown locked on every frame
+            for move in moves["charged"]:
+                move.update({"화룡점정": {"match": "exact", "name": "화룡점정", "marker_kind": "mega_required",
+                                         "reason": "메가진화 조건 기술"},
+                             "원시의힘": {"match": "exact", "name": "원시의힘"}}[move["value"]])
+        individual = {"species": {"value": "레쿠쟈"}, "cp": None, "max_hp": None, "appraisals": [],
+                      "moves": {"fast": None, "charged": [{"value": "화룡점정", "votes": 6}, {"value": "원시의힘", "votes": 3}]}}
+        with mock.patch.object(analysis.move_dictionary, "annotate", annotate):
+            analysis.apply_reference(individual, None)
+        self.assertEqual([m["value"] for m in individual["moves"]["charged"]], ["원시의힘"])
+        self.assertEqual(individual["moves"]["locked"], [{"name": "화룡점정", "reason": "메가진화 조건 기술"}])
+        alone = {**individual, "moves": {"fast": None, "charged": [{"value": "화룡점정", "votes": 6}]}}
+        with mock.patch.object(analysis.move_dictionary, "annotate", annotate):
+            analysis.apply_reference(alone, None)
+        self.assertEqual(alone["moves"]["charged"], [])  # even alone: an empty slot beats a wrong move
+
 
 class CpCorrectionTests(unittest.TestCase):
     def test_a_cp_that_fits_hp_and_iv_replaces_a_glitchy_vote(self):

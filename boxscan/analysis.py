@@ -153,7 +153,14 @@ def apply_reference(individual: dict, data: reference.Reference | None) -> None:
                              resolved["form"] or individual["level"].get("form"))
     # A charged move the species cannot learn, or a name not in the dictionary ("히푸이"), is usually
     # a misread or a neighbouring Pokémon's move; drop it when a valid one was read at least as often.
+    # A mega evolution requirement (레쿠쟈의 화룡점정) is shown locked on the moves screen whether or not
+    # the Pokémon knows it, so the screen cannot tell; never take it as a learned move.
     charged = individual["moves"].get("charged") or []
+    locked = [move for move in charged if move.get("marker_kind") == "mega_required"]
+    if locked:
+        individual["moves"]["locked"] = [{"name": move.get("name") or move["value"], "reason": move.get("reason")}
+                                         for move in locked]
+        charged = individual["moves"]["charged"] = [move for move in charged if move not in locked]
     valid = [move for move in charged if not suspect_move(move)]
     if valid:
         best = max(move["votes"] for move in valid)

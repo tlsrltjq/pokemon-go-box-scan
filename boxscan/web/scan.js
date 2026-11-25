@@ -109,6 +109,8 @@ function movesBlock(moves) {
   else rows.push(element("p", { class: "muted" }, "노말어택을 읽지 못했습니다."));
   moves.charged.forEach((move, i) => rows.push(moveRow(moves.charged.length > 1 ? `스페셜어택 ${i + 1}` : "스페셜어택", move)));
   if (moves.mega_plus) rows.push(megaPlusRow(moves.mega_plus));
+  (moves.locked ?? []).forEach(move => rows.push(element("p", { class: "muted" },
+    `잠긴 기술 ${move.name}은(는) 뺐습니다. ${move.reason ?? ""}`)));
   const boosted = [moves.fast, ...moves.charged].some(move => move?.boost && move.boost_kind !== "mega");
   return element("div", { class: "moves" },
     element("h4", {}, "기술"),

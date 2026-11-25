@@ -472,6 +472,11 @@ def _master_stats(master: list[dict]) -> tuple[dict[int, list[BaseStats]], dict]
             learnset.setdefault("shadow", set()).add(str(shadow["shadowChargeMove"]))
         if shadow.get("purifiedChargeMove"):
             learnset.setdefault("purified", set()).add(str(shadow["purifiedChargeMove"]))
+        # A move the Pokémon must know to mega evolve (레쿠쟈: 화룡점정). The moves screen shows it
+        # locked even when the Pokémon has not learned it, so OCR must not take it as a known move.
+        for branch in settings.get("evolutionBranch") or []:
+            if branch.get("evolutionMoveRequirement"):
+                learnset.setdefault("mega_required", set()).add(str(branch["evolutionMoveRequirement"]))
     return stats, learnsets
 
 

@@ -30,6 +30,18 @@ class MoveDictionaryTests(unittest.TestCase):
         self.assertIn("대단한 기술머신 노말어택", moves["fast"]["reason"])
         self.assertEqual(moves["charged"][0]["reason"], "정화된 포켓몬 전용 기술")
 
+    def test_mega_evolution_requirement_is_marked_as_locked(self):
+        moves = {"fast": None, "charged": [voted("기술16번", 16), voted("기술11번", 11)]}
+        annotate(moves, self.data, "테스트몬5")
+        required, regular = moves["charged"]
+        self.assertEqual((required["move_id"], required["marker"], required["marker_kind"]),
+                         ("MOVE_16", "*", "mega_required"))
+        self.assertIn("잠긴 채", required["reason"])
+        self.assertEqual(regular["marker"], "")
+        other = {"fast": None, "charged": [voted("기술16번", 16)]}
+        annotate(other, self.data, "테스트몬2")  # not a requirement for another species
+        self.assertEqual(other["charged"][0]["marker_kind"], "not_in_learnset")
+
     def test_close_ocr_text_is_corrected_within_the_learnset(self):
         moves = {"fast": None, "charged": [voted("기술12빈", 12)]}
         annotate(moves, self.data, "테스트몬2")

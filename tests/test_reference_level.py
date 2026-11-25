@@ -61,6 +61,9 @@ def master(count: int, whole=WHOLE) -> list[dict]:
     # replaces MOVE_11 with MOVE_20.
     items[-1 - 2 * (count - 5) - 2]["data"]["pokemonSettings"]["tempEvoOverrides"] = [
         {"tempEvoId": "TEMP_EVOLUTION_MEGA", "stats": {"baseAttack": 250, "baseDefense": 150, "baseStamina": 125}}]
+    # Like 레쿠쟈 and 화룡점정: MON5 must know MOVE_16, which is not in its learnset, to mega evolve.
+    items[-1 - 2 * (count - 5) - 2]["data"]["pokemonSettings"]["evolutionBranch"] = [
+        {"temporaryEvolution": "TEMP_EVOLUTION_MEGA", "evolutionMoveRequirement": "MOVE_16"}]
     fuse = {"availableForm": ["MON6_FUSED"],
             "componentPokemonSettings": {"pokedexId": "MON7", "formChangeType": "FUSE"},
             "moveReassignment": {"cinematicMoves": [{"existingMoves": ["MOVE_11"], "replacementMoves": ["MOVE_20"]}]}}
@@ -133,6 +136,8 @@ class ReferenceTests(unittest.TestCase):
         learnset = data.learnsets["2|Normal"]
         self.assertEqual(learnset["elite_charged"], ["MOVE_13", "SPECIAL_BEAM_FIRE"])  # numeric id
         self.assertEqual((learnset["shadow"], learnset["purified"]), (["MOVE_15"], ["MOVE_14"]))
+        self.assertEqual(data.learnsets["5|Normal"]["mega_required"], ["MOVE_16"])
+        self.assertNotIn("mega_required", learnset)
 
     def test_mega_stats_and_form_changes_are_read(self):
         data = synthetic_reference()

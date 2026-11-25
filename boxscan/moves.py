@@ -18,6 +18,8 @@ REASONS = {
     "purified": "정화된 포켓몬 전용 기술",
     "not_in_learnset": "이 포켓몬이 지금 배울 수 있는 기술 목록에 없는 기술 (예전에만 배울 수 있던 기술일 수 있음)",
     "form_change": "모습을 바꿔야 쓸 수 있는 기술 (원래 모습으로 돌아가면 다른 기술로 바뀜)",
+    "mega_required": "메가진화 조건 기술: 배우지 않았어도 기술 화면에 잠긴 채 보여서 스캔 결과에서는 뺍니다. "
+                     "실제로 배웠다면 직접 넣으세요.",
 }
 
 
@@ -111,7 +113,10 @@ def _match(item: dict, reference: Reference, learnset: dict[str, list[str]], spe
         kind = "form_change"
     elif learnset:
         regular = learnset.get("fast", []) + learnset.get("charged", [])
-        if move_id in learnset.get("shadow", []):
+        special = regular + learnset.get("elite_fast", []) + learnset.get("elite_charged", [])
+        if move_id in learnset.get("mega_required", []) and move_id not in special:
+            kind = "mega_required"
+        elif move_id in learnset.get("shadow", []):
             kind = "shadow"
         elif move_id in learnset.get("purified", []):
             kind = "purified"
