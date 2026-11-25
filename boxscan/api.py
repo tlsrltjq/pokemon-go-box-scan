@@ -9,10 +9,11 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from . import backup, cleanup, export, live, max_battle, raid, reference, review
+from . import backup, cleanup, export, live, max_battle, raid, raid_bosses, reference, review
 from .forms import display_name
 from .species import TEMP_NAMES
 from .analysis import LIVE_FILE, RESULT, detail_frame
@@ -44,6 +45,7 @@ def create_app(
     lan_password: str | None = None,
     live_manager: live.Manager | None = None,
     auto_backup: bool = False,
+    raid_fetch=None,
 ) -> FastAPI:
     if host != "127.0.0.1" and not lan_password:
         raise ValueError("LAN 모드에는 접속 암호가 필요합니다.")
@@ -119,6 +121,10 @@ def create_app(
     @app.get("/max")
     def max_page():
         return FileResponse(WEB / "max.html")
+
+    @app.get("/raids")
+    def raids_page():
+        return FileResponse(WEB / "raids.html")
 
     def load_reference():
         try:
@@ -197,6 +203,47 @@ def create_app(
             raise HTTPException(422, str(error)) from None
         result["boss"]["temp_name"] = TEMP_NAMES.get(result["boss"]["temp"])
         return result
+
+    def raid_listing(data) -> dict:
+        try:
+            listing = raid_bosses.current(store.root)
+        except (OSError, ValueError, KeyError) as error:
+            raise HTTPException(500, f"저장된 보스 목록을 읽지 못했습니다: {error}") from None
+        if listing is None:
+            return {"version": None, "raids": [], "max_battles": [], "failed": 0, "errors": {}}
+        return raid_bosses.mapped(data, listing)
+
+    @app.get("/api/raids/current")
+    def raids_current():
+        return raid_listing(load_reference())
+
+    @app.post("/api/raids/current/refresh")
+    def raids_refresh():
+        # The only request in this page that goes to the internet, and only when the user asks.
+        data = load_reference()
+        try:
+            raid_bosses.update(store.root, fetch=raid_fetch)
+        except (OSError, ValueError) as error:
+            raise HTTPException(502, f"보스 목록을 갱신하지 못했습니다. 기존 목록을 유지합니다: {error}") from None
+        return raid_listing(data)
+
+    @app.post("/api/raids/current/recommend")
+    async def raids_recommend(request: Request):
+        payload = await _json_body(request)
+        data = load_reference()
+        listing = raid_listing(data)
+        if not listing["version"] or payload.get("version") != listing["version"]:
+            raise HTTPException(409, "보스 목록이 바뀌었습니다. 화면을 새로 고치세요.")
+        kind = payload.get("kind")
+        bosses = {"raid": listing["raids"], "max": listing["max_battles"]}.get(kind)
+        boss = next((b for b in bosses or [] if b["index"] == payload.get("index")), None)
+        if boss is None:
+            raise HTTPException(404, "목록에서 그 보스를 찾지 못했습니다.")
+        try:
+            result = await run_in_threadpool(raid_bosses.recommend, store.root, data, box.list(), boss, payload)
+        except raid.RaidError as error:
+            raise HTTPException(422, str(error)) from None
+        return {"kind": kind, "index": boss["index"], **result}
 
     @app.get("/api/max/options")
     def max_options(species: str | None = None):

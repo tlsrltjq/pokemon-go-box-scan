@@ -297,6 +297,8 @@ PoGo API를 첫 수치 공급원 후보로 사용하고 로컬 정규화 스냅�
 
 수동 갱신 → 원본 해시 비교 → 변경 파일 다운로드 → 스키마·단위·참조 검증 → 임시 스냅샷 → 회귀 검증 → 활성 버전 전환 순서로 처리한다. 실패 시 이전 정상 버전을 유지한다. 다운로드 날짜와 원천 데이터 갱신 날짜를 구분한다.
 
+현재 열리는 레이드·맥스배틀 보스 목록은 게임 데이터와 별도 공급원(2026-11-25 선택: pokemon-go-api `raidboss.json`·`maxbattles.json`, LeekDuck·Snacknap 정리)에서 사용자가 갱신할 때만 받아 `data/raid-bosses/`에 날짜·출처·해시와 함께 둔다. 보스 이름·모습·등급은 기준 데이터의 종·모습·메가·그림자·등급으로 매핑하고, 실패는 화면에 이유와 함께 남긴다. 출처 비교와 한계는 README의 `현재 레이드`에 기록한다.
+
 원본 URL·출처·해시·가져온 시각·검증 상태를 기록한다. 다른 출처가 충돌하면 조용히 혼합하지 않는다. 과거 추천에 필요한 스냅샷은 유지하고 사용자 관측값은 기준 데이터 갱신으로 덮어쓰지 않는다.
 
 ## 10. 내부 모델
@@ -337,6 +339,9 @@ PATCH /api/pokemon/{id}              revision 확인 후 수동 수정
 GET  /api/pokemon/{id}/revisions     이력·변경 비교
 DELETE /api/pokemon/{id}             보유 목록에서 제거
 GET  /api/battle-bosses              모드/폼/등급별 보스
+GET  /api/raids/current              (구현) 저장된 현재 보스 목록과 매핑 결과
+POST /api/raids/current/refresh      (구현) 사용자가 누를 때만 보스 목록 내려받기
+POST /api/raids/current/recommend    (구현) 보스 하나의 추천, 박스·설정이 같으면 저장된 결과
 POST /api/battles/recommend          모드별 추천
 GET  /api/game-data/version         출처·활성 버전·지원 범위
 POST /api/game-data/update          수동 기준 데이터 갱신

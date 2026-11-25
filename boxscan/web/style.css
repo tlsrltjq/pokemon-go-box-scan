@@ -337,3 +337,6 @@ main.wide { max-width: 96rem; }
 .filter-chip { min-height: 2rem; padding: .2rem .7rem; border-radius: 99rem; font-size: .85rem; font-weight: 600;
   background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
 .filter-chip[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.party-list { margin: .4rem 0 0; padding-left: 1.3rem; font-size: .92rem; }
+.party-list li { margin: .15rem 0; }
+.boss-card .badges { margin-top: 0; justify-content: flex-end; }

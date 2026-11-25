@@ -43,6 +43,8 @@ def main() -> None:
     backup_restore.add_argument("--yes", action="store_true", help="확인 질문 없이 복원")
     ref = commands.add_parser("reference", help="레벨 계산용 기준 데이터 관리")
     ref.add_argument("action", choices=["update", "rebuild", "show"])
+    raids_cmd = commands.add_parser("raids", help="현재 레이드·맥스배틀 보스 목록 갱신·확인")
+    raids_cmd.add_argument("action", choices=["update", "show"])
     args = parser.parse_args()
     if args.command == "serve":
         host = "127.0.0.1"
@@ -128,6 +130,35 @@ def main() -> None:
         print(f"현재 버전 {data.version} · 받은 시각 {data.fetched_at} · "
               f"포켓몬 {len(data.stats)}종 · 한국어 이름 {len(data.korean_names)}개 · "
               f"최대 레벨 {max(data.cpm)}")
+        return
+
+    if args.command == "raids":
+        from . import raid_bosses
+        if args.action == "update":
+            print(f"현재 보스 목록을 내려받습니다 ({raid_bosses.SOURCE_NAME}):")
+            for name, url in raid_bosses.SOURCES.items():
+                print(f"  {name} ← {url}")
+            try:
+                manifest = raid_bosses.update(args.data_dir)
+            except (OSError, ValueError) as error:
+                raise SystemExit(f"갱신하지 못했습니다. 기존 목록을 유지합니다: {error}")
+            for name, error in manifest["errors"].items():
+                print(f"  {name}: 받지 못함 ({error})")
+        listing = raid_bosses.current(args.data_dir)
+        if listing is None:
+            raise SystemExit("저장된 보스 목록이 없습니다. `raids update`를 실행하세요.")
+        data = reference.load(args.data_dir)
+        if data is None:
+            raise SystemExit("기준 데이터가 없습니다. `reference update`를 실행하세요.")
+        result = raid_bosses.mapped(data, listing)
+        print(f"목록 {result['version']} · 받은 시각 {result['fetched_at']}")
+        for kind, title in (("raids", "레이드"), ("max_battles", "맥스배틀")):
+            print(f"{title} {len(result[kind])}개")
+            for boss in result[kind]:
+                if boss["status"] == "ok":
+                    print(f"  [{boss['tier_name']}] {boss['label']}" + "".join(f"\n      · {n}" for n in boss["notes"]))
+                else:
+                    print(f"  [매핑 실패] {boss['label']}: {boss['reason']}")
         return
 
     ffmpeg = shutil.which(os.environ.get("BOXSCAN_FFMPEG", "ffmpeg"))

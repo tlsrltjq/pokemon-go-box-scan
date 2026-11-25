@@ -183,4 +183,24 @@ form.addEventListener("submit", async event => {
   }
 });
 
-loadOptions().catch(error => { status.textContent = error.message; });
+// Opened from 현재 레이드 with the boss filled in: /raid?species=…&tier=…&form=…&temp=…&shadow=1
+async function prefill() {
+  const params = new URLSearchParams(location.search);
+  if (!params.get("species")) return;
+  form.elements.species.value = params.get("species");
+  if (params.get("tier") && tierDefaults[params.get("tier")]) {
+    form.elements.tier.value = params.get("tier");
+    form.elements.time_limit_s.value = tierDefaults[params.get("tier")];
+  }
+  if (params.get("weather")) form.elements.weather.value = params.get("weather");
+  if (params.get("trainers")) form.elements.trainers.value = params.get("trainers");
+  form.elements.include_mega.checked = params.get("include_mega") === "1";
+  form.elements.shadow.checked = params.get("shadow") === "1";
+  document.querySelector("#shadow-fields").hidden = !form.elements.shadow.checked;
+  await loadBoss();
+  if (params.get("form")) form.elements.form.value = params.get("form");
+  if (params.get("temp")) form.elements.temp.value = params.get("temp");
+  form.requestSubmit();
+}
+
+loadOptions().then(prefill).catch(error => { status.textContent = error.message; });
