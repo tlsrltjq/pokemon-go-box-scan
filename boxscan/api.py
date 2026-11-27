@@ -13,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from . import autosave, backup, cleanup, export, live, max_battle, raid, raid_bosses, reference, review
+from . import ai_export, autosave, backup, cleanup, export, live, max_battle, raid, raid_bosses, reference, review
 from .forms import display_name
 from . import species as species_names
 from .species import TEMP_NAMES
@@ -607,6 +607,30 @@ def create_app(
         content = export.workbook_bytes(box.list(), data, export.app_version(), box.candies())
         return Response(content, media_type=export.MEDIA_TYPE, headers={
             "Content-Disposition": f'attachment; filename="{export.filename()}"'})
+
+    @app.get("/api/exports/box-ai.md")
+    def export_ai(raids: bool = True):
+        """The box and the app's battle results as Markdown for the user's own AI assistant."""
+        try:
+            data = reference.load(store.root)
+        except (OSError, ValueError, KeyError):
+            data = None
+        entries = box.list()
+        battles = None
+        if raids and data is not None and data.move_stats:
+            listing = raid_listing(data)
+            battles = []
+            for boss in listing["raids"] + listing["max_battles"]:
+                if boss["status"] != "ok":
+                    continue
+                try:  # cached per boss, box and options, like the 현재 레이드 page
+                    battles.append((boss, raid_bosses.recommend(store.root, data, entries, boss, {})["summary"]))
+                except raid.RaidError:
+                    continue
+        content = ai_export.markdown(entries, data, box.candies(), export.app_version(), battles,
+                                     f"{raid.ENGINE_VERSION}, {max_battle.ENGINE_VERSION}")
+        return Response(content.encode("utf-8"), media_type=ai_export.MEDIA_TYPE, headers={
+            "Content-Disposition": f'attachment; filename="{ai_export.filename()}"'})
 
     @app.patch("/api/pokemon/{pokemon_id}")
     async def pokemon_edit(pokemon_id: UUID, request: Request):

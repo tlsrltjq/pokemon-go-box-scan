@@ -261,6 +261,21 @@ class CurrentRaidApiTests(unittest.TestCase):
                         "moves": {"fast": {"move_id": "SPLASH_FAST"}, "charged": [{"move_id": "WAVE"}]}},
             {"scan_id": "scan", "individual": 1})
 
+    def test_ai_export_has_the_box_and_current_bosses(self):
+        before = self.client.get("/api/exports/box-ai.md")
+        self.assertEqual(before.status_code, 200)
+        self.assertTrue(before.headers["content-type"].startswith("text/markdown"))
+        self.assertIn('filename="pokemon-box-ai-', before.headers["content-disposition"])
+        self.assertIn("저장된 현재 보스 목록이 없습니다", before.text)
+        self.client.post("/api/raids/current/refresh")
+        text = self.client.get("/api/exports/box-ai.md").text
+        self.assertIn("| 01 | 물몬 |", text)
+        self.assertIn("· 레이드 5성", text)
+        self.assertIn("· 맥스배틀", text)
+        self.assertIn("- 추천: 물몬(01번", text)
+        self.assertNotIn("현재 레이드·맥스배틀 추천", self.client.get("/api/exports/box-ai.md?raids=false").text)
+        self.assertEqual(self.calls[2:], [])  # the export never downloads
+
     def test_list_refresh_and_recommend(self):
         empty = self.client.get("/api/raids/current").json()
         self.assertIsNone(empty["version"])
