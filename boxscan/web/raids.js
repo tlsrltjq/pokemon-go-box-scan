@@ -96,9 +96,17 @@ function showRecommendation(boss, result) {
     return;
   }
   const percent = Math.round((s.damage.avg / s.boss_hp) * 100);
+  const moveList = items => items.map(m => `${m.name}(${m.type})`).join(", ");
   const lines = [
-    element("p", {}, element("strong", {}, `예상 피해 ${range(s.damage)}`), ` · 보스 HP ${s.boss_hp.toLocaleString()}의 ${percent}%` +
-      (s.defeated_scenarios ? ` · ${s.defeated_scenarios}/${s.scenarios}가지 기술 조합에서 처치` : "")),
+    s.clear_s
+      ? element("p", {}, element("strong", {}, `혼자 처치 ${range(s.clear_s, "초", 1)}`),
+        ` · ${s.defeated_scenarios}/${s.scenarios}가지 기술 조합에서 처치`)
+      : element("p", {}, element("strong", {}, `예상 피해 ${range(s.damage)}`), ` · 보스 HP ${s.boss_hp.toLocaleString()}의 ${percent}%` +
+        (s.defeated_scenarios ? ` · ${s.defeated_scenarios}/${s.scenarios}가지 기술 조합에서 처치` : "")),
+    s.boss_moves ? element("p", { class: "muted" },
+      `보스 기술 · 노말어택: ${moveList(s.boss_moves.fast)} · 스페셜어택: ${moveList(s.boss_moves.charged)}`) : null,
+    s.dodge_comparison && s.dodge_comparison.chosen === "tank"
+      ? element("p", { class: "mega-note" }, "다 맞으면서 하기 추천: 스페셜어택을 피하면 시간 안에 덜 깎습니다.") : null,
     element("ol", { class: "party-list" }, ...s.party.map(m => element("li", {},
       element("strong", {}, m.name), m.code ? ` ${m.code}` : "",
       element("span", { class: "muted" }, ` · Lv ${m.level} · ${m.fast} / ${m.charged ?? "스페셜어택 안 씀"}` +
@@ -106,7 +114,13 @@ function showRecommendation(boss, result) {
         (m.damage.max > 0 ? ` · 피해 ${Math.round(m.damage.avg).toLocaleString()}` : " · 나오기 전에 끝남"))))),
   ];
   const mega = s.mega_comparison;
-  if (mega && mega.member && Math.round(mega.with_mega - mega.without_mega) > 0) {
+  const megaSaved = mega && mega.with_mega_clear_s && mega.without_mega_clear_s
+    ? mega.without_mega_clear_s - mega.with_mega_clear_s : null;
+  if (mega && mega.member && megaSaved != null) {
+    lines.push(element("p", { class: megaSaved > 0.5 ? "mega-note" : "muted" }, megaSaved > 0.5
+      ? `${mega.member} 포함: 메가 없는 추천보다 평균 ${megaSaved.toFixed(1)}초 빨리 처치합니다.`
+      : `${mega.member}을(를) 넣어도 처치 시간이 거의 같습니다.`));
+  } else if (mega && mega.member && Math.round(mega.with_mega - mega.without_mega) > 0) {
     lines.push(element("p", { class: "mega-note" }, `${mega.member} 포함: 메가 없는 추천보다 ${Math.round(mega.with_mega - mega.without_mega).toLocaleString()} 더 줍니다.`));
   } else if (mega && mega.member) {
     lines.push(element("p", { class: "muted" }, `${mega.member}을(를) 넣었지만 메가진화 없이도 같은 피해입니다.`));
@@ -121,7 +135,7 @@ function showRecommendation(boss, result) {
   if (s.shortfall) lines.push(element("p", { class: "warn-text" }, s.shortfall));
   lines.push(element("p", { class: "muted" }, (result.cached ? "저장된 결과" : "새로 계산") +
     ` · ${s.engine} · ${s.ruleset} · 기준 데이터 ${s.reference}` + (s.search_approximate ? " · 후보를 줄인 근사 탐색" : "")));
-  box.replaceChildren(...lines);
+  box.replaceChildren(...lines.filter(Boolean));
 }
 
 function showGroups() {

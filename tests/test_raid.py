@@ -202,6 +202,71 @@ class RecommendTests(unittest.TestCase):
                 self.assertLessEqual(result["result"]["damage"]["avg"], best + 1e-9)
 
 
+class SoloRaidTests(unittest.TestCase):
+    """Solo raid: boss charged attacks dodged (fast attacks taken), clear first, then the faster clear."""
+
+    def setUp(self):
+        self.data = reference()
+        self.foe = raid.boss(self.data, "불꽃몬", "5")
+
+    def test_dodged_charged_attacks_land_partly_and_cost_time(self):
+        fighter, _ = raid.attacker(self.data, entry(1, "물몬"))
+        harmless = raid.Move("X_FAST", "x", "FIRE", 0.0, 10, 1000, 500)  # 1 damage, lets the boss charge up
+        blast = raid._move(self.data, "BLAST")
+        args = ([(fighter, 0)], self.foe, harmless, blast, 300)
+        taken = raid.simulate(self.data, *args)
+        dodged = raid.simulate(self.data, *args, dodge=True)
+        # Dodged hits still land a quarter (game default), so the attacker lasts longer but not forever.
+        self.assertEqual(taken["members"][0]["faints"], 1)
+        self.assertGreater(dodged["members"][0]["time_ms"], taken["members"][0]["time_ms"])
+        self.assertEqual(raid.dodge_settings(self.data), (0.25, 500, False))
+        # Without fainting, dodging only costs attack time: less damage in the same 30 s.
+        short = ([(fighter, 0)], self.foe, harmless, blast, 30)
+        self.assertLess(raid.simulate(self.data, *short, dodge=True)["damage"], raid.simulate(self.data, *short)["damage"])
+
+    def test_dodge_values_come_from_the_game_data_when_present(self):
+        self.data.battle = {**self.data.battle, "dodgeDamageReductionPercent": 0.5, "dodgeDurationMs": 800}
+        self.assertEqual(raid.dodge_settings(self.data), (0.5, 800, True))
+        result = raid.recommend(self.data, [entry(1, "물몬")], "불꽃몬", "3", dodge="dodge")
+        self.assertTrue(any("피해의 50%" in a and "0.8초" in a and "게임 전투 설정 값" in a for a in result["assumptions"]))
+
+    def test_the_faster_clear_wins_when_every_party_defeats_the_boss(self):
+        # 3-star alone: any of these clears, so the old "most damage" goal could not tell them apart.
+        entries = [entry(1, "물몬", level=50.0), entry(2, "물몬", iv=(0, 15, 15), level=30.0),
+                   entry(3, "풀몬", fast="LEAF_FAST", charged=("BLADE",), level=30.0)]
+        result = raid.recommend(self.data, entries, "불꽃몬", "3", dodge="dodge")
+        self.assertEqual(result["result"]["defeated_scenarios"], 2)
+        foe = raid.boss(self.data, "불꽃몬", "3")
+        fighters = [raid.attacker(self.data, e)[0] for e in entries]
+        fastest = None
+        for size in range(1, 4):
+            for team in itertools.permutations(fighters, size):
+                runs = [raid.simulate(self.data, [(f, 0) for f in team], foe, fm, cm, 180, dodge=True)
+                        for fm, cm in raid._scenarios(foe, None, None)]
+                if all(r["defeated"] for r in runs):
+                    clear = sum(r["end_ms"] for r in runs) / len(runs) / 1000
+                    fastest = clear if fastest is None else min(fastest, clear)
+        self.assertLessEqual(result["result"]["clear_s"]["avg"], fastest * 1.05)
+        self.assertEqual(result["party"][0]["name"], "물몬")
+        self.assertEqual(result["boss"]["moves"]["charged"], [{"name": "폭발불", "type": "불꽃"}, {"name": "불펀치", "type": "불꽃"}])
+
+    def test_auto_tanks_only_when_dodging_runs_out_of_time(self):
+        box = [entry(1, "물몬")]
+        # 90 s against a 3-star: dodging loses enough time to miss the clear that tanking makes.
+        tight = raid.recommend(self.data, box, "불꽃몬", "3", time_limit_s=90)
+        self.assertEqual(tight["dodge_comparison"]["chosen"], "tank")
+        self.assertFalse(tight["dodge"])
+        self.assertGreater(tight["result"]["defeated_scenarios"], tight["dodge_comparison"]["other"]["defeated_scenarios"])
+        # With time to spare both clear: dodging stays the plan and the time tanking would save is reported.
+        easy = raid.recommend(self.data, box, "불꽃몬", "1")
+        self.assertEqual(easy["dodge_comparison"]["chosen"], "dodge")
+        self.assertTrue(easy["dodge"])
+        self.assertIsNotNone(easy["dodge_comparison"]["other"]["clear_s"])
+        self.assertEqual(raid.recommend(self.data, box, "불꽃몬", "3", time_limit_s=90, dodge="dodge")["dodge_mode"], "dodge")
+        with self.assertRaises(raid.RaidError):
+            raid.recommend(self.data, box, "불꽃몬", "3", dodge="jump")
+
+
 def mega_reference(boost_types=None) -> Reference:
     """The synthetic reference plus a mega 물몬 (more attack, WATER) and its "+" move."""
     data = reference()
@@ -224,8 +289,14 @@ class ShadowRaidTests(unittest.TestCase):
         plain = raid.recommend(self.data, self.entries, "불꽃몬", "5", trainers=6)
         angry = raid.recommend(self.data, self.entries, "불꽃몬", "5", trainers=6, shadow={})
         self.assertIsNotNone(angry["shadow"]["enraged_s"])
-        self.assertLess(angry["result"]["damage"]["avg"], plain["result"]["damage"]["avg"])
-        self.assertGreater(angry["shadow"]["comparison"]["damage"], angry["result"]["damage"]["avg"])  # calmed at once
+        # Six trainers defeat the boss either way; the enraged boss takes longer.
+        self.assertEqual(angry["result"]["damage"]["avg"], plain["result"]["damage"]["avg"])
+        self.assertGreater(angry["result"]["clear_s"]["avg"], plain["result"]["clear_s"]["avg"])
+        self.assertLess(angry["shadow"]["comparison"]["clear_s"], angry["result"]["clear_s"]["avg"])  # calmed at once
+        self.assertGreater(angry["result"]["clear_s"]["avg"], plain["result"]["clear_s"]["avg"])
+        hard = raid.recommend(self.data, self.entries, "불꽃몬", "5", shadow={})  # alone it is not defeated
+        easy = raid.recommend(self.data, self.entries, "불꽃몬", "5")
+        self.assertLess(hard["result"]["damage"]["avg"], easy["result"]["damage"]["avg"])
         calmed = raid.recommend(self.data, self.entries, "불꽃몬", "5", trainers=6, shadow={"calm_after_s": 0})
         self.assertEqual(calmed["shadow"]["comparison"]["calm_after_s"], None)
         self.assertTrue(angry["boss"]["shadow"])
@@ -317,7 +388,7 @@ class MegaTests(unittest.TestCase):
         self.assertGreater(comparison["with_mega"], comparison["without_mega"])
         self.assertEqual((comparison["member"], comparison["candidates"]), ("메가물몬", 2))
         self.assertEqual(result["search"]["mega_candidates"], 2)
-        self.assertEqual(result["engine"], "raid-sim/2")
+        self.assertEqual(result["engine"], raid.ENGINE_VERSION)
         plain = raid.recommend(self.data, entries, "불꽃몬", "5")
         self.assertEqual(plain["result"]["damage"]["avg"], comparison["without_mega"])
         self.assertNotIn("mega_comparison", plain)
@@ -383,6 +454,12 @@ class RaidApiTests(unittest.TestCase):
         compared = self.client.post("/api/raid/recommend", json={"species": "불꽃몬", "tier": "3",
                                                                  "compare_weather": True}).json()
         self.assertEqual(len(compared["weather_comparison"]), 8)
+        self.assertIn("clear_s", compared["weather_comparison"][0])
+        self.assertEqual(body["dodge_mode"], "auto")
+        self.assertEqual([m["name"] for m in body["boss"]["moves"]["fast"]], ["불씨"])
+        tank = self.client.post("/api/raid/recommend", json={"species": "불꽃몬", "tier": "3", "dodge": "tank"}).json()
+        self.assertFalse(tank["dodge"])
+        self.assertEqual(self.client.post("/api/raid/recommend", json={"species": "불꽃몬", "dodge": "x"}).status_code, 422)
         self.assertEqual(self.client.post("/api/raid/recommend", json={"species": ""}).status_code, 422)
         self.assertEqual(self.client.post("/api/raid/recommend", json={"species": "불꽃몬", "include_mega": True}).status_code, 422)
         self.assertEqual(self.client.get("/raid").status_code, 200)

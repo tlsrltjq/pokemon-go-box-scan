@@ -1,24 +1,30 @@
 """Normal raid recommendation (spec v1.2 sections 7 and 8.1).
 
-The goal is the most expected damage my party deals to the boss before the time limit ends, the
-boss falls, or (without re-entry) everyone faints. The engine is a deterministic event simulation:
+The goal is the strongest party for a solo raid: one that defeats the boss beats one that does not,
+among those that defeat it the faster clear wins, and among those that do not the most damage before
+the time limit ends or (without re-entry) everyone faints wins. The engine is a deterministic event
+simulation:
 
 - Damage: floor(0.5 * power * attack / defense * STAB * weather * type) + 1, values from the game
   master. Attack and defense are (base + IV) * CPM for my Pokémon and (base + 15) * tier CPM for
   the boss; boss HP comes from the tier table below.
-- My Pokémon start at full HP with 0 energy, never dodge, use the fast attack until the chosen
-  charged attack is affordable, then use it. Damage lands at the move's damage window. Energy comes
-  from my fast attacks and from damage taken (0.5 per HP). A fainted Pokémon's pending hit is lost.
-  The next one enters after the swap time.
+- My Pokémon start at full HP with 0 energy, use the fast attack until the chosen charged attack is
+  affordable, then use it. Damage lands at the move's damage window. Energy comes from my fast
+  attacks and from damage taken (0.5 per HP). A fainted Pokémon's pending hit is lost. The next one
+  enters after the swap time.
+- Dodging (on by default, the way people play solo): every boss fast attack hits; every boss charged
+  attack is dodged, so it deals the game's dodged share (1 - dodgeDamageReductionPercent) and my next
+  action waits dodgeDurationMs. Without dodging every attack hits in full.
 - The boss uses a move, then waits enemyAttackInterval + 0.5 s (the midpoint of the 1.5–2.5 s
   spread). It uses its charged attack on every second chance once it has the energy (about 50 %).
   It gains energy from its moves and from damage taken.
 - Boss movesets that are not chosen are all simulated and reported as an even average with the
   lowest and highest result. That is a scenario average, not the game's real probabilities.
 
-Party search: every eligible Pokémon picks the charged attack that deals more damage in a solo run;
-the strongest candidates (by damage per second) are kept, every party of up to six from them is
-estimated from the solo runs, and the best few are simulated in full. The search is exhaustive over
+Party search: every eligible Pokémon picks the charged attack that does better in a solo run (by the
+same ranking); the strongest candidates (by damage per second) are kept, every party of up to six
+from them is estimated from the solo runs (damage up to the boss's HP and the time to get there), and
+the best few are simulated in full. The search is exhaustive over
 the kept candidates, not over every possible action, and the result says so.
 
 Mega evolution (optional): every box Pokémon that can mega evolve or reverse into a primal form is
@@ -38,13 +44,16 @@ from .forms import display_name
 from .reference import Reference
 from .species import TEMP_NAMES
 
-ENGINE_VERSION = "raid-sim/2"
+ENGINE_VERSION = "raid-sim/3"
 PARTY_SIZE = 6
 CANDIDATE_LIMIT = 12  # best by each measure (damage per second, total damage)
 SHORTLIST_LIMIT = 18  # at most this many are combined (18 choose 6 = 18,564 parties)
 MEGA_CANDIDATE_LIMIT = 4
-FULL_SIM_PARTIES = 5
+FULL_SIM_PARTIES = 8
 BOSS_EXTRA_DELAY_MS = 500
+# Game master battleSettings values, used when the saved reference predates reading them.
+DODGE_REDUCTION_DEFAULT = 0.75
+DODGE_MS_DEFAULT = 500
 
 # Raid tiers. HP and CPM as listed on Bulbapedia's "Raid Battle (GO)" page (checked 2026-11-16);
 # the 22,500 HP tier as listed by GamePress. Time limits are the app's scenario defaults, not
@@ -237,13 +246,22 @@ def damage(reference: Reference, move: Move, attack: float, defense: float, atta
     return math.floor(0.5 * move.power * attack / defense * stab * boost * effective * bonus) + 1
 
 
+def dodge_settings(reference: Reference) -> tuple[float, int, bool]:
+    """(share of a dodged hit's damage that still lands, dodge time in ms, read from the game data)."""
+    settings = reference.battle or {}
+    known = "dodgeDamageReductionPercent" in settings and "dodgeDurationMs" in settings
+    reduction = float(settings.get("dodgeDamageReductionPercent", DODGE_REDUCTION_DEFAULT))
+    return 1.0 - reduction, int(settings.get("dodgeDurationMs", DODGE_MS_DEFAULT)), known
+
+
 def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, boss_fast: Move,
              boss_charged: Move, time_limit_s: float, weather: str = "", rejoin_delay_s: float | None = None,
-             trainers: int = 1) -> dict:
+             trainers: int = 1, dodge: bool = False) -> dict:
     """Run one battle. party = [(fighter, index of the charged attack to use)], in order.
 
     With trainers > 1 the others are assumed to deal as much as I do at the same moments, so the boss
-    loses HP that many times faster; only my share is counted as my damage."""
+    loses HP that many times faster; only my share is counted as my damage. With dodge, every boss
+    charged attack is dodged: only the dodged share lands and my next action waits the dodge time."""
     weather_types = (reference.weather or {}).get(weather, []) if weather else []
     settings = reference.battle
     limit = int(time_limit_s * 1000)
@@ -251,6 +269,8 @@ def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, 
     swap = settings["swapDurationMs"]
     boss_delay = int(settings["enemyAttackInterval"] * 1000) + BOSS_EXTRA_DELAY_MS
     shadow = foe.get("shadow")
+    dodged_share, dodge_ms, _ = dodge_settings(reference)
+    dodge_wait = 0  # ms my next action is held back by a dodge
 
     def tables(attack_scale: float, defense_scale: float):
         defense, attack = foe["defense"] * defense_scale, foe["attack"] * attack_scale
@@ -287,6 +307,10 @@ def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, 
             break
         if kind == "attacker_move":
             if data != generation or not active:
+                continue
+            if dodge_wait:
+                push(time + dodge_wait, "attacker_move", generation)
+                dodge_wait = 0
                 continue
             fighter, choice = party[current]
             move = fighter.charged[choice]
@@ -332,6 +356,9 @@ def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, 
             if not active or time < entered:
                 continue  # nobody on the field during a swap or a re-entry
             dealt = (angry if enraged else normal)[2][current][1 if charged else 0]
+            if charged and dodge:
+                dealt = max(1, math.floor(dealt * dodged_share))
+                dodge_wait += dodge_ms
             hp -= dealt
             energy = min(max_energy, energy + math.ceil(dealt * settings["energyDeltaPerHealthLost"]))
             if hp <= 0:
@@ -349,7 +376,7 @@ def simulate(reference: Reference, party: list[tuple[Fighter, int]], foe: dict, 
                 if following is None:
                     active, end_time = False, time
                     continue
-                current, hp, energy, entered = following, party[following][0].hp, 0, start
+                current, hp, energy, entered, dodge_wait = following, party[following][0].hp, 0, start, 0
                 push(start, "attacker_move", generation)
     if active:
         stats[current]["time_ms"] += min(end_time, limit) - entered
@@ -369,30 +396,54 @@ def _scenarios(foe: dict, boss_fast: str | None, boss_charged: str | None) -> li
     return [(f, c) for f in fast for c in charged]
 
 
-def _estimate(members: list[list[tuple[int, int]]], limit_ms: int, swap_ms: int, rejoin_ms: int | None) -> float:
-    """Party damage from solo runs (damage, alive ms) per member, ordered strongest first."""
-    remaining, total = limit_ms, 0.0
+def rank(outcomes: list[tuple[bool, float, float]]) -> tuple:
+    """Solo raid ranking over boss moveset scenarios, larger is better. Each outcome is
+    (boss defeated, my damage, end ms): more scenarios cleared first, then more damage where the boss
+    survives, then the faster clears."""
+    return (sum(1 for defeated, _, _ in outcomes if defeated),
+            round(sum(dealt for defeated, dealt, _ in outcomes if not defeated)),
+            -sum(end for defeated, _, end in outcomes if defeated))
+
+
+def _run_rank(runs: list[dict]) -> tuple:
+    return rank([(r["defeated"], r["damage"], r["end_ms"]) for r in runs])
+
+
+def _estimate(members: list[tuple[int, int]], limit_ms: int, swap_ms: int, rejoin_ms: int | None,
+              target: float) -> tuple[bool, float, float]:
+    """(defeated, damage, end ms) of a party, estimated from solo runs (damage, alive ms) per member in
+    order. target is my share of the boss's HP; damage stops there."""
+    remaining, total, elapsed = limit_ms, 0.0, 0.0
     while remaining > 0:
         for dealt, alive in members:
             if remaining <= 0:
                 break
-            if alive >= remaining:
-                total += dealt * remaining / max(alive, 1)
+            alive = max(alive, 1)
+            span = min(alive, remaining)
+            gained = dealt * span / alive
+            if dealt > 0 and total + gained >= target:
+                return True, target, elapsed + (target - total) * alive / dealt
+            total += gained
+            elapsed += span
+            remaining -= span
+            if span < alive:
                 remaining = 0
                 break
-            total += dealt
-            remaining -= alive + swap_ms
+            elapsed += swap_ms
+            remaining -= swap_ms
         if rejoin_ms is None:
             break
+        elapsed += rejoin_ms - swap_ms
         remaining -= rejoin_ms - swap_ms
-    return total
+    return False, total, min(elapsed, limit_ms)
 
 
-def recommend(reference: Reference, entries: list[dict], species: str, tier: str, form: str | None = None,
+def _recommend(reference: Reference, entries: list[dict], species: str, tier: str, form: str | None = None,
               temp: str | None = None, weather: str = "", time_limit_s: float | None = None,
               rejoin_delay_s: float | None = None, boss_fast: str | None = None,
               boss_charged: str | None = None, include_mega: bool = False, compare_mega: bool = True,
-              shadow: dict | None = None, compare_shadow: bool = True, trainers: int = 1) -> dict:
+              shadow: dict | None = None, compare_shadow: bool = True, trainers: int = 1,
+              dodge: bool = True) -> dict:
     if include_mega and not reference.temp_boosts:
         raise RaidError("기준 데이터에 메가진화 보너스가 없습니다. `python -m boxscan reference rebuild`를 실행하세요.")
     if weather not in WEATHER_NAMES:
@@ -412,15 +463,17 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
     def candidate(fighter):
         options = []
         for index, _ in enumerate(fighter.charged):
-            runs = [simulate(reference, [(fighter, index)], foe, f, c, limit_s, weather, trainers=trainers)
-                    for f, c in scenarios]
+            runs = [simulate(reference, [(fighter, index)], foe, f, c, limit_s, weather, trainers=trainers,
+                             dodge=dodge) for f, c in scenarios]
             solo = [(r["damage"], max(r["members"][0]["time_ms"], 1)) for r in runs]
-            options.append((sum(d for d, _ in solo) / len(solo), index, solo))
-        options.sort(key=lambda option: option[0], reverse=True)
-        best_damage, choice, solo = options[0]
-        dps = sum(d / t for d, t in solo) / len(solo) * 1000
-        return {"fighter": fighter, "choice": choice, "solo": solo, "dps": dps,
-                "options": [(o[1], o[0]) for o in options]}
+            cleared = [r["end_ms"] for r in runs if r["defeated"]]
+            options.append({"rank": _run_rank(runs), "index": index, "solo": solo,
+                            "damage": sum(d for d, _ in solo) / len(solo),
+                            "clear_s": sum(cleared) / len(cleared) / 1000 if len(cleared) == len(runs) else None})
+        options.sort(key=lambda option: option["rank"], reverse=True)
+        best = options[0]
+        dps = sum(d / t for d, t in best["solo"]) / len(best["solo"]) * 1000
+        return {"fighter": fighter, "choice": best["index"], "solo": best["solo"], "dps": dps, "options": options}
 
     excluded, candidates, megas = [], [], []
     for entry in entries:
@@ -455,28 +508,29 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
                 and sum(1 for c in team if c["fighter"].info.get("mega")) <= 1)
 
     estimates = []
+    target = foe["hp"] / trainers  # my share of the boss's HP
     combos = [team for team in itertools.combinations(considered, size) if allowed(team)]
     for team in combos:
         team = ordered(team)
-        score = sum(_estimate([c["solo"][s] for c in team], int(limit_s * 1000), swap, rejoin_ms)
-                    for s in range(len(scenarios))) / len(scenarios)
+        score = rank([_estimate([c["solo"][s] for c in team], int(limit_s * 1000), swap, rejoin_ms, target)
+                      for s in range(len(scenarios))])
         estimates.append((score, team))
     estimates.sort(key=lambda item: item[0], reverse=True)
 
     best = None
     for _, team in estimates[:FULL_SIM_PARTIES]:
         runs = [simulate(reference, [(c["fighter"], c["choice"]) for c in team], foe, f, ch, limit_s, weather,
-                         rejoin_delay_s, trainers) for f, ch in scenarios]
-        average = sum(r["damage"] for r in runs) / len(runs)
-        if best is None or average > best[0]:
-            best = (average, team, runs)
+                         rejoin_delay_s, trainers, dodge) for f, ch in scenarios]
+        score = _run_rank(runs)
+        if best is None or score > best[0]:
+            best = (score, team, runs)
     _, team, runs = best
     search = {"candidates": len(candidates), "considered": len(considered), "combinations": len(combos),
               "fully_simulated": min(FULL_SIM_PARTIES, len(estimates)), "mega_candidates": len(megas),
               "approximate": len(candidates) > len(considered) - len([c for c in considered if c in megas])
               or len(megas) > MEGA_CANDIDATE_LIMIT}
     report = _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
-                     shortfall=len(candidates) < PARTY_SIZE, include_mega=include_mega)
+                     shortfall=len(candidates) < PARTY_SIZE, include_mega=include_mega, dodge=dodge)
     report["trainers"] = trainers
     if trainers > 1:
         report["assumptions"].insert(0, f"함께하는 트레이너 {trainers}명: 다른 트레이너도 나와 같은 피해를 같은 때 준다고 보고 "
@@ -491,18 +545,60 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
             other = {**settings, "calm_after_ms": 0 if settings.get("calm_after_ms") is None else None}
             other_foe = {**foe, "shadow": other}
             other_runs = [simulate(reference, [(c["fighter"], c["choice"]) for c in team], other_foe, f, ch, limit_s,
-                                   weather, rejoin_delay_s, trainers) for f, ch in scenarios]
+                                   weather, rejoin_delay_s, trainers, dodge) for f, ch in scenarios]
+            cleared = [r["end_ms"] / 1000 for r in other_runs if r["defeated"]]
             report["shadow"]["comparison"] = {
                 "calm_after_s": None if other["calm_after_ms"] is None else other["calm_after_ms"] / 1000,
-                "damage": round(sum(r["damage"] for r in other_runs) / len(other_runs), 1)}
+                "damage": round(sum(r["damage"] for r in other_runs) / len(other_runs), 1),
+                "clear_s": round(sum(cleared) / len(cleared), 1) if len(cleared) == len(other_runs) else None}
     if include_mega and compare_mega:
-        plain = recommend(reference, entries, species, tier, form, temp, weather, time_limit_s, rejoin_delay_s,
-                          boss_fast, boss_charged, shadow=shadow, compare_shadow=False, trainers=trainers)
-        chosen = next((m for m in report["party"] if m["mega"]), None)
+        plain = _recommend(reference, entries, species, tier, form, temp, weather, time_limit_s, rejoin_delay_s,
+                           boss_fast, boss_charged, shadow=shadow, compare_shadow=False, trainers=trainers, dodge=dodge)
+        chosen = next((m for m in report["party"] if m.get("mega")), None)
         report["mega_comparison"] = {
             "with_mega": report["result"]["damage"]["avg"], "without_mega": plain["result"]["damage"]["avg"],
+            "with_mega_clear_s": (report["result"].get("clear_s") or {}).get("avg"),
+            "without_mega_clear_s": (plain["result"].get("clear_s") or {}).get("avg"),
             "member": chosen["name"] if chosen else None, "candidates": len(megas)}
     return report
+
+
+DODGE_MODES = ("auto", "dodge", "tank")
+
+
+def recommend(reference: Reference, entries: list[dict], species: str, tier: str, *args,
+              dodge: str | bool = "auto", **kwargs) -> dict:
+    """The solo raid recommendation. dodge: "dodge" (boss charged attacks dodged), "tank" (every attack
+    taken), or "auto": both are calculated and tanking is recommended only when it does better before
+    time runs out (more boss movesets cleared, or more damage where the boss survives). When both
+    clear, dodging stays the recommendation and the time tanking would save is reported."""
+    mode = {True: "dodge", False: "tank"}.get(dodge, dodge) if isinstance(dodge, bool) else dodge
+    if mode not in DODGE_MODES:
+        raise RaidError("회피 방식을 다시 선택하세요.")
+    if mode != "auto":
+        report = _recommend(reference, entries, species, tier, *args, dodge=mode == "dodge", **kwargs)
+        report["dodge_mode"] = mode
+        return report
+    dodging = _recommend(reference, entries, species, tier, *args, dodge=True, **kwargs)
+    if not dodging["result"]:
+        dodging["dodge_mode"] = "auto"
+        return dodging
+    tanking = _recommend(reference, entries, species, tier, *args, dodge=False, **kwargs)
+
+    def outcome(report):
+        return _run_rank([{"defeated": s["defeated"], "damage": s["damage"], "end_ms": s["battle_s"] * 1000}
+                          for s in report["by_scenario"]])
+
+    tank_better = outcome(tanking)[:2] > outcome(dodging)[:2]  # clears or damage, not just a faster clear
+    chosen, other = (tanking, dodging) if tank_better else (dodging, tanking)
+    r = other["result"]
+    chosen["dodge_mode"] = "auto"
+    chosen["dodge_comparison"] = {
+        "chosen": "tank" if tank_better else "dodge",
+        "other": {"mode": "dodge" if tank_better else "tank", "damage": r["damage"], "clear_s": r["clear_s"],
+                  "defeated_scenarios": r["defeated_scenarios"], "party": [m["name"] for m in other["party"]]},
+    }
+    return chosen
 
 
 # Shadow raid enrage, community estimates (the official help gives no numbers): enraged around 60 %
@@ -559,9 +655,16 @@ def compare_weather(reference: Reference, entries: list[dict], species: str, tie
         result = recommend(reference, entries, species, tier,
                            **{**options, "weather": weather, "compare_mega": False, "compare_shadow": False})
         if result["result"]:
-            rows.append({"weather": weather, "name": name, "damage": result["result"]["damage"],
-                         "party": [member["name"] for member in result["party"]]})
-    return sorted(rows, key=lambda row: row["damage"]["avg"], reverse=True)
+            r = result["result"]
+            rows.append({"weather": weather, "name": name, "damage": r["damage"], "clear_s": r["clear_s"],
+                         "defeated_scenarios": r["defeated_scenarios"],
+                         "party": [member["name"] for member in result["party"]],
+                         "_rank": _run_rank([{"defeated": s["defeated"], "damage": s["damage"],
+                                              "end_ms": s["battle_s"] * 1000} for s in result["by_scenario"]])})
+    rows.sort(key=lambda row: row["_rank"], reverse=True)
+    for row in rows:
+        del row["_rank"]
+    return rows
 
 
 def _theoretical_dps(reference: Reference, fighter: Fighter, choice: int, foe: dict, weather: str) -> float:
@@ -580,8 +683,37 @@ def _summary(values: list[float]) -> dict:
     return {"avg": round(sum(values) / len(values), 1), "min": round(min(values), 1), "max": round(max(values), 1)}
 
 
+def _dodge_note(reference: Reference, dodge: bool) -> str:
+    if not dodge:
+        return "회피하지 않습니다. 보스의 노말어택과 스페셜어택을 모두 맞습니다."
+    share, wait, known = dodge_settings(reference)
+    return (f"보스 노말어택은 모두 맞고, 스페셜어택은 모두 피합니다. 피하면 피해의 {share * 100:g}%만 받고, "
+            f"피하는 동안 {wait / 1000:g}초 공격하지 못합니다"
+            + ("(게임 전투 설정 값)." if known else
+               "(게임 전투 설정의 일반 값. `python -m boxscan reference rebuild`를 실행하면 받은 기준 데이터에서 읽습니다).")
+            + " 피할 타이밍을 기다리느라 실제로는 더 잃을 수 있습니다.")
+
+
+def _boss_moves(foe: dict) -> dict:
+    """The moves the boss can use (unknown until the battle starts), for display."""
+    return {slot: [{"name": m.name, "type": TYPE_NAMES.get(m.type, m.type)} for m in foe[slot]]
+            for slot in ("fast", "charged")}
+
+
+def _charged_note(fighter: Fighter, options: list[dict]) -> str | None:
+    if len(options) < 2:
+        return None
+    best, other = options[0], options[1]
+    name = fighter.charged[other["index"]].name
+    if best["clear_s"] is not None and other["clear_s"] is not None:
+        return f"{name}보다 혼자 싸울 때 {other['clear_s'] - best['clear_s']:.1f}초 빨리 쓰러뜨려 선택"
+    if best["clear_s"] is not None:
+        return f"{name}로는 혼자 쓰러뜨리지 못하는 보스 기술이 있어 선택"
+    return f"{name}보다 혼자 싸울 때 평균 피해가 {best['damage'] - other['damage']:.0f} 많아 선택"
+
+
 def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
-            shortfall=False, include_mega=False) -> dict:
+            shortfall=False, include_mega=False, dodge=True) -> dict:
     shadow = foe.get("shadow")
     shadow_notes = [] if not shadow else [
         f"그림자 레이드: 보스 HP가 {shadow['enrage_at'] * 100:.0f}% 남으면 격앙해 공격 ×{shadow['attack']:g}, 방어 ×{shadow['defense']:g}가 됩니다. "
@@ -595,12 +727,7 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
     for position, candidate in enumerate(team):
         fighter, choice = candidate["fighter"], candidate["choice"]
         member_runs = [r["members"][position] for r in runs]
-        options = candidate["options"]
-        note = None
-        if len(options) > 1:
-            (_, best_damage), (other_index, other_damage) = options[0], options[1]
-            note = (f"{fighter.charged[other_index].name}보다 혼자 싸울 때 평균 피해가 "
-                    f"{best_damage - other_damage:.0f} 많아 선택")
+        note = _charged_note(fighter, candidate["options"])
         party.append({
             "order": position + 1, "id": fighter.key, **fighter.info, "name": fighter.name,
             "types": [TYPE_NAMES.get(t, t) for t in fighter.types],
@@ -615,10 +742,13 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
             party[-1]["mega"] = mega | {"boost_types": [TYPE_NAMES.get(t, t) for t in mega["boost_types"]]}
     result = None
     if runs:
+        cleared = [r["end_ms"] / 1000 for r in runs if r["defeated"]]
         result = {
             "damage": _summary([r["damage"] for r in runs]),
             "boss_hp": foe["hp"],
-            "defeated_scenarios": sum(1 for r in runs if r["defeated"]),
+            "defeated_scenarios": len(cleared),
+            # Clear time over the boss movesets where the party defeats the boss.
+            "clear_s": _summary(cleared) if cleared else None,
             "battle_s": _summary([r["end_ms"] / 1000 for r in runs]),
             "faints": _summary([r["faints"] for r in runs]),
             "rejoins": _summary([r["rejoins"] for r in runs]),
@@ -628,16 +758,19 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
         "engine": ENGINE_VERSION, "ruleset": RULESET["version"], "reference": reference.version,
         "boss": {k: foe[k] for k in ("species", "form_name", "temp", "tier", "tier_name", "hp")} | {"shadow": bool(shadow)}
         | {"types": [TYPE_NAMES.get(t, t) for t in foe["types"]],
-           "attack": round(foe["attack"], 1), "defense": round(foe["defense"], 1)},
+           "attack": round(foe["attack"], 1), "defense": round(foe["defense"], 1), "moves": _boss_moves(foe)},
         "weather": weather, "weather_name": WEATHER_NAMES[weather],
-        "time_limit_s": limit_s, "rejoin_delay_s": rejoin_delay_s,
+        "time_limit_s": limit_s, "rejoin_delay_s": rejoin_delay_s, "dodge": dodge,
         "scenarios": [{"fast": f.name, "charged": c.name} for f, c in scenarios],
         "by_scenario": [{"fast": f.name, "charged": c.name, "damage": r["damage"], "defeated": r["defeated"],
                          "battle_s": r["end_ms"] / 1000} for (f, c), r in zip(scenarios, runs)],
         "party": party, "result": result, "excluded": excluded, "search": search,
         "shortfall": (f"추천에 쓸 수 있는 개체가 {len(team)}마리라 6마리를 채우지 못했습니다." if shortfall else None),
         "assumptions": [
-            "전원 체력 가득·에너지 0으로 시작하고 회피하지 않습니다.",
+            "혼자 하는 레이드 기준 순위: 보스를 쓰러뜨리는 파티가 먼저이고, 쓰러뜨리는 파티끼리는 처치 시간이 짧은 순, "
+            "못 쓰러뜨리면 준 피해가 큰 순입니다. 보스 기술은 들어가기 전에 모르므로 가능한 조합을 모두 계산해 비교합니다.",
+            "전원 체력 가득·에너지 0으로 시작합니다.",
+            _dodge_note(reference, dodge),
             "스페셜어택은 에너지가 모이면 바로 씁니다. 두 스페셜어택 중 한 가지만 계속 씁니다.",
             "보스는 기술 사이에 평균 2초를 쉬고, 스페셜어택은 쓸 수 있을 때 약 절반만 씁니다(번갈아 사용으로 근사).",
             "보스 기술을 정하지 않으면 가능한 조합을 모두 계산해 같은 비중으로 평균합니다. 실제 확률이 아닙니다.",

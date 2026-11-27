@@ -186,7 +186,10 @@ def create_app(
         shadow = payload.get("shadow")
         if shadow is not None and not isinstance(shadow, dict):
             raise HTTPException(422, "그림자 레이드 설정이 올바르지 않습니다.")
-        extra = {"trainers": trainers, "shadow": shadow}
+        dodge = payload.get("dodge") or "auto"
+        if dodge not in raid.DODGE_MODES:
+            raise HTTPException(422, "회피 방식을 다시 선택하세요.")
+        extra = {"trainers": trainers, "shadow": shadow, "dodge": dodge}
         try:
             result = raid.recommend(
                 data, box.list(), species, text("tier") or "5", form=text("form"), temp=text("temp"),

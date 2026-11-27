@@ -401,7 +401,9 @@ def summary(kind: str, report: dict) -> dict:
     result = report.get("result")
     out = {
         "party": members,
+        "boss_moves": report["boss"].get("moves"),
         "damage": result["damage"] if result else None,
+        "clear_s": result.get("clear_s") if result else None,
         "boss_hp": report["boss"]["hp"],
         "defeated_scenarios": result.get("defeated_scenarios") if result else None,
         "scenarios": len(report.get("scenarios") or []),
@@ -413,6 +415,7 @@ def summary(kind: str, report: dict) -> dict:
     }
     if kind == "raid":
         out["mega_comparison"] = report.get("mega_comparison")
+        out["dodge_comparison"] = report.get("dodge_comparison")
         shadow = report.get("shadow")
         out["shadow"] = None if not shadow else {k: shadow.get(k) for k in (
             "enrage_at", "attack", "defense", "enraged_s", "enraged_runs", "runs", "comparison")}

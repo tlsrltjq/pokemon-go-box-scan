@@ -285,7 +285,8 @@ TYPE_ORDER = ["NORMAL", "FIGHTING", "FLYING", "POISON", "GROUND", "ROCK", "BUG",
               "FIRE", "WATER", "GRASS", "ELECTRIC", "PSYCHIC", "ICE", "DRAGON", "DARK", "FAIRY"]
 BATTLE_KEYS = ("sameTypeAttackBonusMultiplier", "maximumEnergy", "energyDeltaPerHealthLost",
                "swapDurationMs", "enemyAttackInterval", "bossEnergyRegenerationPerHealthLost",
-               "shadowPokemonAttackBonusMultiplier", "shadowPokemonDefenseBonusMultiplier")
+               "shadowPokemonAttackBonusMultiplier", "shadowPokemonDefenseBonusMultiplier",
+               "dodgeDamageReductionPercent", "dodgeDurationMs")
 
 
 def _type(value) -> str | None:

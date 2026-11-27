@@ -30,8 +30,10 @@ async function loadBoss() {
   if (!species) return;
   try {
     const { boss } = await jsonResponse(await fetch(`/api/raid/options?species=${encodeURIComponent(species)}`));
-    fill(form.elements.boss_fast, boss.fast, true);
-    fill(form.elements.boss_charged, boss.charged, true);
+    const moves = document.querySelector("#boss-moves");
+    moves.textContent = `보스가 쓸 수 있는 기술 · 노말어택: ${boss.fast.map(m => m.name).join(", ") || "없음"}` +
+      ` · 스페셜어택: ${boss.charged.map(m => m.name).join(", ") || "없음"}`;
+    moves.hidden = false;
     fill(form.elements.form, boss.forms);
     formField.hidden = boss.forms.length < 2;
     fill(form.elements.temp, [{ id: "", name: "하지 않음" }, ...boss.temp]);
@@ -74,10 +76,45 @@ function shadowLine(shadow) {
   return element("p", { class: "mega-note" }, `그림자 레이드 · ${calm} · ${when}.${other}`);
 }
 
+function bossMovesLine(moves) {
+  if (!moves) return null;
+  const list = items => items.map(m => `${m.name}(${m.type})`).join(", ") || "없음";
+  return element("p", {}, `보스가 쓸 수 있는 기술 · 노말어택: ${list(moves.fast)} · 스페셜어택: ${list(moves.charged)}. ` +
+    "들어가기 전에는 어떤 기술인지 모르므로 모든 조합을 계산했습니다.");
+}
+
+const DODGE_NAMES = { dodge: "스페셜어택은 피하기", tank: "다 맞으면서 하기" };
+
+function outcomeText(o) {
+  return o.clear_s ? `평균 ${o.clear_s.avg}초에 처치` : `피해 ${Math.round(o.damage.avg).toLocaleString()} (처치 못 함)`;
+}
+
+function dodgeLine(result) {
+  const comparison = result.dodge_comparison;
+  if (!comparison) return element("p", { class: "muted" }, `회피: ${DODGE_NAMES[result.dodge ? "dodge" : "tank"]}.`);
+  const other = comparison.other;
+  if (comparison.chosen === "tank") {
+    return element("p", { class: "mega-note" }, "다 맞으면서 하기를 추천합니다. 스페셜어택을 피하면 시간 안에 덜 깎습니다" +
+      ` (피하면 ${outcomeText(other)}, 그때 파티 ${other.party.join(" → ")}).`);
+  }
+  const r = result.result;
+  if (r.clear_s && other.clear_s && other.defeated_scenarios === r.defeated_scenarios) {
+    const saved = r.clear_s.avg - other.clear_s.avg;
+    return element("p", { class: "muted" }, "스페셜어택을 피하는 기준입니다. " +
+      (saved > 0.5 ? `다 맞으면서 하면 평균 ${saved.toFixed(1)}초 빨라집니다 (파티 ${other.party.join(" → ")}).`
+        : "다 맞으면서 해도 처치 시간이 거의 같습니다."));
+  }
+  return element("p", { class: "muted" }, `스페셜어택을 피하는 기준입니다. 다 맞으면서 하면 ${outcomeText(other)}.`);
+}
+
 function megaLine(comparison) {
   if (!comparison) return null;
   if (!comparison.candidates) return element("p", { class: "muted" }, "박스에 메가진화·원시회귀할 수 있는 개체가 없어 메가진화 없이 계산했습니다.");
-  if (!comparison.member) return element("p", { class: "muted" }, "메가진화 개체를 넣어도 피해가 늘지 않아 메가진화 없이 추천합니다.");
+  if (!comparison.member) return element("p", { class: "muted" }, "메가진화 개체를 넣어도 더 나아지지 않아 메가진화 없이 추천합니다.");
+  if (comparison.with_mega_clear_s && comparison.without_mega_clear_s) {
+    const saved = comparison.without_mega_clear_s - comparison.with_mega_clear_s;
+    return element("p", {}, `${comparison.member}을(를) 넣으면 메가진화 없는 추천보다 평균 ${saved.toFixed(1)}초 빨리 쓰러뜨립니다.`);
+  }
   const gain = comparison.with_mega - comparison.without_mega;
   return element("p", {}, `${comparison.member}을(를) 넣으면 메가진화 없는 추천(${Math.round(comparison.without_mega).toLocaleString()})보다 ` +
     `평균 ${Math.round(gain).toLocaleString()} 더 줍니다.`);
@@ -98,13 +135,15 @@ function showResult(result) {
         (result.rejoin_delay_s == null ? " · 재입장 없음" : ` · 재입장 지연 ${result.rejoin_delay_s}초`) +
         (result.trainers > 1 ? ` · ${result.trainers}명` : " · 혼자")),
       element("dl", {},
+        element("div", {}, element("dt", {}, "처치 시간"), element("dd", {}, element("strong", {},
+          r.clear_s ? range(r.clear_s, "초", 1) : "처치 못 함"),
+          element("span", {}, `보스 기술 ${result.scenarios.length}가지 조합 중 ${r.defeated_scenarios}가지에서 처치`))),
         element("div", {}, element("dt", {}, "예상 누적 피해"), element("dd", {}, element("strong", {}, range(r.damage)),
           element("span", {}, `보스 HP의 ${Math.round((r.damage.avg / r.boss_hp) * 100)}%`))),
-        element("div", {}, element("dt", {}, "유효 전투 시간"), element("dd", {}, element("strong", {}, range(r.battle_s, "초", 1)))),
         element("div", {}, element("dt", {}, "기절 · 재입장"), element("dd", {}, element("strong", {}, `${range(r.faints)} · ${range(r.rejoins)}`)))),
-      element("p", { class: "muted" }, `보스 기술 조합 ${result.scenarios.length}가지 평균(괄호는 가장 낮은~높은 결과). ` +
-        (r.defeated_scenarios ? `${r.defeated_scenarios}가지 조합에서 혼자 보스를 쓰러뜨립니다. ` : "") +
-        `평균 DPS ${r.dps.avg}.`),
+      element("p", { class: "muted" }, `보스 기술 조합 평균(괄호는 가장 낮은~높은 결과). 유효 전투 시간 ${range(r.battle_s, "초", 1)} · 평균 DPS ${r.dps.avg}.`),
+      bossMovesLine(boss.moves),
+      dodgeLine(result),
       megaLine(result.mega_comparison),
       shadowLine(result.shadow),
       result.shortfall ? element("p", { class: "warn-text" }, result.shortfall) : null,
@@ -115,10 +154,11 @@ function showResult(result) {
   weather.replaceChildren(...(result.weather_comparison ? [
     element("h3", {}, "날씨별 비교"),
     element("table", { class: "compare" },
-      element("thead", {}, element("tr", {}, ...["날씨", "예상 피해", "추천 파티"].map(t => element("th", { scope: "col" }, t)))),
+      element("thead", {}, element("tr", {}, ...["날씨", "처치 시간", "예상 피해", "추천 파티"].map(t => element("th", { scope: "col" }, t)))),
       element("tbody", {}, ...result.weather_comparison.map(row => element("tr",
         { class: row.weather === result.weather ? "changed" : null },
-        element("td", {}, row.name), element("td", {}, range(row.damage)), element("td", {}, row.party.join(" → "))))))] : []));
+        element("td", {}, row.name), element("td", {}, row.clear_s ? range(row.clear_s, "초", 1) : "처치 못 함"),
+        element("td", {}, range(row.damage)), element("td", {}, row.party.join(" → "))))))] : []));
   document.querySelector("#scenarios").replaceChildren(
     element("thead", {}, element("tr", {}, ...["보스 노말어택", "보스 스페셜어택", "예상 피해", "전투 시간"].map(t => element("th", { scope: "col" }, t)))),
     element("tbody", {}, ...result.by_scenario.map(s => element("tr", {},
@@ -160,8 +200,7 @@ form.addEventListener("submit", async event => {
         temp: document.querySelector("#temp-field").hidden ? null : form.elements.temp.value || null,
         time_limit_s: form.elements.time_limit_s.value,
         rejoin_delay_s: form.elements.rejoin.checked ? form.elements.rejoin_delay_s.value : null,
-        boss_fast: form.elements.boss_fast.value || null,
-        boss_charged: form.elements.boss_charged.value || null,
+        dodge: form.elements.dodge.value,
         compare_weather: form.elements.compare_weather.checked,
         include_mega: form.elements.include_mega.checked,
         trainers: form.elements.trainers.value,
