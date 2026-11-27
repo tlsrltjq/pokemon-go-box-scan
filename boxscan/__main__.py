@@ -45,7 +45,22 @@ def main() -> None:
     ref.add_argument("action", choices=["update", "rebuild", "show"])
     raids_cmd = commands.add_parser("raids", help="현재 레이드·맥스배틀 보스 목록 갱신·확인")
     raids_cmd.add_argument("action", choices=["update", "show"])
+    accuracy_cmd = commands.add_parser("accuracy", help="판독 후보와 저장한 값을 비교해 정확도·자동 저장 시뮬레이션 보기")
+    accuracy_cmd.add_argument("scan_ids", nargs="*", help="비교할 스캔 ID (기본: 저장 기록이 있는 모든 스캔)")
+    accuracy_cmd.add_argument("--details", action="store_true", help="틀린 값을 하나씩 보여 주기")
+    accuracy_cmd.add_argument("--json", type=Path, help="결과를 JSON 파일로도 저장")
     args = parser.parse_args()
+    if args.command == "accuracy":
+        from . import accuracy
+        try:
+            report = accuracy.measure(args.data_dir, args.scan_ids or None)
+        except FileNotFoundError as error:
+            accuracy_cmd.error(str(error))
+        print("\n".join(accuracy.format_report(report, args.details)))
+        if args.json:
+            args.json.write_text(json.dumps(accuracy.to_json(report), ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"JSON: {args.json}")
+        return
     if args.command == "serve":
         host = "127.0.0.1"
         password = None
