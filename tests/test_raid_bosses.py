@@ -71,6 +71,9 @@ def fake_fetch(raids=None, maxes=None, fail_max=False, calls=None):
             calls.append(url)
         if url.endswith("raidboss.json"):
             return json.dumps(raids or raid_list()).encode()
+        if url.endswith("events.json"):
+            from test_events import event_list
+            return json.dumps(event_list()).encode()
         if fail_max:
             raise OSError("max list offline")
         return json.dumps(maxes or max_list()).encode()
@@ -274,21 +277,26 @@ class CurrentRaidApiTests(unittest.TestCase):
         self.assertIn("· 맥스배틀", text)
         self.assertIn("- 추천: 물몬(01번", text)
         self.assertNotIn("현재 레이드·맥스배틀 추천", self.client.get("/api/exports/box-ai.md?raids=false").text)
-        self.assertEqual(self.calls[2:], [])  # the export never downloads
+        self.assertEqual(self.calls[3:], [])  # the export never downloads
 
     def test_list_refresh_and_recommend(self):
         empty = self.client.get("/api/raids/current").json()
         self.assertIsNone(empty["version"])
         self.assertEqual(self.calls, [])  # opening the page never downloads
         listing = self.client.post("/api/raids/current/refresh").json()
-        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(len(self.calls), 3)  # raid list, max battle list, event calendar
+        self.assertIsNone(listing["events_error"])
+        calendar = self.client.get("/api/events").json()
+        self.assertEqual(calendar["credit"], "ScrapedDuck · LeekDuck")
+        self.assertIn("Mega Wave in Mega Raids", [e["name"] for e in calendar["events"]])
         self.assertEqual(listing["failed"], 4)
         ordered = [(b["tier"], b["shadow"]) for b in listing["raids"] if b["status"] == "ok"]
         self.assertEqual(ordered, [("5", False), ("mega", False), ("3", False), ("1", False), ("3", True)])
         self.assertEqual(len(listing["raids"]), 9)  # failures are listed too
         self.assertEqual(len(listing["max_battles"]), 2)
         self.assertEqual(self.client.get("/api/raids/current").json()["version"], listing["version"])
-        self.assertEqual(len(self.calls), 2)
+        self.client.get("/api/events")
+        self.assertEqual(len(self.calls), 3)  # reading the list or the calendar never downloads
 
         boss = next(b for b in listing["raids"] if b["status"] == "ok" and b["tier"] == "5")
         body = {"version": listing["version"], "kind": "raid", "index": boss["index"]}
@@ -321,10 +329,12 @@ class CurrentRaidApiTests(unittest.TestCase):
         page = self.client.get("/raids")
         self.assertEqual(page.status_code, 200)
         self.assertIn("/assets/raids.js", page.text)
-        self.assertIn("보스 목록 갱신", page.text)
-        self.assertEqual(self.client.get("/assets/raids.js").status_code, 200)
+        self.assertIn("보스 목록·이벤트 갱신", page.text)
+        self.assertIn("/assets/calendar.js", page.text)
+        for asset in ("/assets/raids.js", "/assets/calendar.js"):
+            self.assertEqual(self.client.get(asset).status_code, 200)
         for path in ("/", "/box", "/raid", "/max"):
-            self.assertIn('href="/raids"', self.client.get(path).text)
+            self.assertIn('href="/raids">레이드·이벤트</a>', self.client.get(path).text)
 
 
 if __name__ == "__main__":

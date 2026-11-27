@@ -10,7 +10,7 @@
 </head>
 <body>
   <div class="appbar"><div class="appbar-inner"><a class="brand" href="/">포켓몬 GO 박스 스캔</a>
-    <nav aria-label="주요 화면"><a href="/">스캔</a><a href="/box" aria-current="page">내 박스</a><a href="/raids">현재 레이드</a><a href="/raid">레이드 추천</a><a href="/max">맥스배틀 추천</a></nav>
+    <nav aria-label="주요 화면"><a href="/">스캔</a><a href="/box" aria-current="page">내 박스</a><a href="/raids">레이드·이벤트</a><a href="/raid">레이드 추천</a><a href="/max">맥스배틀 추천</a></nav>
   </div></div>
   <main class="wide">
     <header class="page-head">
@@ -21,7 +21,7 @@
     <div class="toolbar">
       <div class="toolbar-left">
         <label class="field search" for="search"><span>종·관리번호·별명으로 찾기</span>
-          <input id="search" type="search" autocomplete="off" placeholder="예: 마기라스 02"></label>
+          <input id="search" type="search" autocomplete="off" placeholder="예: 마기라스 02 · ㅁㄱㄹㅅ"></label>
         <label class="field sort" for="sort"><span>정렬</span>
           <select id="sort">
             <option value="recent">최근 갱신순</option>
@@ -40,6 +40,7 @@
       </div>
     </div>
     <div class="filters" id="filters" role="group" aria-label="상태로 거르기"></div>
+    <div class="sprite-tools" id="sprite-tools"></div>
     <div id="add-area" class="add-area"></div>
     <details class="backup" id="candy-panel">
       <summary>사탕과 별의모래 <span class="summary-meta"></span></summary>

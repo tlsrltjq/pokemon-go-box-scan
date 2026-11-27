@@ -39,6 +39,7 @@ SOURCES = {
 USER_AGENT = "boxscan-raid-bosses/0.1"
 KEEP_VERSIONS = 20
 KEEP_CACHE = 300
+SUMMARY_VERSION = 2  # bump when summary() gains fields, so saved results are computed again
 CATCH_LEVEL = 20.0  # raid and max battle catch CP is shown at level 20
 
 # Source level -> (raid tier in raid.RULESET, shadow raid)
@@ -361,6 +362,7 @@ def recommend(data_dir: Path, reference: Reference, entries: list[dict], boss: d
         "engine": raid.ENGINE_VERSION if kind == "raid" else max_battle.ENGINE_VERSION,
         "ruleset": raid.RULESET["version"] if kind == "raid" else max_battle.RULESET["version"],
         "reference": reference.version, "box": box_fingerprint(entries), "options": options,
+        "summary": SUMMARY_VERSION,
         "boss": {k: boss[k] for k in ("kind", "species", "form", "temp", "tier", "shadow")},
     }
     key = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()[:32]
@@ -399,11 +401,12 @@ def summary(kind: str, report: dict) -> dict:
     members = []
     for member in report["party"]:
         item = {k: member.get(k) for k in ("order", "name", "code", "level", "iv", "shadow", "fast", "charged",
-                                           "damage")}
+                                           "damage", "dex", "form", "shiny")}
         if kind == "raid":
             mega = member.get("mega")
             item["mega"] = mega.get("name") if mega else None
             item["mega_evolved"] = mega.get("evolved") if mega else None
+            item["temp"] = mega.get("kind") if mega else None
         else:
             item["max_move"] = (member.get("max_attack") or {}).get("name")
             item["plan"] = member.get("plan")

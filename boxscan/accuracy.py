@@ -108,7 +108,10 @@ def gate(individual: dict) -> list[str]:
     if not read["species"]:
         reasons.append("종을 읽지 못함")
     status = (individual.get("level") or {}).get("status")
-    if status != level.RESOLVED:
+    other_forms = (individual.get("level") or {}).get("other_forms") or {}
+    if other_forms:
+        reasons.append(f"다른 모습으로도 맞음({', '.join(other_forms)}): 모습 확인")
+    elif status != level.RESOLVED:
         reasons.append(f"레벨 {status or '없음'}")
     if "corrected_from" in (individual.get("cp") or {}):
         reasons.append("CP를 HP·IV·강화 비용으로 고침")

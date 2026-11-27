@@ -10,6 +10,12 @@ REGIONAL = {
     "Hisuian": "히스이의 모습",
     "Paldea": "팔데아의 모습",
 }
+# Forms of several species with the same Korean name (토네로스·볼트로스·랜드로스·러브로스, 기라티나,
+# 디아루가·펄기아, 쉐이미, 테오키스).
+COMMON = {
+    "Incarnate": "화신폼", "Therian": "영물폼", "Origin": "오리진폼", "Altered": "어나더폼",
+    "Land": "랜드폼", "Sky": "스카이폼", "Attack": "어택폼", "Defense": "디펜스폼", "Speed": "스피드폼",
+}
 SPECIAL = {
     (150, "A"): "아머드",  # 아머드 뮤츠
     (646, "Black"): "블랙큐레무",  # names from the Korean client's fusion text
@@ -28,6 +34,8 @@ def display_name(pokemon_id: int | None, form: str | None) -> str | None:
         return None
     if (pokemon_id, form) in SPECIAL:
         return SPECIAL[(pokemon_id, form)]
+    if form in COMMON:
+        return COMMON[form]
     for prefix, name in REGIONAL.items():
         if form == prefix or form.startswith(prefix + "_"):
             rest = form[len(prefix):].strip("_")

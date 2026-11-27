@@ -301,6 +301,7 @@ class LevelTests(unittest.TestCase):
         self.assertEqual(display_name(128, "Paldea_Combat"), "팔데아의 모습 (Combat)")
         self.assertEqual(display_name(150, "A"), "아머드")
         self.assertEqual(display_name(1, "Fall_2019"), "Fall_2019")  # unknown codes stay as data
+        self.assertEqual((display_name(642, "Therian"), display_name(642, "Incarnate")), ("영물폼", "화신폼"))
 
     def test_other_form_is_shown_when_only_it_matches(self):
         other = self.data.forms("테스트몬2")[1]

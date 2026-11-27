@@ -13,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from . import ai_export, autosave, backup, cleanup, export, live, max_battle, raid, raid_bosses, reference, review
+from . import ai_export, autosave, backup, cleanup, events, export, live, sprites, max_battle, raid, raid_bosses, reference, review
 from .forms import display_name
 from . import species as species_names
 from .species import TEMP_NAMES
@@ -233,7 +233,63 @@ def create_app(
             raid_bosses.update(store.root, fetch=raid_fetch)
         except (OSError, ValueError) as error:
             raise HTTPException(502, f"보스 목록을 갱신하지 못했습니다. 기존 목록을 유지합니다: {error}") from None
-        return raid_listing(data)
+        listing = raid_listing(data)
+        try:  # the event calendar is refreshed with the list; a failure keeps the previous calendar
+            events.update(store.root, fetch=raid_fetch)
+            listing["events_error"] = None
+        except (OSError, ValueError) as error:
+            listing["events_error"] = f"이벤트 달력을 갱신하지 못했습니다. 기존 달력을 유지합니다: {error}"
+        return listing
+
+    def sprite_targets() -> tuple[list[str], object]:
+        """Images for the box, the saved raid list and the event calendar's bosses, and the game data
+        (its English species names make the source's file names)."""
+        try:
+            data = reference.load(store.root)
+        except (OSError, ValueError, KeyError):
+            data = None
+        bosses = []
+        if data is not None and data.move_stats:
+            listing = raid_listing(data)
+            bosses += [b for b in listing["raids"] + listing["max_battles"] if b["status"] == "ok"]
+        try:
+            calendar = events.view(events.current(store.root), data)
+        except (OSError, ValueError, KeyError):
+            calendar = {"events": []}
+        bosses += [b for e in calendar["events"] for b in e["bosses"] + ([e["spotlight"]] if e["spotlight"] else [])
+                   if b.get("dex")]
+        return sprites.wanted(box.list(), data, bosses), data
+
+    @app.get("/api/sprite")
+    def sprite(dex: int, form: str | None = None, temp: str | None = None, shiny: bool = False):
+        """A stored Pokémon image; 404 until the user downloads the images."""
+        path = sprites.find(store.root, dex, sprites.suffix(form, temp), shiny)
+        if path is None:
+            raise HTTPException(404, "이미지를 아직 받지 않았습니다.")
+        return FileResponse(path, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+    @app.get("/api/sprites")
+    def sprites_status():
+        return sprites.status(store.root, sprite_targets()[0])
+
+    @app.post("/api/sprites/download")
+    def sprites_download():
+        # Goes to the internet only when the user presses the button; the box itself is not sent.
+        names, data = sprite_targets()
+        result = sprites.download(store.root, names, data)
+        return {**result, **sprites.status(store.root, names)}
+
+    @app.get("/api/events")
+    def events_current():
+        try:
+            data = reference.load(store.root)
+        except (OSError, ValueError, KeyError):
+            data = None
+        try:
+            listing = events.current(store.root)
+        except (OSError, ValueError, KeyError) as error:
+            raise HTTPException(500, f"저장된 이벤트 달력을 읽지 못했습니다: {error}") from None
+        return events.view(listing, data)
 
     @app.post("/api/raids/current/recommend")
     async def raids_recommend(request: Request):
@@ -554,7 +610,19 @@ def create_app(
         for entry in entries:
             entry["candy_family"] = data.candy_name(entry.get("species")) if data else None
             entry["mega"] = species_names.mega_info(data, entry)
+            entry["types"] = raid._types(data, entry["dex"], entry.get("form")) if data and entry.get("dex") else []
+            entry["form_options"] = form_options(data, entry.get("species"))
         return entries
+
+    def form_options(data, species: str | None) -> list[dict]:
+        """Forms the user can pick for a species with more than one (히스이의 모습, 영물폼)."""
+        forms = data.forms(species) if data and species else []
+        if not forms:
+            return []
+        pokemon_id = forms[0].pokemon_id
+        names = [f.form for f in forms] + [c["target"] for c in (data.form_changes or {}).get(pokemon_id, [])]
+        options = [{"id": name, "name": display_name(pokemon_id, name) or "기본 모습"} for name in dict.fromkeys(names)]
+        return options if len(options) > 1 else []
 
     @app.get("/api/pokemon")
     def pokemon_list(species: str | None = None):
@@ -645,11 +713,13 @@ def create_app(
             data = reference.load(store.root)
         except (OSError, ValueError, KeyError):
             data = None
+        sent = payload.get("values") or {}
+        raw = sent if not isinstance(sent, dict) or "form" in sent or not existing.get("form") \
+            else {**sent, "form": existing["form"]}  # an older client keeps the chosen form
         try:
-            values = review.normalize(payload.get("values"), data)
+            values = review.normalize(raw, data)
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
-        sent = payload.get("values") or {}
         if "max_moves" not in sent:
             values["max_moves"] = existing.get("max_moves") or []  # an older client did not send them
         for key in ("mega_evolved", "mega_move_off"):

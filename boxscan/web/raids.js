@@ -4,6 +4,7 @@ const groups = document.querySelector("#groups");
 const refreshButton = document.querySelector("#refresh");
 let listing = null;
 let run = 0;
+const results = new Map();  // "raid-3" -> recommendation summary, for the quick party list
 
 const GROUPS = [
   ["raids", false, "mega_legendary", "메가 전설·원시회귀"],
@@ -71,8 +72,11 @@ function bossCard(boss) {
   const badges = [element("span", { class: "badge neutral" }, boss.tier_name ?? "등급 미확인")];
   if (boss.shadow) badges.push(element("span", { class: "badge state shadow" }, "그림자"));
   if (boss.temp_name) badges.push(element("span", { class: "badge state mega" }, boss.temp_name));
-  const card = element("article", { class: "card boss-card", id: `boss-${boss.kind}-${boss.index}` },
-    element("header", {}, element("h3", {}, boss.label), element("div", { class: "badges" }, ...badges)));
+  const card = element("article", { class: `card boss-card t-${typeCode(boss.types?.[0])}`, id: `boss-${boss.kind}-${boss.index}` },
+    element("header", { class: "boss-head" },
+      avatar({ dex: boss.pokemon_id, form: boss.form, temp: boss.temp, types: boss.types, name: boss.species ?? boss.label }, "lg"),
+      element("div", { class: "boss-title" }, element("h3", {}, boss.label),
+        element("div", { class: "badges" }, ...badges, boss.types ? typeChips(boss.types) : null))));
   if (boss.status !== "ok") {
     card.append(element("p", { class: "warn-text" }, `매핑 실패: ${boss.reason}`),
       element("p", { class: "muted" }, `출처 값: ${boss.source.id} · ${boss.source.form ?? "모습 없음"} · 등급 ${boss.source.level}` +
@@ -88,7 +92,63 @@ function bossCard(boss) {
   return card;
 }
 
+// The top of the page: each current raid boss with its party in order, ready to copy in the game.
+function quickRow(boss) {
+  const s = results.get(`${boss.kind}-${boss.index}`)?.summary;
+  const schedule = typeof scheduleFor === "function" ? scheduleFor(boss) : null;
+  const outcome = !s ? "계산 중" : !s.damage ? "쓸 수 있는 개체 없음"
+    : s.clear_s ? `혼자 ${Math.round(s.clear_s.avg)}초 처치` : `피해 ${Math.round((s.damage.avg / s.boss_hp) * 100)}% (처치 못 함)`;
+  const party = s?.party ?? [];
+  const row = element("a", { class: `quick-row t-${typeCode(boss.types?.[0])}`, href: `#boss-${boss.kind}-${boss.index}` },
+    avatar({ dex: boss.pokemon_id, form: boss.form, temp: boss.temp, types: boss.types, name: boss.species ?? boss.label }, "md"),
+    element("span", { class: "quick-boss" }, element("strong", {}, boss.label),
+      element("span", {}, [boss.tier_name, boss.kind === "max" ? "맥스배틀" : null, schedule].filter(Boolean).join(" · "))),
+    element("span", { class: `quick-outcome${s?.clear_s ? " clear" : ""}` }, outcome),
+    element("span", { class: "quick-party" }, ...party.map(m => element("span", { class: "quick-member", title: `${m.order}. ${m.name} ${m.code ?? ""}` },
+      avatar({ dex: m.dex, form: m.form, temp: m.temp, shiny: m.shiny, name: m.name }, "sm"),
+      element("span", {}, m.code ? `${m.name.replace(/\s*\(.*\)$/, "")} ${m.code}` : m.name)))));
+  return row;
+}
+
+function renderQuick() {
+  const now = document.querySelector("#quick-now");
+  if (!listing?.version) {
+    now.replaceChildren(element("p", { class: "muted" }, "저장된 보스 목록이 없습니다. 아래 갱신 버튼으로 받으세요."));
+    return;
+  }
+  const order = ["mega_legendary", "5", "mega", "3", "1"];
+  const bosses = [...listing.raids.filter(b => b.status === "ok")
+    .sort((a, b) => (a.shadow - b.shadow) || (order.indexOf(a.tier) - order.indexOf(b.tier))),
+  ...listing.max_battles.filter(b => b.status === "ok")];
+  now.replaceChildren(...bosses.map(quickRow));
+  renderNext();
+}
+
+// Bosses of raid events that start later, with a link that prefills the raid planner.
+function renderNext() {
+  const holder = document.querySelector("#quick-next");
+  if (typeof calendar === "undefined" || !calendar?.events) { holder.replaceChildren(); return; }
+  const upcoming = calendar.events.filter(e => e.status === "upcoming" && e.raid && e.bosses.some(b => b.mapped));
+  if (!upcoming.length) { holder.replaceChildren(); return; }
+  const items = upcoming.flatMap(e => e.bosses.filter(b => b.mapped).map(b => ({ boss: b, event: e })));
+  holder.replaceChildren(element("div", { class: "row-head" }, element("h3", {}, "다음 레이드"),
+    element("span", { class: "muted" }, "누르면 그 보스로 파티를 미리 계산합니다 (등급은 짐작값이라 바꿀 수 있음)")),
+    element("div", { class: "next-rail" }, ...items.slice(0, 12).map(({ boss, event }) => {
+      const tier = boss.temp === "PRIMAL" ? "mega_legendary" : boss.temp ? "mega" : "5";
+      const params = new URLSearchParams({ species: boss.species, tier });
+      if (boss.temp) params.set("temp", boss.temp);
+      if (boss.shadow) params.set("shadow", "1");
+      const start = parseLocal(event.start);
+      return element("a", { class: "next-card", href: `/raid?${params}` },
+        avatar({ ...boss, name: boss.species }, "md"),
+        element("span", {}, element("strong", {}, boss.name), element("span", {}, `${shortDate(start)} ${clock(start)}부터`)));
+    })));
+}
+
 function showRecommendation(boss, result) {
+  results.set(`${boss.kind}-${boss.index}`, result);
+  const quick = document.querySelector(`.quick-row[href="#boss-${boss.kind}-${boss.index}"]`);
+  quick?.replaceWith(quickRow(boss));
   const box = document.querySelector(`#boss-${boss.kind}-${boss.index} .boss-result`);
   const s = result.summary;
   if (!s.damage) {
@@ -111,6 +171,7 @@ function showRecommendation(boss, result) {
         ? "다 맞으면서 하기 추천: 스페셜어택을 피하면 시간 안에 덜 깎습니다."
         : "다 맞으면서 하기 추천: 노림 공격을 피하면 시간 안에 덜 깎습니다.") : null,
     element("ol", { class: "party-list" }, ...s.party.map(m => element("li", {},
+      avatar({ dex: m.dex, form: m.form, temp: m.temp, shiny: m.shiny, name: m.name }, "xs"),
       element("strong", {}, m.name), m.code ? ` ${m.code}` : "",
       element("span", { class: "muted" }, ` · Lv ${m.level} · ${m.fast} / ${m.charged ?? "스페셜어택 안 씀"}` +
         (m.mega ? ` · ${m.mega}${m.mega_evolved ? "" : " (아직 메가진화 안 함)"}` : "") + (m.max_move ? ` · ${m.max_move} · ${m.plan}` : "") +
@@ -176,16 +237,23 @@ async function recommendAll() {
 
 async function load(url, init) {
   listing = await jsonResponse(await fetch(url, init));
+  results.clear();
   showSource();
   showGroups();
+  renderQuick();
+  markBossSchedules([...listing.raids, ...listing.max_battles]);
   recommendAll();
 }
 
 refreshButton.addEventListener("click", async () => {
   refreshButton.disabled = true;
-  status.textContent = "보스 목록을 내려받고 있습니다.";
+  status.textContent = "보스 목록과 이벤트 달력을 내려받고 있습니다.";
   try {
     await load("/api/raids/current/refresh", { method: "POST" });
+    await loadCalendar();
+    markBossSchedules([...listing.raids, ...listing.max_battles]);
+    renderQuick();
+    if (listing.events_error) status.textContent = listing.events_error;
   } catch (error) {
     status.textContent = error.message;
   } finally {
@@ -197,10 +265,13 @@ form.addEventListener("submit", event => {
   if (listing) recommendAll();
 });
 
+spriteDownloader(document.querySelector("#sprite-tools"));
+
 (async () => {
   try {
     const options = await jsonResponse(await fetch("/api/raid/options"));
     form.elements.weather.replaceChildren(...options.weather.map(w => element("option", { value: w.id }, w.name)));
+    await loadCalendar();
     await load("/api/raids/current");
   } catch (error) {
     status.textContent = error.message;

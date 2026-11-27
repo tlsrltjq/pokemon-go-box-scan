@@ -206,6 +206,7 @@ function readForm(formNode) {
     max_moves: formNode.elements.max_name_0 ? readMaxMoves(formNode) : JSON.parse(formNode.dataset.maxMoves || "[]"),
     mega_move: formNode.dataset.megaMove || null,
     mega_level: formNode.dataset.megaLevel || null,
+    form: formNode.elements.form?.value || null,
     nickname: get("nickname") || null,
   };
 }
@@ -349,6 +350,32 @@ function undoButton(index, approval) {
   return button;
 }
 
+// 모습: shown when the species has more than one form. "자동" lets the stats decide; when another form
+// fits too, the select is marked so the user checks it (히스이 블레이범, 볼트로스 영물폼).
+const formLists = new Map();
+function formPicker(individual, species) {
+  const holder = element("label", { class: "inline-field form-pick", hidden: "" }, element("span", {}, "모습"));
+  if (!species) return holder;
+  if (!formLists.has(species)) {
+    formLists.set(species, fetch(`/api/raid/options?species=${encodeURIComponent(species)}`).then(jsonResponse)
+      .then(options => options.boss?.forms ?? []).catch(() => []));
+  }
+  formLists.get(species).then(forms => {
+    if (forms.length < 2) return;
+    const level = individual.level ?? {};
+    const others = Object.keys(level.other_forms ?? {});
+    const guess = forms.find(f => f.id === level.form)?.name ?? "기본 모습";
+    const select = element("select", { name: "form", class: others.length ? "doubt" : null, "aria-label": "모습",
+      title: others.length ? `${others.join(", ")}으로도 맞습니다. 게임 화면의 모습을 확인하세요.` : "" },
+      element("option", { value: "" }, `자동 (${guess})`),
+      ...forms.map(f => element("option", { value: f.id }, f.name)));
+    holder.append(select);
+    if (others.length) holder.append(element("span", { class: "warn-text" }, `${others.join(", ")}으로도 맞음`));
+    holder.hidden = false;
+  });
+  return holder;
+}
+
 // The automatic-save rule's verdict for a candidate that is not saved yet.
 function autoNote(auto) {
   if (!auto) return null;
@@ -414,6 +441,7 @@ function candidateRow(individual, index) {
         ? element("span", { class: "muted", title: "저장할 때 이 계열의 사탕 기록도 갱신합니다" },
           formatCandy(individual.resources.family, individual.resources)) : null,
       values.shadow_evidence.length ? element("span", { class: "muted" }, `그림자 단서: ${values.shadow_evidence.join(", ")}`) : null,
+      formPicker(individual, values.species),
       autoNote(individual.auto),
       detailToggle(panel)),
     diff, message);

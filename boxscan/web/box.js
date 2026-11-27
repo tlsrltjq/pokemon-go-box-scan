@@ -59,6 +59,9 @@ function editForm(entry, onDone) {
       checkbox("배경 ◆", "background", entry?.background === true),
       checkbox("그림자", "shadow", entry?.shadow === true)),
     maxStateSelect(entry?.max_state ?? ""),
+    entry?.form_options?.length ? element("label", { class: "field wide" }, element("span", {}, "모습 (지방·폼이 다르면 능력치와 타입이 다름)"),
+      element("select", { name: "form" }, ...entry.form_options.map(option =>
+        element("option", { value: option.id, selected: (entry.form ?? "Normal") === option.id ? "" : null }, option.name)))) : null,
     element("label", { class: "field wide" }, element("span", {}, "메가 레벨 (메가진화 화면에서 확인)"),
       element("select", { name: "mega_level" }, ...[["", "모름"], ["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"]].map(([value, label]) =>
         element("option", { value, selected: String(entry?.mega_level ?? "") === value ? "" : null }, label)))),
@@ -100,6 +103,7 @@ function editForm(entry, onDone) {
             max_state: form.elements.max_state.value || null,
             max_moves: readMaxMoves(form),
             mega_level: form.elements.mega_level.value || null,
+            ...(form.elements.form ? { form: form.elements.form.value || null } : {}),
             ...(form.elements.mega_evolved ? { mega_evolved: form.elements.mega_evolved.checked } : {}),
             ...(form.elements.mega_move_off ? { mega_move_off: form.elements.mega_move_off.checked } : {}),
             nickname: get("nickname") || null,
@@ -271,8 +275,10 @@ function entryRows(entry) {
   const moves = entry.moves ?? {};
   const isOpen = opened.has(entry.id);
   const row = element("tr", { class: `entry${isOpen ? " open" : ""}`, id: entry.id, tabindex: "0", "aria-expanded": String(isOpen) },
-    element("td", { class: "sticky-col" }, element("span", { class: "name" }, displayName(entry)), " ",
-      element("span", { class: "code-chip" }, entry.code ? `${entry.code}` : "-")),
+    element("td", { class: "sticky-col" }, element("span", { class: "name-cell" },
+      avatar({ dex: entry.dex, form: entry.form, shiny: entry.shiny === true, types: entry.types, name: entry.species }, "sm"),
+      element("span", { class: "name" }, displayName(entry)),
+      element("span", { class: "code-chip" }, entry.code ? `${entry.code}` : "-"))),
     element("td", { class: "num" }, String(entry.cp ?? "-")),
     element("td", { class: "num" }, ivPill(entry.iv)),
     element("td", { class: "num" }, formatLevel(entry.level)),
@@ -336,8 +342,8 @@ function hasCode(entry) {
 // Every word must match the species, the number (02 = 2) or the nickname: "마기라스 02".
 function matches(entry, word) {
   const number = codeNumber(word);
-  return (entry.species ?? "").includes(word) || (number !== null && codeNumber(entry.code) === number)
-    || (entry.nickname ?? "").toUpperCase().includes(word.toUpperCase());
+  return searchMatch(entry.species, word) || (number !== null && codeNumber(entry.code) === number)
+    || searchMatch(entry.nickname, word);
 }
 
 function ivPercent(iv) {
@@ -397,6 +403,8 @@ function render() {
   list.replaceChildren(...(shown.length ? [element("table", { class: "box-table" }, tableHead(),
     element("tbody", {}, ...shown.flatMap(entryRows)))] : []));
 }
+
+spriteDownloader(document.querySelector("#sprite-tools"));
 
 async function load() {
   const [pokemon, resources] = await Promise.all([

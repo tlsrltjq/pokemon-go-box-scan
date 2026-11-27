@@ -209,6 +209,18 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(unresolved["temp_observation"]["cp"], 11)
         self.assertTrue(values["mega_evolved"])  # scanned while mega evolved: it has mega evolved before
 
+    def test_user_chosen_form_wins_and_is_checked(self):
+        from boxscan import level
+        regular, other = self.data.forms("테스트몬2")
+        cp, hp = level.cp(regular, IV, CPM[20.0]), level.hp(regular, IV, CPM[20.0])
+        auto = review.normalize({"species": "테스트몬2", "cp": cp, "max_hp": hp, "iv": IV}, self.data)
+        self.assertEqual(auto["form"], "Normal")
+        chosen = review.normalize({"species": "테스트몬2", "cp": cp, "max_hp": hp, "iv": IV, "form": "Other"}, self.data)
+        self.assertEqual(chosen["form"], "Other")  # the stats of the chosen form are used, even if the level no longer fits
+        self.assertNotEqual(chosen["level"]["status"], level.RESOLVED)
+        with self.assertRaises(ValueError):
+            review.normalize({"species": "테스트몬2", "cp": cp, "form": "Nope"}, self.data)
+
     def test_mega_evolved_comes_from_a_mega_level_or_the_user(self):
         base = {"species": "테스트몬5", "cp": 100}
         self.assertIsNone(review.normalize(base, self.data)["mega_evolved"])  # not known, not False

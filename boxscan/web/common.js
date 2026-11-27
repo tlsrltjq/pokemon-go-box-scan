@@ -233,3 +233,239 @@ function megaLines(comparison) {
   }
   return lines;
 }
+
+// ---------------------------------------------------------------- Pokémon images and type colours
+
+const TYPE_CODES = { 노말: "normal", 불꽃: "fire", 물: "water", 풀: "grass", 전기: "electric", 얼음: "ice", 격투: "fighting",
+  독: "poison", 땅: "ground", 비행: "flying", 에스퍼: "psychic", 벌레: "bug", 바위: "rock", 고스트: "ghost", 드래곤: "dragon",
+  악: "dark", 강철: "steel", 페어리: "fairy" };
+const TYPE_NAMES_KO = Object.fromEntries(Object.entries(TYPE_CODES).map(([ko, code]) => [code, ko]));
+
+// "WATER" or "물" -> "water"
+function typeCode(type) {
+  if (!type) return "none";
+  return TYPE_CODES[type] ?? String(type).toLowerCase();
+}
+
+// The stored image (downloaded with the 포켓몬 이미지 받기 button); the API answers 404 before that.
+function spriteUrl({ dex, form, temp, shiny }) {
+  const params = new URLSearchParams({ dex });
+  if (form && form !== "Normal") params.set("form", form);
+  if (temp) params.set("temp", temp);
+  if (shiny) params.set("shiny", "1");
+  return `/api/sprite?${params}`;
+}
+
+// A round avatar tinted by the first type; the first letter stands in until the image is downloaded.
+function avatar(info, size = "md") {
+  const name = info.name ?? info.species ?? "?";
+  const letter = element("span", { class: "avatar-letter" }, name.replace(/^(메가|원시|그림자\s*)/, "").slice(0, 1));
+  const box = element("span", { class: `avatar ${size} t-${typeCode((info.types ?? [])[0])}`, "aria-hidden": "true" }, letter);
+  if (info.dex) {
+    const img = element("img", { src: spriteUrl(info), alt: "", loading: "lazy", decoding: "async" });
+    img.addEventListener("load", () => box.classList.add("has-img"));
+    img.addEventListener("error", () => img.remove());
+    box.prepend(img);
+  }
+  return box;
+}
+
+function typeChips(types = []) {
+  return element("span", { class: "type-chips" },
+    ...types.map(t => element("span", { class: `type-chip t-${typeCode(t)}` }, TYPE_NAMES_KO[typeCode(t)] ?? t)));
+}
+
+// ---------------------------------------------------------------- 초성 search
+
+const CHOSUNG = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
+
+function chosung(text) {
+  return [...String(text ?? "")].map(ch => {
+    const code = ch.charCodeAt(0) - 0xac00;
+    return code >= 0 && code < 11172 ? CHOSUNG[Math.floor(code / 588)] : ch;
+  }).join("");
+}
+
+// "마기", "ㅁㄱㄹ" both find 마기라스; spaces are ignored.
+function searchMatch(text, query) {
+  const q = String(query ?? "").replace(/\s+/g, "").toLowerCase();
+  if (!q) return true;
+  const t = String(text ?? "").replace(/\s+/g, "").toLowerCase();
+  if (t.includes(q)) return true;
+  return /^[ㄱ-ㅎ]+$/.test(q) && chosung(t).includes(q);
+}
+
+// ---------------------------------------------------------------- quick search: Ctrl+K, Cmd+K or the slash key
+
+const PAGES = [
+  ["/", "스캔", "영상·실시간 캡처로 박스 읽기"], ["/box", "내 박스", "저장한 포켓몬 목록"],
+  ["/raids", "레이드·이벤트", "이벤트 달력과 지금 열린 보스"], ["/raid", "레이드 추천", "보스별 혼자 최단 처치 파티"],
+  ["/max", "맥스배틀 추천", "다이맥스·거다이맥스 파티"],
+];
+const palette = { node: null, items: [], active: 0, box: null, species: null };
+
+async function paletteData() {
+  if (!palette.box) {
+    palette.box = fetch("/api/pokemon").then(jsonResponse).then(r => r.pokemon).catch(() => []);
+    palette.species = palette.species ?? fetch("/api/raid/options").then(jsonResponse).then(r => r.species).catch(() => []);
+  }
+  return [await palette.box, await palette.species];
+}
+
+function paletteResults(query, box, species) {
+  const results = [];
+  for (const [href, title, note] of PAGES) {
+    if (searchMatch(title, query) || searchMatch(note, query)) results.push({ group: "화면", href, title, note });
+  }
+  if (query.trim()) {
+    const words = query.trim().split(/\s+/);
+    const found = box.filter(e => words.every(w => searchMatch(e.species, w) || searchMatch(e.nickname, w)
+      || (/^\d+$/.test(w) && Number(e.code) === Number(w))));
+    for (const e of found.slice(0, 8)) {
+      const iv = e.iv ? `${e.iv.attack}/${e.iv.defense}/${e.iv.stamina}` : "IV -";
+      results.push({ group: "내 박스", href: `/box#${e.id}`, title: `${e.species ?? "종 미확인"} ${e.code ?? ""}`,
+        note: `CP ${e.cp ?? "-"} · ${iv}` + (e.nickname ? ` · ${e.nickname}` : ""), pokemon: { ...e, name: e.species } });
+    }
+    for (const name of species.filter(n => searchMatch(n, query)).slice(0, 5)) {
+      results.push({ group: "레이드 추천 열기", href: `/raid?species=${encodeURIComponent(name)}&tier=5`, title: name, note: "이 보스로 파티 계산" });
+    }
+  }
+  return results;
+}
+
+function renderPalette() {
+  const list = palette.node.querySelector(".palette-list");
+  if (!palette.items.length) {
+    list.replaceChildren(element("p", { class: "palette-empty" }, "찾는 결과가 없습니다. 초성(ㅁㄱㄹㅅ)이나 관리 번호로도 찾을 수 있습니다."));
+    return;
+  }
+  let group = null;
+  const nodes = [];
+  palette.items.forEach((item, i) => {
+    if (item.group !== group) {
+      group = item.group;
+      nodes.push(element("div", { class: "palette-group" }, group));
+    }
+    const row = element("a", { class: `palette-item${i === palette.active ? " active" : ""}`, href: item.href, role: "option",
+      "aria-selected": String(i === palette.active) },
+      item.pokemon ? avatar(item.pokemon, "sm") : element("span", { class: "palette-icon" }, item.group === "화면" ? "→" : "⌕"),
+      element("span", { class: "palette-text" }, element("strong", {}, item.title), element("span", {}, item.note)));
+    row.addEventListener("mousemove", () => { if (palette.active !== i) { palette.active = i; renderPalette(); } });
+    row.addEventListener("click", event => { event.preventDefault(); goTo(item.href); });
+    nodes.push(row);
+  });
+  list.replaceChildren(...nodes);
+  list.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+}
+
+function goTo(href) {
+  closePalette();
+  const url = new URL(href, location.href);
+  if (url.pathname === location.pathname && url.hash) {
+    location.hash = url.hash;
+    location.reload();  // the box page opens the row named in the hash when it loads
+  } else {
+    location.href = href;
+  }
+}
+
+async function updatePalette() {
+  const query = palette.node.querySelector("input").value;
+  const [box, species] = await paletteData();
+  palette.items = paletteResults(query, box, species);
+  palette.active = 0;
+  renderPalette();
+}
+
+function openPalette() {
+  if (!palette.node) {
+    const input = element("input", { type: "search", placeholder: "포켓몬·관리 번호·보스·화면 (초성도 됨)", autocomplete: "off",
+      "aria-label": "빠른 검색" });
+    palette.node = element("div", { class: "palette-backdrop", hidden: "" },
+      element("div", { class: "palette", role: "dialog", "aria-modal": "true", "aria-label": "빠른 검색" },
+        element("div", { class: "palette-input" }, element("span", { class: "palette-glyph" }, "⌕"), input, element("kbd", {}, "Esc")),
+        element("div", { class: "palette-list", role: "listbox" }),
+        element("div", { class: "palette-foot" },
+          element("span", {}, element("kbd", {}, "↑"), element("kbd", {}, "↓"), " 이동"),
+          element("span", {}, element("kbd", {}, "Enter"), " 열기"),
+          element("span", {}, element("kbd", {}, "/"), " 어디서나 열기"))));
+    palette.node.addEventListener("click", event => { if (event.target === palette.node) closePalette(); });
+    input.addEventListener("input", updatePalette);
+    input.addEventListener("keydown", event => {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        palette.active = (palette.active + step + palette.items.length) % Math.max(1, palette.items.length);
+        renderPalette();
+      } else if (event.key === "Enter" && palette.items[palette.active]) {
+        event.preventDefault();
+        goTo(palette.items[palette.active].href);
+      } else if (event.key === "Escape") {
+        closePalette();
+      }
+    });
+    document.body.append(palette.node);
+  }
+  palette.box = null;  // the box may have changed since the last time
+  palette.node.hidden = false;
+  const input = palette.node.querySelector("input");
+  input.value = "";
+  input.focus();
+  updatePalette();
+}
+
+function closePalette() {
+  if (palette.node) palette.node.hidden = true;
+}
+
+document.addEventListener("keydown", event => {
+  const tag = document.activeElement?.tagName ?? "";
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(tag) || document.activeElement?.isContentEditable;
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (palette.node && !palette.node.hidden) closePalette();
+    else openPalette();
+  } else if (event.key === "/" && !typing) {
+    event.preventDefault();
+    openPalette();
+  }
+});
+
+// A search button in the app bar of every page.
+document.addEventListener("DOMContentLoaded", () => {
+  const bar = document.querySelector(".appbar-inner");
+  if (!bar || bar.querySelector(".search-trigger")) return;
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const trigger = element("button", { type: "button", class: "search-trigger", "aria-label": "빠른 검색 열기" },
+    element("span", { class: "palette-glyph" }, "⌕"), element("span", { class: "search-label" }, "검색"),
+    element("kbd", {}, mac ? "⌘K" : "Ctrl K"));
+  trigger.addEventListener("click", openPalette);
+  bar.append(trigger);
+});
+
+// "포켓몬 이미지 받기": shows how many images are missing and fetches them on a press.
+function spriteDownloader(holder) {
+  const button = element("button", { type: "button", class: "secondary" }, "포켓몬 이미지 확인 중");
+  const note = element("span", { class: "muted sprite-note", role: "status" });
+  holder.replaceChildren(button, note);
+  const show = info => {
+    button.disabled = info.missing === 0;
+    button.textContent = info.missing ? `포켓몬 이미지 받기 (${info.missing}개, 인터넷 접속)` : "포켓몬 이미지 모두 받음";
+    note.textContent = info.stored ? `저장된 이미지 ${info.stored}개 · ${info.bytes < 1024 * 1024 ? `${Math.ceil(info.bytes / 1024)}KB` : `${(info.bytes / 1024 / 1024).toFixed(1)}MB`}` : "";
+  };
+  fetch("/api/sprites").then(jsonResponse).then(show).catch(error => { note.textContent = error.message; });
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "이미지를 받고 있습니다";
+    try {
+      const result = await jsonResponse(await fetch("/api/sprites/download", { method: "POST" }));
+      show(result);
+      note.textContent = `${result.saved}개 받음` + (result.not_found ? ` · 출처에 없는 ${result.not_found}개는 글자로 표시` : "") +
+        (result.failed ? ` · 실패 ${result.failed}개` : "") + " · 새로 고치면 보입니다.";
+      setTimeout(() => location.reload(), 1200);
+    } catch (error) {
+      note.textContent = error.message;
+      button.disabled = false;
+    }
+  });
+}

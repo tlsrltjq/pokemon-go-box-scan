@@ -346,6 +346,7 @@ class MegaTests(unittest.TestCase):
         self.assertEqual(plain.hp, 999)  # the box keeps the regular form's HP
         self.assertEqual(mega.hp, math.floor((200 + 15) * cpm))  # the mega's HP comes from its stamina
         self.assertEqual((mega.name, mega.key), ("메가물몬", plain.key))
+        self.assertEqual((plain.info["dex"], plain.info["form"], plain.info["shiny"]), (2, None, False))  # for the image
         self.assertEqual(mega.info["mega"]["boost_types"], ["WATER"])
         self.assertIsNone(plain.info["mega"])
         self.assertEqual(raid.attacker(self.data, entry(2, "물몬", shadow=True), "MEGA")[1],

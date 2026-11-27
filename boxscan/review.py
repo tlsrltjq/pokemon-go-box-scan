@@ -94,6 +94,7 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
     mega_move_name = _text(raw.get("mega_move"), "메가진화 추가 스페셜어택")
     nickname = _text(raw.get("nickname"), "게임 별명")
     mega_level = _integer(raw.get("mega_level"), "메가 레벨", 0, 4)
+    chosen_form = _text(raw.get("form"), "모습")
     mega_evolved = _flag(raw.get("mega_evolved"), "메가진화 경험")
     mega_move_off = _flag(raw.get("mega_move_off"), "메가진화 추가 스페셜어택 끄기")
     temp = raw.get("temp_evolution") or None
@@ -105,7 +106,14 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
     resolved = species_names.resolve(species, reference)  # "메가독침붕" -> 독침붕 + MEGA
     species = resolved["species"]
     temp = temp or resolved["temp_evolution"]
-    estimated = level.estimate(reference, species, iv, cp, max_hp, temp, resolved["form"])
+    if chosen_form and reference is not None and species and reference.forms(species):
+        pokemon_id = reference.forms(species)[0].pokemon_id
+        known = {f.form for f in reference.forms(species)} | {
+            c["target"] for c in (reference.form_changes or {}).get(pokemon_id, [])}
+        if chosen_form not in known:
+            raise ValueError("그 종에 없는 모습입니다.")
+    # The user's choice of form (히스이 블레이범, 볼트로스 영물폼) wins over the form the stats suggest.
+    estimated = level.estimate(reference, species, iv, cp, max_hp, temp, chosen_form or resolved["form"])
     levels = estimated.get("levels", [])
     voted = {
         "fast": {"value": fast, "votes": 1, "observations": 1, "power": None} if fast else None,
@@ -131,7 +139,7 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
             cp, max_hp, cp_source = regular[0]["cp"], regular[0]["max_hp"], "calculated"
         else:
             cp, max_hp, cp_source = None, None, None
-    form = resolved["form"] or estimated.get("form")
+    form = chosen_form or resolved["form"] or estimated.get("form")
     # Once mega evolved, the app assumes it can mega evolve again at any time. A scan while mega
     # evolved or a mega level proves it; otherwise only the user's choice sets it.
     if mega_evolved is None and (temp or (mega_level or 0) >= 1):

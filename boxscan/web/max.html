@@ -10,7 +10,7 @@
 </head>
 <body>
   <div class="appbar"><div class="appbar-inner"><a class="brand" href="/">포켓몬 GO 박스 스캔</a>
-    <nav aria-label="주요 화면"><a href="/">스캔</a><a href="/box">내 박스</a><a href="/raids">현재 레이드</a><a href="/raid">레이드 추천</a><a href="/max" aria-current="page">맥스배틀 추천</a></nav>
+    <nav aria-label="주요 화면"><a href="/">스캔</a><a href="/box">내 박스</a><a href="/raids">레이드·이벤트</a><a href="/raid">레이드 추천</a><a href="/max" aria-current="page">맥스배틀 추천</a></nav>
   </div></div>
   <main>
     <header class="page-head">
@@ -29,15 +29,15 @@
           <option value="1">혼자</option><option value="2">2명</option><option value="3">3명</option><option value="4">4명</option>
         </select></label>
         <label class="field"><span>회피</span><select name="dodge">
-          <option value="auto">자동 (평소엔 피하고, 시간이 모자라면 다 맞기)</option>
-          <option value="dodge">노림 공격은 피하기</option>
-          <option value="tank">다 맞으면서 하기</option></select></label>
+          <option value="auto">자동 (추천)</option>
+          <option value="dodge">노림 공격 피하기</option>
+          <option value="tank">다 맞기</option></select></label>
       </div>
       <p id="boss-moves" class="muted" hidden></p>
       <div class="checks">
         <label class="check"><input type="checkbox" name="orbs" checked><span>15초마다 나오는 에너지 구슬을 모두 줍기</span></label>
       </div>
-      <p class="muted">보스 기술은 들어가기 전에 모르므로 보스 스페셜어택마다 따로 계산합니다. 보스의 한 마리 노림 공격은 피하면 피해가 줄지만 그동안 잠깐 공격하지 못하고, 전체 공격은 피하지 않습니다. 보스 HP·공격 간격·제한 시간·회피 감소는 커뮤니티 자료 기반의 계산용 값입니다. 다른 트레이너의 피해는 넣지 않습니다.</p>
+      <details class="help"><summary>계산 방식 안내</summary><p>보스 기술은 들어가기 전에 모르므로 보스 스페셜어택마다 따로 계산합니다. 보스의 한 마리 노림 공격은 피하면 피해가 줄지만 그동안 잠깐 공격하지 못하고, 전체 공격은 피하지 않습니다. 보스 HP·공격 간격·제한 시간·회피 감소는 커뮤니티 자료 기반의 계산용 값입니다. 다른 트레이너의 피해는 넣지 않습니다.</p></details>
       <datalist id="species-list"></datalist>
       <button>추천 계산</button>
     </form>

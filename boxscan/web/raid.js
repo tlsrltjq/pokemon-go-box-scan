@@ -9,7 +9,7 @@ function fill(select, items, keepFirst = false) {
 }
 
 function range(summary, unit = "", digits = 0) {
-  const f = value => Number(value).toFixed(digits);
+  const f = value => Number(value).toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
   return summary.min === summary.max ? `${f(summary.avg)}${unit}` : `${f(summary.avg)}${unit} (${f(summary.min)}–${f(summary.max)})`;
 }
 
@@ -45,9 +45,10 @@ async function loadBoss() {
 }
 
 function memberCard(member) {
-  return element("article", { class: "card" },
-    element("header", {},
-      element("h3", {}, `${member.order}. ${member.name}`),
+  return element("article", { class: `card member-card t-${typeCode(member.types?.[0])}` },
+    element("header", { class: "member-head" },
+      avatar({ dex: member.dex, form: member.form, temp: member.mega?.kind, shiny: member.shiny, types: member.types, name: member.name }, "md"),
+      element("h3", {}, element("span", { class: "order" }, String(member.order)), member.name),
       element("span", { class: "badge neutral" }, member.code ?? "")),
     element("p", { class: "muted" }, `레벨 ${member.level} · IV ${formatIv(member.iv)} · ${member.types.join("/")}` +
       (member.shadow ? " · 그림자 보정 공격 ×1.2·방어 ×0.833" : "")),
@@ -119,7 +120,10 @@ function showResult(result) {
   } else {
     const r = result.result;
     summary.replaceChildren(...[
-      element("h3", {}, `${name} · ${boss.tier_name} · ${result.weather_name}`),
+      element("div", { class: "result-head" },
+        avatar({ dex: boss.dex, form: boss.form, temp: boss.temp, types: boss.types, name: boss.species }, "lg"),
+        element("div", {}, element("h3", {}, name), element("p", { class: "muted" }, `${boss.tier_name} · ${result.weather_name}`),
+          boss.types ? typeChips(boss.types) : null)),
       element("p", {}, `보스 ${boss.types.join("/")} · HP ${boss.hp.toLocaleString()} · 제한 시간 ${result.time_limit_s}초` +
         (result.rejoin_delay_s == null ? " · 재입장 없음" : ` · 재입장 지연 ${result.rejoin_delay_s}초`) +
         (result.trainers > 1 ? ` · ${result.trainers}명` : " · 혼자")),

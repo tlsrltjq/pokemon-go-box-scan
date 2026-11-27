@@ -201,7 +201,8 @@ def attacker(reference: Reference, entry: dict, temp: str | None = None) -> tupl
         name += " (그림자)"
     types = _types(reference, stats.pokemon_id, None if temp else form, temp)
     info = {"code": entry.get("code"), "revision": entry.get("revision"), "level": lvl, "iv": iv, "shadow": shadow,
-            "mega": None}
+            "mega": None, "dex": stats.pokemon_id, "form": None if temp or form == "Normal" else form,
+            "shiny": entry.get("shiny") is True}
     if temp:
         boosts = reference.temp_boosts or {}
         boosted = (boosts.get("types") or {}).get(str(stats.pokemon_id)) or types
@@ -826,7 +827,8 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
         }
     return {
         "engine": ENGINE_VERSION, "ruleset": RULESET["version"], "reference": reference.version,
-        "boss": {k: foe[k] for k in ("species", "form_name", "temp", "tier", "tier_name", "hp")} | {"shadow": bool(shadow)}
+        "boss": {k: foe[k] for k in ("species", "form", "form_name", "temp", "tier", "tier_name", "hp")} | {"shadow": bool(shadow)}
+        | {"dex": reference.korean_names.get(foe["species"])}
         | {"types": [TYPE_NAMES.get(t, t) for t in foe["types"]],
            "attack": round(foe["attack"], 1), "defense": round(foe["defense"], 1), "moves": _boss_moves(foe)},
         "weather": weather, "weather_name": WEATHER_NAMES[weather],

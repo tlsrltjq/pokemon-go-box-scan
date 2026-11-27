@@ -113,6 +113,9 @@ class AccuracyTests(unittest.TestCase):
         suspect["moves"]["charged"][0]["match"] = "none"
         self.assertIn("배울 수 없거나 사전에 없는 기술", accuracy.gate(suspect))
         self.assertEqual(accuracy.gate(candidate([1], "하나몬", 500, 80)), [])
+        both = candidate([1], "하나몬", 500, 80)
+        both["level"] = {"status": "AMBIGUOUS", "form": "Normal", "other_forms": {"히스이의 모습": [20.0]}}
+        self.assertEqual(accuracy.gate(both), ["다른 모습으로도 맞음(히스이의 모습): 모습 확인"])
 
     def test_compare_separates_missing_from_wrong(self):
         saved = accuracy.saved_values(values("하나몬", 500, 80, charged=("B", "C")), mega=False)

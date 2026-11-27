@@ -159,6 +159,12 @@ def main() -> None:
                 raise SystemExit(f"갱신하지 못했습니다. 기존 목록을 유지합니다: {error}")
             for name, error in manifest["errors"].items():
                 print(f"  {name}: 받지 못함 ({error})")
+            from . import events
+            print(f"이벤트 달력을 내려받습니다 ({events.SOURCE_NAME}): {events.SOURCE_URL}")
+            try:
+                print(f"  이벤트 {events.update(args.data_dir)['count']}개")
+            except (OSError, ValueError) as error:
+                print(f"  갱신하지 못했습니다. 기존 달력을 유지합니다: {error}")
         listing = raid_bosses.current(args.data_dir)
         if listing is None:
             raise SystemExit("저장된 보스 목록이 없습니다. `raids update`를 실행하세요.")

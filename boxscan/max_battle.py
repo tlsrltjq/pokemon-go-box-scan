@@ -198,7 +198,8 @@ def fighter(reference: Reference, entry: dict) -> tuple[MaxFighter | None, str |
                       charged, {"type": move_type, "power": power, "name": name, "level": attack_level, "gmax": gmax},
                       level_of("guard"), level_of("spirit"),
                       {"code": entry.get("code"), "revision": entry.get("revision"), "level": lvl, "iv": iv,
-                       "max_state": state, "shadow": entry.get("shadow") is True}), None
+                       "max_state": state, "shadow": entry.get("shadow") is True, "dex": stats.pokemon_id,
+                       "form": None if form == "Normal" else form, "shiny": entry.get("shiny") is True}), None
 
 
 def _plans(f: MaxFighter) -> list[str]:
@@ -518,6 +519,7 @@ def _report(reference, foe, limit_s, weather, orbs, trainers, moves, team, runs,
     return {
         "engine": ENGINE_VERSION, "ruleset": RULESET["version"], "reference": reference.version,
         "boss": {"species": foe["species"], "form_name": foe["form_name"], "tier": foe["tier"],
+                 "dex": reference.korean_names.get(foe["species"]), "form": foe.get("form"),
                  "tier_name": foe["tier_name"], "hp": foe["hp"], "types": [TYPE_NAMES.get(t, t) for t in foe["types"]],
                  "attack": round(foe["attack"], 1), "defense": round(foe["defense"], 1),
                  "moves": {"fast": [], "charged": [{"name": m.name, "type": TYPE_NAMES.get(m.type, m.type)}

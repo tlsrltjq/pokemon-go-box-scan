@@ -10,7 +10,7 @@
 </head>
 <body>
   <div class="appbar"><div class="appbar-inner"><a class="brand" href="/">포켓몬 GO 박스 스캔</a>
-    <nav aria-label="주요 화면"><a href="/" aria-current="page">스캔</a><a href="/box">내 박스</a><a href="/raids">현재 레이드</a><a href="/raid">레이드 추천</a><a href="/max">맥스배틀 추천</a></nav>
+    <nav aria-label="주요 화면"><a href="/" aria-current="page">스캔</a><a href="/box">내 박스</a><a href="/raids">레이드·이벤트</a><a href="/raid">레이드 추천</a><a href="/max">맥스배틀 추천</a></nav>
   </div></div>
   <main class="wide">
     <header class="page-head">
@@ -23,7 +23,13 @@
         <button type="button" role="tab" id="tab-upload" aria-controls="upload" aria-selected="false">녹화 영상 올리기</button>
       </div>
       <form id="live" class="live-form" role="tabpanel" aria-labelledby="tab-live">
-        <p class="muted">Mac에 띄운 iPhone 미러링·AirPlay 화면을 읽습니다. 포켓몬마다 상세 화면 → 기술(아래로 스크롤) → 조사 화면을 1~2초씩 보여 주세요. 화면만 읽고 게임은 조작하지 않으며 영상은 남기지 않습니다. 최대 10분.</p>
+        <ol class="steps" aria-label="포켓몬마다 보여 줄 화면">
+          <li><strong>상세 화면</strong><span>CP·HP·이름이 보이게 1~2초</span></li>
+          <li><strong>기술</strong><span>아래로 스크롤해 기술 줄까지</span></li>
+          <li><strong>조사 화면</strong><span>IV 막대가 다 찰 때까지</span></li>
+          <li><strong>다음 포켓몬</strong><span>옆으로 넘기면 새 개체로 묶음</span></li>
+        </ol>
+        <p class="muted">Mac에 띄운 iPhone 미러링·AirPlay 화면을 읽습니다. 화면만 읽고 게임은 조작하지 않으며 영상은 남기지 않습니다. 최대 10분.</p>
         <div class="fields">
           <label class="field live-window"><span>캡처할 창</span><select name="window" required></select></label>
         </div>
