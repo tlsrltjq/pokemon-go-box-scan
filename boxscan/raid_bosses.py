@@ -412,10 +412,10 @@ def summary(kind: str, report: dict) -> dict:
         "search_approximate": (report.get("search") or {}).get("approximate"),
         "engine": report["engine"], "ruleset": report["ruleset"], "reference": report["reference"],
         "weather_name": report.get("weather_name"), "trainers": report.get("trainers"),
+        "dodge_comparison": report.get("dodge_comparison"),
     }
     if kind == "raid":
         out["mega_comparison"] = report.get("mega_comparison")
-        out["dodge_comparison"] = report.get("dodge_comparison")
         shadow = report.get("shadow")
         out["shadow"] = None if not shadow else {k: shadow.get(k) for k in (
             "enrage_at", "attack", "defense", "enraged_s", "enraged_runs", "runs", "comparison")}

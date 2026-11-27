@@ -107,6 +107,26 @@ class SimulationTests(unittest.TestCase):
         self.assertEqual(result["faints"], 2)
         self.assertGreater(result["members"][1]["time_ms"], 0)
 
+    def test_spirit_heals_only_the_pokemon_using_it(self):
+        foe = max_battle.boss(self.data, "불꽃몬", "2")
+        healer, _ = max_battle.fighter(self.data, max_entry(2, state="gigantamax", max_moves=[
+            {"name": "거다이포격", "level": 3}, {"name": "다이리커버리", "level": 3}]))
+        # Alone, the healer heals itself: it ends with more HP than it lost.
+        alone = max_battle.simulate(self.data, [(healer, False, "spirit")], foe, foe["charged"][0], 480)["members"][0]
+        self.assertGreater(alone["taken"], 0)
+        self.assertGreater(alone["hp_left"], healer.hp - alone["taken"])
+        # Behind a lead that stays on the field, the G-Max healer comes out for the Max Phase. The
+        # lead, waiting in its ball meanwhile, is not healed; the healer was at full HP already.
+        lead, _ = max_battle.fighter(self.data, max_entry(1))
+        result = max_battle.simulate(self.data, [(lead, False, "attack"), (healer, False, "spirit")], foe,
+                                     foe["charged"][0], 480)
+        first, second = result["members"]
+        self.assertEqual((first["max_phases"], first["faints"]), (0, 0))
+        self.assertGreater(second["max_phases"], 0)
+        self.assertGreater(first["taken"], 0)
+        self.assertEqual(first["hp_left"], lead.hp - first["taken"])
+        self.assertEqual(second["hp_left"], healer.hp)
+
 
 class RecommendTests(unittest.TestCase):
     def setUp(self):
@@ -123,8 +143,12 @@ class RecommendTests(unittest.TestCase):
         result = max_battle.recommend(self.data, self.entries, "불꽃몬", "3", weather="RAINY")
         self.assertEqual(len(result["party"]), 3)
         self.assertEqual(result["party"][0]["code"], "PK0001")  # super effective and level 40 leads
-        self.assertNotIn("PK0004", [p["code"] for p in result["party"]])  # grass is resisted
         self.assertEqual(result["result"]["defeated_scenarios"], 2)
+        self.assertIsNotNone(result["result"]["clear_s"])
+        self.assertEqual(result["boss"]["moves"]["charged"], [{"name": "폭발불", "type": "불꽃"},
+                                                               {"name": "불펀치", "type": "불꽃"}])
+        self.assertEqual((result["dodge"], result["dodge_mode"], result["dodge_comparison"]["chosen"]),
+                         (True, "auto", "dodge"))
         self.assertEqual(result["excluded"], [{"code": "PK0007", "name": "물몬", "reason": "레벨이 하나로 정해지지 않음"}])
         self.assertEqual(result["not_max_count"], 1)
         self.assertEqual(result["weather_name"], "비")
@@ -132,7 +156,8 @@ class RecommendTests(unittest.TestCase):
         self.assertIsNone(result["shortfall"])
 
     def test_search_matches_exhaustive_search(self):
-        result = max_battle.recommend(self.data, self.entries, "불꽃몬", "4", boss_charged="BLAST")
+        result = max_battle.recommend(self.data, self.entries, "불꽃몬", "4", boss_charged="BLAST", dodge="tank")
+        self.assertIsNone(result["result"]["clear_s"])  # nobody clears, so damage decides as before
         foe = max_battle.boss(self.data, "불꽃몬", "4")
         fighters = [max_battle.fighter(self.data, e)[0] for e in self.entries]
         fighters = [f for f in fighters if f]
@@ -153,9 +178,47 @@ class RecommendTests(unittest.TestCase):
         empty = max_battle.recommend(self.data, [entry(1, "물몬")], "불꽃몬", "1")
         self.assertIsNone(empty["result"])
         for kwargs in ({"tier": "9"}, {"trainers": 5}, {"weather": "X"}, {"boss_charged": "WAVE"},
-                       {"time_limit_s": 10}):
+                       {"time_limit_s": 10}, {"dodge": "jump"}):
             with self.assertRaises(raid.RaidError):
                 max_battle.recommend(self.data, self.entries, "불꽃몬", **{"tier": "1", **kwargs})
+
+
+class SoloMaxTests(unittest.TestCase):
+    setUp = RecommendTests.setUp  # the same synthetic box
+
+    def test_dodging_halves_single_target_hits_and_costs_attack_time(self):
+        foe = max_battle.boss(self.data, "불꽃몬", "4")
+        water, _ = max_battle.fighter(self.data, max_entry(1))
+        party = [(water, False, "attack")]
+        tank = max_battle.simulate(self.data, party, foe, foe["charged"][0], 480, orbs=False)
+        dodge = max_battle.simulate(self.data, party, foe, foe["charged"][0], 480, orbs=False, dodge=True)
+        self.assertEqual((tank["faints"], dodge["faints"]), (1, 1))
+        self.assertGreater(dodge["members"][0]["time_ms"], tank["members"][0]["time_ms"])  # survives longer
+        self.assertGreater(dodge["damage"], tank["damage"])
+        # On a 1-star nobody is in danger: the dodge at 7.5 s only delays the Max Phase.
+        easy = max_battle.boss(self.data, "불꽃몬", "1")
+        quick = [max_battle.simulate(self.data, party, easy, easy["charged"][0], 480, orbs=False, dodge=d)
+                 for d in (False, True)]
+        self.assertEqual(quick[0]["end_ms"], 15000)
+        self.assertGreater(quick[1]["end_ms"], quick[0]["end_ms"])
+
+    def test_ranking_prefers_defeat_then_time_then_fewer_faints(self):
+        def run(defeated, damage, end_ms, faints):
+            return {"defeated": defeated, "damage": damage, "end_ms": end_ms, "faints": faints}
+
+        ordered = [[run(True, 100, 50_000, 0)], [run(True, 100, 50_000, 1)], [run(True, 100, 60_000, 0)],
+                   [run(False, 90, 480_000, 0)], [run(False, 80, 480_000, 0)]]
+        self.assertEqual(sorted(ordered, key=max_battle._rank, reverse=True), ordered)
+
+    def test_auto_takes_every_hit_when_dodging_runs_out_of_time(self):
+        result = max_battle.recommend(self.data, self.entries, "불꽃몬", "3", time_limit_s=120)
+        comparison = result["dodge_comparison"]
+        self.assertEqual((result["dodge"], comparison["chosen"]), (False, "tank"))
+        self.assertGreater(result["result"]["defeated_scenarios"], comparison["other"]["defeated_scenarios"])
+        self.assertTrue(any("다 맞습니다" in a for a in result["assumptions"]))
+        dodging = max_battle.recommend(self.data, self.entries, "불꽃몬", "3", time_limit_s=120, dodge="dodge")
+        self.assertEqual((dodging["dodge"], dodging["dodge_mode"]), (True, "dodge"))
+        self.assertTrue(any("50%" in a and "0.5초" in a for a in dodging["assumptions"]))
 
 
 class MaxApiTests(unittest.TestCase):
@@ -183,12 +246,15 @@ class MaxApiTests(unittest.TestCase):
     def test_options_and_recommend(self):
         options = self.client.get("/api/max/options", params={"species": "불꽃몬"}).json()
         self.assertEqual([t["id"] for t in options["tiers"]], ["1", "2", "3", "4", "5", "gmax"])
-        self.assertEqual([m["name"] for m in options["boss"]["charged"]], ["폭발불", "불펀치"])
+        self.assertEqual([(m["name"], m["type"]) for m in options["boss"]["charged"]], [("폭발불", "불꽃"), ("불펀치", "불꽃")])
         response = self.client.post("/api/max/recommend", json={"species": "불꽃몬", "tier": "2", "trainers": "4"})
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertEqual(body["party"][0]["max_attack"]["level"], 2)
-        self.assertEqual(body["trainers"], 4)
+        self.assertEqual((body["trainers"], body["dodge_mode"]), (4, "auto"))
+        tank = self.client.post("/api/max/recommend", json={"species": "불꽃몬", "dodge": "tank"}).json()
+        self.assertEqual((tank["dodge"], tank["dodge_mode"]), (False, "tank"))
+        self.assertEqual(self.client.post("/api/max/recommend", json={"species": "불꽃몬", "dodge": "x"}).status_code, 422)
         self.assertEqual(self.client.post("/api/max/recommend", json={"species": "불꽃몬", "trainers": 2.5}).status_code, 422)
         self.assertEqual(self.client.post("/api/max/recommend", json={"species": ""}).status_code, 422)
         self.assertEqual(self.client.get("/max").status_code, 200)

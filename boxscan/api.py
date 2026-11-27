@@ -266,7 +266,9 @@ def create_app(
             learnset = (data.learnsets or {}).get(f"{pokemon_id}|Normal") or {}
             options["boss"] = {
                 "forms": [{"id": f.form, "name": display_name(pokemon_id, f.form) or "기본 모습"} for f in forms],
-                "charged": [{"id": m, "name": data.move_names.get(m, m)} for m in learnset.get("charged", [])],
+                "charged": [{"id": m, "name": data.move_names.get(m, m),
+                             "type": raid.TYPE_NAMES.get(getattr(raid._move(data, m), "type", None))}
+                            for m in learnset.get("charged", [])],
             }
         return options
 
@@ -294,11 +296,15 @@ def create_app(
         trainers = number("trainers") or 1
         if trainers != int(trainers):
             raise HTTPException(422, "함께하는 트레이너 수는 1~4명입니다.")
+        dodge = payload.get("dodge") or "auto"
+        if dodge not in raid.DODGE_MODES:
+            raise HTTPException(422, "회피 방식을 다시 선택하세요.")
         try:
             return max_battle.recommend(
                 data, box.list(), species, text("tier") or "1", form=text("form"),
                 weather=text("weather") or "", time_limit_s=number("time_limit_s"),
-                boss_charged=text("boss_charged"), orbs=payload.get("orbs") is not False, trainers=int(trainers))
+                boss_charged=text("boss_charged"), orbs=payload.get("orbs") is not False, trainers=int(trainers),
+                dodge=dodge)
         except raid.RaidError as error:
             raise HTTPException(422, str(error)) from None
 

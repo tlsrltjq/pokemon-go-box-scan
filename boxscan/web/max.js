@@ -29,7 +29,9 @@ async function loadBoss() {
   if (!species) return;
   try {
     const { boss } = await jsonResponse(await fetch(`/api/max/options?species=${encodeURIComponent(species)}`));
-    fill(form.elements.boss_charged, boss.charged, true);
+    const moves = document.querySelector("#boss-moves");
+    moves.textContent = `보스 스페셜어택 (들어가기 전에는 모름): ${boss.charged.map(m => m.type ? `${m.name}(${m.type})` : m.name).join(", ")}`;
+    moves.hidden = !boss.charged.length;
     fill(form.elements.form, boss.forms);
     formField.hidden = boss.forms.length < 2;
     status.textContent = "";
@@ -62,8 +64,30 @@ function memberCard(member) {
     element("dl", {},
       element("div", {}, element("dt", {}, "예상 피해"), element("dd", {}, element("strong", {}, range(member.damage)))),
       element("div", {}, element("dt", {}, "그중 맥스 기술"), element("dd", {}, element("strong", {}, range(member.max_damage)))),
-      element("div", {}, element("dt", {}, "버틴 시간"), element("dd", {}, element("strong", {}, range(member.alive_s, "초", 1))))),
+      element("div", {}, element("dt", {}, "버틴 시간"), element("dd", {}, element("strong", {}, range(member.alive_s, "초", 1)),
+        element("span", {}, member.fainted_scenarios ? `보스 기술 ${member.fainted_scenarios}가지에서 기절` : "기절하지 않음")))),
   );
+}
+
+const DODGE_NAMES = { dodge: "노림 공격은 피하기", tank: "다 맞으면서 하기" };
+
+function outcomeText(r) {
+  return r.clear_s ? `평균 ${r.clear_s.avg.toFixed(1)}초에 처치` : `평균 ${Math.round(r.damage.avg).toLocaleString()} 피해, 처치 못 함`;
+}
+
+function dodgeLine(result) {
+  const c = result.dodge_comparison;
+  if (!c) return null;
+  const mine = result.result;
+  if (c.chosen === "tank") {
+    return element("p", { class: "mega-note" },
+      `다 맞으면서 하기를 추천합니다. 노림 공격을 피하면 ${outcomeText(c.other)}입니다.`);
+  }
+  if (mine.clear_s && c.other.clear_s && mine.clear_s.avg - c.other.clear_s.avg > 0.5) {
+    return element("p", { class: "muted" },
+      `다 맞으면서 하면 평균 ${(mine.clear_s.avg - c.other.clear_s.avg).toFixed(1)}초 빨라지지만 기절이 늘 수 있어 피하기를 추천합니다.`);
+  }
+  return null;
 }
 
 function showResult(result) {
@@ -82,22 +106,25 @@ function showResult(result) {
       element("p", {}, `보스 ${boss.types.join("/")} · HP ${boss.hp.toLocaleString()} · 제한 시간 ${result.time_limit_s}초 · ` +
         (result.trainers === 1 ? "혼자" : `${result.trainers}명`)),
       element("dl", {},
+        element("div", {}, element("dt", {}, "처치 시간"), element("dd", {},
+          element("strong", {}, r.clear_s ? range(r.clear_s, "초", 1) : "처치 못 함"),
+          element("span", {}, `보스 기술 ${result.scenarios.length}가지 중 ${r.defeated_scenarios}가지에서 처치`))),
         element("div", {}, element("dt", {}, "예상 누적 피해"), element("dd", {}, element("strong", {}, range(r.damage)),
           element("span", {}, `보스 HP의 ${Math.round((r.damage.avg / r.boss_hp) * 100)}%`))),
-        element("div", {}, element("dt", {}, "전투 시간"), element("dd", {}, element("strong", {}, range(r.battle_s, "초", 1)))),
         element("div", {}, element("dt", {}, "다이맥스 횟수 · 기절"), element("dd", {},
           element("strong", {}, `${range(r.max_phases, "", 1)} · ${range(r.faints, "", 1)}`)))),
-      element("p", { class: "muted" }, `보스 스페셜어택 ${result.scenarios.length}가지 평균(괄호는 가장 낮은~높은 결과).` +
-        (r.defeated_scenarios ? ` ${r.defeated_scenarios}가지에서 내 3마리만으로 보스를 쓰러뜨립니다.` : "")),
+      element("p", { class: "muted" }, `보스 스페셜어택 ${result.scenarios.length}가지 평균(괄호는 가장 낮은~높은 결과). ` +
+        `${DODGE_NAMES[result.dodge ? "dodge" : "tank"]} 기준입니다.`),
+      dodgeLine(result),
       result.shortfall ? element("p", { class: "warn-text" }, result.shortfall) : null,
     ].filter(Boolean));
   }
   document.querySelector("#party").replaceChildren(...result.party.map(memberCard));
   document.querySelector("#scenarios").replaceChildren(
-    element("thead", {}, element("tr", {}, ...["보스 스페셜어택", "예상 피해", "전투 시간", "다이맥스"].map(t => element("th", { scope: "col" }, t)))),
+    element("thead", {}, element("tr", {}, ...["보스 스페셜어택", "예상 피해", "전투 시간", "다이맥스", "기절"].map(t => element("th", { scope: "col" }, t)))),
     element("tbody", {}, ...result.by_scenario.map(s => element("tr", {},
       element("td", {}, s.charged), element("td", {}, `${s.damage.toLocaleString()}${s.defeated ? " (처치)" : ""}`),
-      element("td", {}, `${s.battle_s}초`), element("td", {}, `${s.max_phases}번`)))));
+      element("td", {}, `${s.battle_s}초`), element("td", {}, `${s.max_phases}번`), element("td", {}, `${s.faints}마리`)))));
   const excluded = document.querySelector("#excluded");
   excluded.replaceChildren(...(result.excluded.length ? [
     element("h3", {}, `제외한 개체 ${result.excluded.length}마리`),
@@ -130,7 +157,7 @@ form.addEventListener("submit", async event => {
         form: document.querySelector("#form-field").hidden ? null : form.elements.form.value,
         time_limit_s: form.elements.time_limit_s.value,
         trainers: form.elements.trainers.value,
-        boss_charged: form.elements.boss_charged.value || null,
+        dodge: form.elements.dodge.value,
         orbs: form.elements.orbs.checked,
       }),
     }));

@@ -103,10 +103,13 @@ function showRecommendation(boss, result) {
         ` · ${s.defeated_scenarios}/${s.scenarios}가지 기술 조합에서 처치`)
       : element("p", {}, element("strong", {}, `예상 피해 ${range(s.damage)}`), ` · 보스 HP ${s.boss_hp.toLocaleString()}의 ${percent}%` +
         (s.defeated_scenarios ? ` · ${s.defeated_scenarios}/${s.scenarios}가지 기술 조합에서 처치` : "")),
-    s.boss_moves ? element("p", { class: "muted" },
-      `보스 기술 · 노말어택: ${moveList(s.boss_moves.fast)} · 스페셜어택: ${moveList(s.boss_moves.charged)}`) : null,
+    s.boss_moves ? element("p", { class: "muted" }, "보스 기술 · " + [
+      s.boss_moves.fast.length ? `노말어택: ${moveList(s.boss_moves.fast)}` : null,
+      `스페셜어택: ${moveList(s.boss_moves.charged)}`].filter(Boolean).join(" · ")) : null,
     s.dodge_comparison && s.dodge_comparison.chosen === "tank"
-      ? element("p", { class: "mega-note" }, "다 맞으면서 하기 추천: 스페셜어택을 피하면 시간 안에 덜 깎습니다.") : null,
+      ? element("p", { class: "mega-note" }, boss.kind === "raid"
+        ? "다 맞으면서 하기 추천: 스페셜어택을 피하면 시간 안에 덜 깎습니다."
+        : "다 맞으면서 하기 추천: 노림 공격을 피하면 시간 안에 덜 깎습니다.") : null,
     element("ol", { class: "party-list" }, ...s.party.map(m => element("li", {},
       element("strong", {}, m.name), m.code ? ` ${m.code}` : "",
       element("span", { class: "muted" }, ` · Lv ${m.level} · ${m.fast} / ${m.charged ?? "스페셜어택 안 씀"}` +

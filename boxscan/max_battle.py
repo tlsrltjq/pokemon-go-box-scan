@@ -1,28 +1,37 @@
 """Max battle (Dynamax / Gigantamax) recommendation (spec v1.2 section 8.3).
 
 This is a separate engine from normal raids. One trainer brings up to three Dynamax- or
-Gigantamax-capable Pokémon; one is on the field at a time. The goal is the most damage those three
-deal before the boss falls, the time runs out, or all three faint. Other trainers' damage and meter
-are not modelled (spec: unknown teammates count as zero contribution); an optional trainer count only
+Gigantamax-capable Pokémon; one is on the field at a time. Like solo raids, parties are ranked by
+how many boss movesets they defeat the boss in alone, then by damage where the boss survives, then
+by the shortest defeat time, then by fewer faints (raid.rank plus faints). The same ranking picks
+each Pokémon's charged-attack use and max phase plan. Other trainers' damage and meter are not
+modelled (spec: unknown teammates count as zero contribution); an optional trainer count only
 splits the boss's single-target attacks among the lobby.
 
-Battle model (max-sim/1), deterministic:
+Battle model (max-sim/2), deterministic:
 - Normal phase: my active Pokémon uses its fast attack, and its charged attack when affordable if
   that policy deals more damage (both policies are tried). Damage uses the raid formula with STAB,
   weather and type effectiveness. Energy comes from fast attacks and damage taken (0.5 per HP).
 - Max Meter (0–100): every hit adds max(1, floor(damage × multiplier / (boss HP / 200))), with the
-  tier multiplier below. A Max Orb adds 10 every 15 s (assumed collected). At 100 the best alive
-  party member takes the field for the Max Phase: a 3 s countdown and three max moves (2.5 s each,
-  damage at 2.0 s). The boss does not attack during it. Then the meter resets and the previous
-  active Pokémon returns (swap time applies).
+  tier multiplier below. A Max Orb adds 10 every 15 s (assumed collected). At 100 the Max Phase
+  starts: a 3 s countdown and three max moves (2.5 s each, damage at 2.0 s). The Pokémon on the
+  field Dynamaxes, unless another alive member's max moves deal more than it would deal in the
+  swap there and back (and the one on the field does not already finish the boss); then that one
+  takes the field and the previous active Pokémon returns afterwards (swap time applies). The boss
+  does not attack during the Max Phase. Then the meter resets.
 - Max moves: Max Attack (type of the fast attack) 250/300/350 power by level, G-Max moves
   350/400/450, Max Guard adds a 20/40/60 HP shield (up to 3 stacked), Max Spirit heals 8/12/16 %
-  of max HP. Only moves unlocked in the box are used; Max Attack level 1 is assumed when the box
+  of max HP of the Pokémon on the field (of mine only the one using it, not those waiting in their
+  balls; teammates' Pokémon are not modelled). Only moves unlocked in the box are used; Max Attack level 1 is assumed when the box
   has no max move data. Each Pokémon's three-move plan is chosen from attack-only and
   guard/spirit-first plans by the damage it leads to.
 - Boss: attack and defense = (base + 15) × tier CPM, attack × tier attack multiplier. It attacks
   at a fixed interval with one of its charged attacks, alternating a single-target attack (×2
-  damage when not dodged; no dodging is assumed) and a spread attack (×1).
+  damage) and a spread attack (×1). When dodging, the single-target attack is dodged: its damage is
+  cut by RULESET["dodge_reduction"] (community observation for max battles: 50 %, so ×1 instead
+  of ×2) and my next action waits the game's dodge time (dodgeDurationMs, 0.5 s by default). Spread
+  attacks are not dodged. recommend(dodge="auto") calculates both and recommends taking every hit
+  only when dodging does worse before time runs out.
 
 Tier values come from community sources (see RULESET) and are scenario values, not game data.
 Enrage after a few minutes is not modelled.
@@ -34,10 +43,11 @@ from dataclasses import dataclass, field
 
 from . import level as level_rules
 from .forms import display_name
-from .raid import TYPE_NAMES, WEATHER_NAMES, Move, RaidError, _move, _types, damage
+from .raid import (DODGE_MODES, TYPE_NAMES, WEATHER_NAMES, Move, RaidError, _move, _types, damage,
+                   dodge_settings, rank)
 from .reference import Reference
 
-ENGINE_VERSION = "max-sim/1"
+ENGINE_VERSION = "max-sim/2"
 PARTY_SIZE = 3
 CANDIDATE_LIMIT = 10
 PHASE_COUNTDOWN_MS = 3000
@@ -51,7 +61,10 @@ SPIRIT_HEAL = {1: 0.08, 2: 0.12, 3: 0.16}
 MAX_SHIELDS = 3
 
 RULESET = {
-    "version": "max-ruleset/2026-11-17",
+    "version": "max-ruleset/2026-11-27",
+    # Share of a dodged single-target attack's damage that is avoided; observed cuts in max battles
+    # are 50-70 % depending on timing, so the low end is used.
+    "dodge_reduction": 0.5,
     # hp, cpm, attack multiplier, meter multiplier, boss attack interval (s), time limit (s)
     "tiers": {
         "1": {"name": "1성", "hp": 1700, "cpm": 0.15, "attack": 1.0, "meter": 1, "interval": 7.5, "time_limit": 480},
@@ -68,6 +81,7 @@ RULESET = {
         "https://pokechespin.net/whatsnew",
         "https://mattsimplified.com/guide/max-battles/",
         "https://www.dittobase.com/pokemon-go/moves/g-max-stun-shock",
+        "https://www.sportskeeda.com/pokemon/how-dodge-attacks-pokemon-go-max-battles",
     ],
 }
 
@@ -192,18 +206,22 @@ def _plans(f: MaxFighter) -> list[str]:
 
 
 def simulate(reference: Reference, party: list[tuple[MaxFighter, bool, str]], foe: dict, boss_move,
-             time_limit_s: float, weather: str = "", orbs: bool = True, trainers: int = 1) -> dict:
+             time_limit_s: float, weather: str = "", orbs: bool = True, trainers: int = 1,
+             dodge: bool = False) -> dict:
     """party = [(fighter, use charged attacks, max phase plan)]. With other trainers in the lobby a
-    single-target attack hits me only in 1 of `trainers` cases; that share is applied as an expected
-    value. Other trainers' damage is still not counted."""
+    single-target attack hits me only in 1 of `trainers` cases; that share (and the dodge time it
+    costs) is applied as an expected value. Other trainers' damage is still not counted."""
     weather_types = (reference.weather or {}).get(weather, []) if weather else []
     settings = reference.battle
     rule = foe["rule"]
     limit = int(time_limit_s * 1000)
     interval = int(rule["interval"] * 1000)
     swap = settings["swapDurationMs"]
+    _, dodge_ms, _ = dodge_settings(reference)
+    targeted_share = TARGETED_MULTIPLIER * ((1 - RULESET["dodge_reduction"]) if dodge else 1.0) / trainers
+    dodge_wait = 0
     per_point = foe["hp"] / 200
-    stats = [{"damage": 0, "max_damage": 0, "time_ms": 0, "faints": 0, "max_phases": 0} for _ in party]
+    stats = [{"damage": 0, "max_damage": 0, "time_ms": 0, "faints": 0, "max_phases": 0, "taken": 0} for _ in party]
 
     def deal(f, move):
         return damage(reference, move, f.attack, foe["defense"], f.types, foe["types"], weather_types)
@@ -254,7 +272,9 @@ def simulate(reference: Reference, party: list[tuple[MaxFighter, bool, str]], fo
             single, targeted = targeted, not targeted
             if time < entered:  # nobody on the field while swapping
                 continue
-            dealt = int(taken[current] * (TARGETED_MULTIPLIER / trainers if single else 1.0))
+            dealt = int(taken[current] * (targeted_share if single else 1.0))
+            if single and dodge:
+                dodge_wait += dodge_ms // trainers
             while dealt > 0 and shields:
                 absorbed = min(dealt, shields[0])
                 shields[0] -= absorbed
@@ -262,6 +282,7 @@ def simulate(reference: Reference, party: list[tuple[MaxFighter, bool, str]], fo
                 if shields[0] <= 0:
                     shields.pop(0)
             hp[current] -= dealt
+            stats[current]["taken"] += dealt
             energy[current] = min(100, energy[current] + math.ceil(dealt * settings["energyDeltaPerHealthLost"]))
             if hp[current] <= 0:
                 stats[current]["time_ms"] += time - entered
@@ -271,15 +292,28 @@ def simulate(reference: Reference, party: list[tuple[MaxFighter, bool, str]], fo
                     end_time = time
                     break
                 generation += 1
-                current, entered = rest[0], time + swap
+                current, entered, dodge_wait = rest[0], time + swap, 0
                 energy[current] = 0
                 push(entered, "attack", generation)
             continue
         if kind == "attack":
             if data != generation or time < phase_until:
                 continue
+            if dodge_wait:  # the dodge swipe delays my next action
+                push(time + dodge_wait, "attack", generation)
+                dodge_wait = 0
+                continue
             if meter >= 100:  # Max Phase with the strongest alive member
-                runner = max(alive(), key=lambda i: max_hits[i] * (3 if party[i][2] == "attack" else 2))
+                def plan_damage(i):
+                    return max_hits[i] * PLANS[party[i][2]].count("attack")
+
+                # The Pokémon on the field Dynamaxes unless another one deals more, even after the
+                # swap there and back costs (and not when the one on the field already finishes the boss).
+                runner, strongest = current, max(alive(), key=plan_damage)
+                if strongest != current and plan_damage(current) < boss_hp:
+                    swap_loss = 2 * swap * fast_hits[current] / party[current][0].fast.duration_ms
+                    if min(plan_damage(strongest), boss_hp) - plan_damage(current) > swap_loss:
+                        runner = strongest
                 plan = PLANS[party[runner][2]]
                 t = time + PHASE_COUNTDOWN_MS
                 for action in plan:
@@ -297,14 +331,15 @@ def simulate(reference: Reference, party: list[tuple[MaxFighter, bool, str]], fo
                         if len(shields) < MAX_SHIELDS:
                             shields.append(GUARD_HP[f.guard])
                     elif action == "spirit":
-                        for i in alive():
-                            hp[i] = min(party[i][0].hp, hp[i] + math.floor(f.hp * SPIRIT_HEAL[f.spirit]))
+                        # Only Pokémon on the field are healed: of mine, the one using it. My
+                        # Pokémon waiting in their balls are not.
+                        hp[runner] = min(f.hp, hp[runner] + math.floor(f.hp * SPIRIT_HEAL[f.spirit]))
                 stats[runner]["max_phases"] += 1
                 phases += 1
                 meter = 0.0
                 if defeated:
                     break
-                phase_until = t
+                phase_until, dodge_wait = t, 0
                 generation += 1
                 resume = t + (swap if runner != current else 0)
                 push(resume, "attack", generation)
@@ -331,13 +366,56 @@ def simulate(reference: Reference, party: list[tuple[MaxFighter, bool, str]], fo
                 defeated, end_time = True, time
     if alive():
         stats[current]["time_ms"] += min(end_time, limit) - entered
+    for s, left in zip(stats, hp):
+        s["hp_left"] = max(0, left)
     return {"damage": sum(s["damage"] for s in stats), "defeated": defeated, "end_ms": min(end_time, limit),
             "max_phases": phases, "faints": sum(s["faints"] for s in stats), "members": stats}
 
 
-def recommend(reference: Reference, entries: list[dict], species: str, tier: str, form: str | None = None,
-              weather: str = "", time_limit_s: float | None = None, boss_charged: str | None = None,
-              orbs: bool = True, trainers: int = 1) -> dict:
+def _rank(runs: list[dict]) -> tuple:
+    """Higher is better: boss movesets defeated alone, damage where it survives, faster defeats, fewer faints."""
+    return rank([(r["defeated"], r["damage"], r["end_ms"]) for r in runs]) + (-sum(r["faints"] for r in runs),)
+
+
+def recommend(reference: Reference, entries: list[dict], species: str, tier: str, *args,
+              dodge: str | bool = "auto", **kwargs) -> dict:
+    """The solo max battle recommendation. dodge: "dodge" (single-target attacks dodged), "tank"
+    (every attack taken) or "auto": both are calculated and taking every hit is recommended only
+    when it does better before time runs out (more boss movesets defeated, or more damage where the
+    boss survives). Otherwise dodging stays the recommendation and the other result is reported."""
+    mode = {True: "dodge", False: "tank"}.get(dodge, dodge) if isinstance(dodge, bool) else dodge
+    if mode not in DODGE_MODES:
+        raise RaidError("회피 방식을 다시 선택하세요.")
+    if mode != "auto":
+        report = _recommend(reference, entries, species, tier, *args, dodge=mode == "dodge", **kwargs)
+        report["dodge_mode"] = mode
+        return report
+    dodging = _recommend(reference, entries, species, tier, *args, dodge=True, **kwargs)
+    if not dodging["result"]:
+        dodging["dodge_mode"] = "auto"
+        return dodging
+    tanking = _recommend(reference, entries, species, tier, *args, dodge=False, **kwargs)
+
+    def outcome(report):
+        return _rank([{"defeated": s["defeated"], "damage": s["damage"], "end_ms": s["battle_s"] * 1000,
+                       "faints": s["faints"]} for s in report["by_scenario"]])
+
+    tank_better = outcome(tanking)[:2] > outcome(dodging)[:2]  # clears or damage, not just a faster clear
+    chosen, other = (tanking, dodging) if tank_better else (dodging, tanking)
+    r = other["result"]
+    chosen["dodge_mode"] = "auto"
+    chosen["dodge_comparison"] = {
+        "chosen": "tank" if tank_better else "dodge",
+        "other": {"mode": "dodge" if tank_better else "tank", "damage": r["damage"], "clear_s": r["clear_s"],
+                  "defeated_scenarios": r["defeated_scenarios"], "faints": r["faints"],
+                  "party": [m["name"] for m in other["party"]]},
+    }
+    return chosen
+
+
+def _recommend(reference: Reference, entries: list[dict], species: str, tier: str, form: str | None = None,
+               weather: str = "", time_limit_s: float | None = None, boss_charged: str | None = None,
+               orbs: bool = True, trainers: int = 1, dodge: bool = True) -> dict:
     if weather not in WEATHER_NAMES:
         raise RaidError("날씨를 다시 선택하세요.")
     if trainers not in (1, 2, 3, 4):
@@ -350,6 +428,9 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
     if not moves:
         raise RaidError("선택한 보스 기술이 보스의 기술 목록에 없습니다.")
 
+    def runs_for(party):
+        return [simulate(reference, party, foe, m, limit_s, weather, orbs, trainers, dodge) for m in moves]
+
     excluded, candidates = [], []
     for entry in entries:
         f, reason = fighter(reference, entry)
@@ -360,38 +441,53 @@ def recommend(reference: Reference, entries: list[dict], species: str, tier: str
         best = None
         for use_charged in ([False, True] if f.charged else [False]):
             for plan in _plans(f):
-                runs = [simulate(reference, [(f, use_charged, plan)], foe, m, limit_s, weather, orbs, trainers) for m in moves]
-                average = sum(r["damage"] for r in runs) / len(runs)
-                if best is None or average > best[0]:
-                    best = (average, use_charged, plan)
-        candidates.append({"fighter": f, "solo": best[0], "charged": best[1], "plan": best[2]})
+                score = _rank(runs_for([(f, use_charged, plan)]))
+                if best is None or score > best[0]:
+                    best = (score, use_charged, plan)
+        candidates.append({"fighter": f, "rank": best[0], "charged": best[1], "plan": best[2]})
     non_max = sum(1 for e in entries if e.get("max_state") not in ("dynamax", "gigantamax"))
     if not candidates:
         return _report(reference, foe, limit_s, weather, orbs, trainers, moves, [], [], excluded, non_max,
-                       {"candidates": 0, "considered": 0, "parties": 0, "approximate": False})
-    candidates.sort(key=lambda c: c["solo"], reverse=True)
+                       {"candidates": 0, "considered": 0, "parties": 0, "approximate": False}, dodge)
+    candidates.sort(key=lambda c: c["rank"], reverse=True)
     considered = candidates[:CANDIDATE_LIMIT]
     size = min(PARTY_SIZE, len(considered))
     best = None
     count = 0
     for team in itertools.permutations(considered, size):
         count += 1
-        party = [(c["fighter"], c["charged"], c["plan"]) for c in team]
-        runs = [simulate(reference, party, foe, m, limit_s, weather, orbs, trainers) for m in moves]
-        average = sum(r["damage"] for r in runs) / len(runs)
-        if best is None or average > best[0]:
-            best = (average, team, runs)
+        runs = runs_for([(c["fighter"], c["charged"], c["plan"]) for c in team])
+        score = _rank(runs)
+        if best is None or score > best[0]:
+            best = (score, team, runs)
     _, team, runs = best
     search = {"candidates": len(candidates), "considered": len(considered), "parties": count,
               "approximate": len(candidates) > len(considered)}
-    return _report(reference, foe, limit_s, weather, orbs, trainers, moves, list(team), runs, excluded, non_max, search)
+    return _report(reference, foe, limit_s, weather, orbs, trainers, moves, list(team), runs, excluded, non_max,
+                   search, dodge)
 
 
 def _summary(values):
     return {"avg": round(sum(values) / len(values), 1), "min": round(min(values), 1), "max": round(max(values), 1)}
 
 
-def _report(reference, foe, limit_s, weather, orbs, trainers, moves, team, runs, excluded, non_max, search) -> dict:
+def _dodge_note(reference, rule, dodge: bool) -> str:
+    if not dodge:
+        return (f"보스 공격을 피하지 않고 다 맞습니다. 보스는 {rule['interval']:g}초마다 스페셜어택으로 공격하며, "
+                "한 마리 노림 공격(2배 피해)과 전체 공격(1배)을 번갈아 씁니다.")
+    _, dodge_ms, known = dodge_settings(reference)
+    cut = round(RULESET["dodge_reduction"] * 100)
+    share = TARGETED_MULTIPLIER * (1 - RULESET["dodge_reduction"])
+    return (f"보스는 {rule['interval']:g}초마다 스페셜어택으로 공격하며, 한 마리 노림 공격과 전체 공격을 번갈아 씁니다. "
+            f"노림 공격은 피한다고 보고 2배 피해를 {cut}% 줄여 {share:g}배로 받습니다"
+            "(맥스배틀 회피 감소는 공식 수치가 없어 커뮤니티 관찰값 50~70% 중 낮은 값). "
+            f"피할 때마다 다음 행동이 {dodge_ms / 1000:g}초 늦어집니다"
+            + ("(게임 전투 설정 값)." if known else "(기본값, 기준 데이터를 다시 만들면 게임 전투 설정 값을 씁니다).")
+            + " 전체 공격은 피하지 않습니다.")
+
+
+def _report(reference, foe, limit_s, weather, orbs, trainers, moves, team, runs, excluded, non_max, search,
+            dodge: bool = True) -> dict:
     party = []
     for position, c in enumerate(team):
         f = c["fighter"]
@@ -407,11 +503,14 @@ def _report(reference, foe, limit_s, weather, orbs, trainers, moves, team, runs,
             "max_damage": _summary([m["max_damage"] for m in member]),
             "alive_s": _summary([m["time_ms"] / 1000 for m in member]),
             "max_phases": _summary([m["max_phases"] for m in member]),
+            "fainted_scenarios": sum(1 for m in member if m["faints"]),
         })
     result = None
     if runs:
+        cleared = [r["end_ms"] / 1000 for r in runs if r["defeated"]]
         result = {"damage": _summary([r["damage"] for r in runs]), "boss_hp": foe["hp"],
                   "defeated_scenarios": sum(1 for r in runs if r["defeated"]),
+                  "clear_s": _summary(cleared) if cleared else None,
                   "battle_s": _summary([r["end_ms"] / 1000 for r in runs]),
                   "max_phases": _summary([r["max_phases"] for r in runs]),
                   "faints": _summary([r["faints"] for r in runs])}
@@ -420,25 +519,33 @@ def _report(reference, foe, limit_s, weather, orbs, trainers, moves, team, runs,
         "engine": ENGINE_VERSION, "ruleset": RULESET["version"], "reference": reference.version,
         "boss": {"species": foe["species"], "form_name": foe["form_name"], "tier": foe["tier"],
                  "tier_name": foe["tier_name"], "hp": foe["hp"], "types": [TYPE_NAMES.get(t, t) for t in foe["types"]],
-                 "attack": round(foe["attack"], 1), "defense": round(foe["defense"], 1)},
-        "weather": weather, "weather_name": WEATHER_NAMES[weather], "time_limit_s": limit_s, "orbs": orbs, "trainers": trainers,
+                 "attack": round(foe["attack"], 1), "defense": round(foe["defense"], 1),
+                 "moves": {"fast": [], "charged": [{"name": m.name, "type": TYPE_NAMES.get(m.type, m.type)}
+                                                   for m in foe["charged"]]}},
+        "weather": weather, "weather_name": WEATHER_NAMES[weather], "time_limit_s": limit_s, "orbs": orbs,
+        "trainers": trainers, "dodge": dodge,
         "scenarios": [{"charged": m.name} for m in moves],
         "by_scenario": [{"charged": m.name, "damage": r["damage"], "defeated": r["defeated"],
-                         "battle_s": r["end_ms"] / 1000, "max_phases": r["max_phases"]} for m, r in zip(moves, runs)],
+                         "battle_s": r["end_ms"] / 1000, "max_phases": r["max_phases"], "faints": r["faints"]}
+                        for m, r in zip(moves, runs)],
         "party": party, "result": result, "excluded": excluded, "not_max_count": non_max, "search": search,
         "shortfall": (f"맥스배틀에 쓸 수 있는 개체가 {len(team)}마리라 3마리를 채우지 못했습니다." if len(team) < PARTY_SIZE else None),
         "assumptions": [
+            "보스 기술마다 내 3마리만으로 쓰러뜨리는지를 먼저 보고, 쓰러뜨리는 파티끼리는 처치 시간이 짧은 쪽, "
+            "못 쓰러뜨리면 준 피해가 큰 쪽, 그다음 기절이 적은 쪽을 고릅니다. 스페셜어택 사용과 다이맥스 계획도 같은 기준으로 고릅니다.",
             ("혼자 싸운다고 가정합니다." if trainers == 1 else
              f"{trainers}명이 함께 싸우며, 한 마리 노림 공격은 {trainers}번 중 1번만 나에게 온다고 보고 피해를 1/{trainers}로 나눕니다.")
             + " 다른 트레이너의 피해·게이지·회복은 0으로 둡니다(보스가 더 빨리 쓰러지는 효과도 넣지 않음).",
+            "보스 기술은 들어가기 전에 모르므로 스페셜어택마다 따로 계산해 같은 비중으로 평균합니다. 실제 확률이 아닙니다.",
+            _dodge_note(reference, rule, dodge),
             "전용 맥스어택(거수참·거수탄·다이맥스포)도 게임 데이터에 위력이 없어 일반 맥스어택과 같은 위력(레벨 1~3: 250/300/350)으로 계산합니다.",
             "필드에는 내 포켓몬 1마리만 있고, 기절하면 1초 뒤 다음 개체가 나옵니다. 3마리가 모두 기절하면 끝납니다.",
             f"맥스 게이지: 공격마다 max(1, floor(피해 × {rule['meter']} ÷ (보스 HP ÷ 200))) 충전"
             + (", 15초마다 에너지 구슬 +10을 모두 줍는다고 가정합니다." if orbs else ", 에너지 구슬은 줍지 않는다고 가정합니다."),
-            "게이지가 차면 살아 있는 개체 중 맥스 기술이 가장 센 개체가 다이맥스해 3초 뒤 맥스 기술 3번을 씁니다. 그동안 보스는 공격하지 않습니다.",
+            "게이지가 차면 필드에 있는 개체가 다이맥스해 3초 뒤 맥스 기술 3번을 씁니다. 다른 개체의 맥스 기술이 교체 왕복 시간만큼의 공격보다 더 깎을 때만 그 개체로 바꿔 다이맥스합니다. 그동안 보스는 공격하지 않습니다.",
             "맥스어택 250/300/350, 거다이맥스 기술 350/400/450, 다이월 20/40/60 보호막(최대 3개), 다이리커버리 최대 HP의 8/12/16% 회복. 박스에 맥스기술 정보가 없으면 맥스어택 레벨 1만 있다고 봅니다.",
-            f"보스는 {rule['interval']:g}초마다 스페셜어택으로 공격하며, 한 마리 노림 공격(피하지 않으면 2배)과 전체 공격(1배)을 번갈아 씁니다. 회피하지 않습니다.",
+            "다이리커버리는 필드에 나와 있는 포켓몬만 회복합니다. 내 포켓몬 중에는 기술을 쓰는 개체 1마리만 회복하고, 볼에 들어가 있는 나머지는 회복하지 않습니다.",
             "보스가 몇 분 뒤 강해지는 격앙은 넣지 않았습니다. 날씨 보너스는 내 기술·맥스 기술·보스 기술에 같은 규칙으로 적용합니다.",
-            f"보스 HP·배율·공격 간격·제한 시간은 커뮤니티 자료 기반 {RULESET['version']} 표의 값이며 보스마다 다를 수 있습니다.",
+            f"보스 HP·배율·공격 간격·제한 시간·회피 감소는 커뮤니티 자료 기반 {RULESET['version']} 표의 값이며 보스마다 다를 수 있습니다.",
         ],
     }
