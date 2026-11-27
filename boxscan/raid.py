@@ -27,8 +27,10 @@ from them is estimated from the solo runs (damage up to the boss's HP and the ti
 the best few are simulated in full. The search is exhaustive over
 the kept candidates, not over every possible action, and the result says so.
 
-Mega evolution (optional): every box Pokémon that can mega evolve or reverse into a primal form is
-also tried in that form (its stats and types, and its "+" move when the box has it). A party holds
+Mega evolution (optional): box Pokémon that can mega evolve or reverse into a primal form are also
+tried in that form (its stats and types, and the "+" move the game master gives that mega). Mode
+"evolved" uses only individuals that have mega evolved before (the app assumes they can do it again
+at any time; no energy or cooldown is tracked), mode "all" every one that can. A party holds
 at most one of them, like the game's one active mega. While it is on the field its own attacks get
 the game master's mega boost (same type x1.3, other types x1.1; primal Groudon, Kyogre and mega
 Rayquaza boost their listed types). Alone in a raid my other Pokémon wait on the bench, so they do
@@ -42,9 +44,9 @@ from dataclasses import dataclass, field
 from . import level as level_rules
 from .forms import display_name
 from .reference import Reference
-from .species import TEMP_NAMES
+from .species import TEMP_NAMES, mega_evolved
 
-ENGINE_VERSION = "raid-sim/3"
+ENGINE_VERSION = "raid-sim/4"
 PARTY_SIZE = 6
 CANDIDATE_LIMIT = 12  # best by each measure (damage per second, total damage)
 SHORTLIST_LIMIT = 18  # at most this many are combined (18 choose 6 = 18,564 parties)
@@ -203,30 +205,33 @@ def attacker(reference: Reference, entry: dict, temp: str | None = None) -> tupl
     if temp:
         boosts = reference.temp_boosts or {}
         boosted = (boosts.get("types") or {}).get(str(stats.pokemon_id)) or types
-        plus = _mega_plus(reference, entry, stats.pokemon_id, temp)
+        plus, confirmed = _mega_plus(reference, entry, stats.pokemon_id, temp)
         if plus:
             charged = [*charged, plus]
         info["mega"] = {"kind": temp, "name": TEMP_NAMES.get(temp, temp), "boost_types": boosted,
                         "same_type": boosts.get("same_type", 1.0), "different_type": boosts.get("different_type", 1.0),
-                        "plus_move": plus.name if plus else None}
+                        "plus_move": plus.name if plus else None, "plus_confirmed": confirmed,
+                        "evolved": mega_evolved(entry), "level": entry.get("mega_level")}
     return Fighter(entry["id"], name, attack, defense, int(hp), types, fast, charged, info), None
 
 
-def _mega_plus(reference: Reference, entry: dict, pokemon_id: int, temp: str) -> Move | None:
-    """The mega's "+" charged attack, when the box recorded it for this form. Its multiplier follows the
-    saved mega level (game master values); without one the lowest level that unlocks it is assumed."""
-    recorded = (entry.get("mega_move") or {}).get("move_id")
+def _mega_plus(reference: Reference, entry: dict, pokemon_id: int, temp: str) -> tuple[Move | None, bool]:
+    """The mega's "+" charged attack and whether a scan confirmed it. A mega that gets one in the game
+    master is assumed to have it unless the user turned it off; a "+" move read while mega evolved
+    confirms it. Its multiplier follows the saved mega level (game master values); without one the
+    lowest level that unlocks it is assumed."""
     data = (reference.mega_moves or {}).get(pokemon_id, {}).get(temp) or {}
-    if not recorded or recorded != data.get("move_id"):
-        return None
-    move = _move(reference, recorded)
+    if not data.get("move_id") or entry.get("mega_move_off") is True:
+        return None, False
+    move = _move(reference, data["move_id"])
     if move is None:
-        return None
+        return None, False
+    confirmed = (entry.get("mega_move") or {}).get("move_id") == data["move_id"]
     levels = (reference.temp_boosts or {}).get("special_move") or [1.0]
     level = entry.get("mega_level")
     index = level if isinstance(level, int) and 1 <= level < len(levels) else min(1, len(levels) - 1)
     move.name, move.bonus = data.get("name") or move.name, levels[index]
-    return move
+    return move, confirmed
 
 
 def mega_bonus(fighter: Fighter, move: Move) -> float:
@@ -441,10 +446,10 @@ def _estimate(members: list[tuple[int, int]], limit_ms: int, swap_ms: int, rejoi
 def _recommend(reference: Reference, entries: list[dict], species: str, tier: str, form: str | None = None,
               temp: str | None = None, weather: str = "", time_limit_s: float | None = None,
               rejoin_delay_s: float | None = None, boss_fast: str | None = None,
-              boss_charged: str | None = None, include_mega: bool = False, compare_mega: bool = True,
+              boss_charged: str | None = None, mega: str = "off",
               shadow: dict | None = None, compare_shadow: bool = True, trainers: int = 1,
               dodge: bool = True) -> dict:
-    if include_mega and not reference.temp_boosts:
+    if mega != "off" and not reference.temp_boosts:
         raise RaidError("기준 데이터에 메가진화 보너스가 없습니다. `python -m boxscan reference rebuild`를 실행하세요.")
     if weather not in WEATHER_NAMES:
         raise RaidError("날씨를 다시 선택하세요.")
@@ -482,16 +487,16 @@ def _recommend(reference: Reference, entries: list[dict], species: str, tier: st
             excluded.append({"code": entry.get("code"), "name": entry.get("species") or "종 미확인", "reason": reason})
             continue
         candidates.append(candidate(fighter))
-        if include_mega:
+        if mega == "all" or (mega == "evolved" and mega_evolved(entry)):
             pokemon_id = reference.korean_names.get(entry["species"].strip())
             for kind in (reference.temp_stats or {}).get(pokemon_id, {}):
-                mega, _ = attacker(reference, entry, kind)
-                if mega is not None:
-                    megas.append(candidate(mega))
+                form_fighter, _ = attacker(reference, entry, kind)
+                if form_fighter is not None:
+                    megas.append(candidate(form_fighter))
     if not candidates:
         return _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, [], [], excluded,
                        {"candidates": 0, "considered": 0, "combinations": 0, "approximate": False,
-                        "mega_candidates": 0}, include_mega=include_mega)
+                        "mega_candidates": 0}, mega=mega)
 
     candidates.sort(key=lambda c: c["dps"], reverse=True)
     megas.sort(key=lambda c: c["dps"], reverse=True)
@@ -530,7 +535,7 @@ def _recommend(reference: Reference, entries: list[dict], species: str, tier: st
               "approximate": len(candidates) > len(considered) - len([c for c in considered if c in megas])
               or len(megas) > MEGA_CANDIDATE_LIMIT}
     report = _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
-                     shortfall=len(candidates) < PARTY_SIZE, include_mega=include_mega, dodge=dodge)
+                     shortfall=len(candidates) < PARTY_SIZE, mega=mega, dodge=dodge)
     report["trainers"] = trainers
     if trainers > 1:
         report["assumptions"].insert(0, f"함께하는 트레이너 {trainers}명: 다른 트레이너도 나와 같은 피해를 같은 때 준다고 보고 "
@@ -551,27 +556,92 @@ def _recommend(reference: Reference, entries: list[dict], species: str, tier: st
                 "calm_after_s": None if other["calm_after_ms"] is None else other["calm_after_ms"] / 1000,
                 "damage": round(sum(r["damage"] for r in other_runs) / len(other_runs), 1),
                 "clear_s": round(sum(cleared) / len(cleared), 1) if len(cleared) == len(other_runs) else None}
-    if include_mega and compare_mega:
-        plain = _recommend(reference, entries, species, tier, form, temp, weather, time_limit_s, rejoin_delay_s,
-                           boss_fast, boss_charged, shadow=shadow, compare_shadow=False, trainers=trainers, dodge=dodge)
-        chosen = next((m for m in report["party"] if m.get("mega")), None)
-        report["mega_comparison"] = {
-            "with_mega": report["result"]["damage"]["avg"], "without_mega": plain["result"]["damage"]["avg"],
-            "with_mega_clear_s": (report["result"].get("clear_s") or {}).get("avg"),
-            "without_mega_clear_s": (plain["result"].get("clear_s") or {}).get("avg"),
-            "member": chosen["name"] if chosen else None, "candidates": len(megas)}
     return report
 
 
 DODGE_MODES = ("auto", "dodge", "tank")
+MEGA_MODES = ("off", "evolved", "all")
 
 
 def recommend(reference: Reference, entries: list[dict], species: str, tier: str, *args,
-              dodge: str | bool = "auto", **kwargs) -> dict:
-    """The solo raid recommendation. dodge: "dodge" (boss charged attacks dodged), "tank" (every attack
-    taken), or "auto": both are calculated and tanking is recommended only when it does better before
-    time runs out (more boss movesets cleared, or more damage where the boss survives). When both
-    clear, dodging stays the recommendation and the time tanking would save is reported."""
+              dodge: str | bool = "auto", mega: str = "off", include_mega: bool | None = None,
+              compare_mega: bool = True, **kwargs) -> dict:
+    """The solo raid recommendation with the dodge choice, and how mega evolution would change it.
+
+    mega: "off" (no mega), "evolved" (one individual that has mega evolved before may join as its mega)
+    or "all" (any individual that can). include_mega=True is the older name for "all". With
+    compare_mega the other modes are calculated too and reported in mega_comparison."""
+    if include_mega and mega == "off":
+        mega = "all"
+    if mega not in MEGA_MODES:
+        raise RaidError("메가진화 방식을 다시 선택하세요.")
+    report = _recommend_dodge(reference, entries, species, tier, *args, dodge=dodge, mega=mega, **kwargs)
+    report["mega_mode"] = mega
+    if compare_mega and report["result"] and reference.temp_boosts:
+        report["mega_comparison"] = _mega_comparison(reference, entries, species, tier, args, kwargs, mega, report)
+    return report
+
+
+def _mega_member(report: dict) -> dict | None:
+    return next((m for m in report["party"] if m.get("mega")), None)
+
+
+def _mega_pool(reference: Reference, entries: list[dict]) -> list[dict]:
+    """Box entries that can join as a mega (usable in at least one mega / primal form)."""
+    pool = []
+    for entry in entries:
+        kinds = (reference.temp_stats or {}).get(reference.korean_names.get((entry.get("species") or "").strip()), {})
+        if any(attacker(reference, entry, kind)[0] is not None for kind in kinds):
+            pool.append(entry)
+    return pool
+
+
+def _mega_comparison(reference, entries, species, tier, args, kwargs, mode, chosen) -> dict:
+    """The recommendation in every mega mode, with the same dodge choice. Runs that cannot differ are
+    reused: when the best party with any mega uses one that has mega evolved before (or none), it is
+    also the best with mega-evolved individuals only, and with no mega member it is the plain party."""
+    pool = _mega_pool(reference, entries)
+    counts = {"all": len(pool), "evolved": sum(1 for entry in pool if mega_evolved(entry))}
+    outcomes = {mode: chosen}
+
+    def run(mega):
+        return _recommend(reference, entries, species, tier, *args,
+                          **{**kwargs, "mega": mega, "dodge": chosen["dodge"], "compare_shadow": False})
+
+    if counts["all"]:
+        if "all" not in outcomes:
+            same = mode == "evolved" and counts["all"] == counts["evolved"]
+            outcomes["all"] = outcomes["evolved"] if same else run("all")
+        member = _mega_member(outcomes["all"])
+        if "evolved" not in outcomes:
+            outcomes["evolved"] = (outcomes["all"] if member is None or member["mega"]["evolved"]
+                                   else run("evolved") if counts["evolved"] else None)
+        if "off" not in outcomes:
+            outcomes["off"] = outcomes["all"] if member is None else run("off")
+    else:
+        outcomes.setdefault("off", chosen)
+
+    def brief(report):
+        if report is None or not report["result"]:
+            return None
+        r, member = report["result"], _mega_member(report)
+        info = (member or {}).get("mega") or {}
+        return {"member": member["name"] if member else None, "code": (member or {}).get("code"),
+                "evolved": info.get("evolved"),
+                "level": info.get("level"), "plus_move": info.get("plus_move"),
+                "plus_confirmed": info.get("plus_confirmed"), "damage": r["damage"]["avg"],
+                "clear_s": (r.get("clear_s") or {}).get("avg"), "defeated_scenarios": r["defeated_scenarios"],
+                "party": [m["name"] for m in report["party"]]}
+
+    return {"mode": mode, "candidates": counts, "options": {m: brief(outcomes.get(m)) for m in MEGA_MODES}}
+
+
+def _recommend_dodge(reference: Reference, entries: list[dict], species: str, tier: str, *args,
+                     dodge: str | bool = "auto", **kwargs) -> dict:
+    """dodge: "dodge" (boss charged attacks dodged), "tank" (every attack taken), or "auto": both are
+    calculated and tanking is recommended only when it does better before time runs out (more boss
+    movesets cleared, or more damage where the boss survives). When both clear, dodging stays the
+    recommendation and the time tanking would save is reported."""
     mode = {True: "dodge", False: "tank"}.get(dodge, dodge) if isinstance(dodge, bool) else dodge
     if mode not in DODGE_MODES:
         raise RaidError("회피 방식을 다시 선택하세요.")
@@ -713,7 +783,7 @@ def _charged_note(fighter: Fighter, options: list[dict]) -> str | None:
 
 
 def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, runs, excluded, search,
-            shortfall=False, include_mega=False, dodge=True) -> dict:
+            shortfall=False, mega="off", dodge=True) -> dict:
     shadow = foe.get("shadow")
     shadow_notes = [] if not shadow else [
         f"그림자 레이드: 보스 HP가 {shadow['enrage_at'] * 100:.0f}% 남으면 격앙해 공격 ×{shadow['attack']:g}, 방어 ×{shadow['defense']:g}가 됩니다. "
@@ -738,8 +808,8 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
             "theoretical_dps": round(_theoretical_dps(reference, fighter, choice, foe, weather), 1),
         })
         if fighter.info.get("mega"):
-            mega = fighter.info["mega"]
-            party[-1]["mega"] = mega | {"boost_types": [TYPE_NAMES.get(t, t) for t in mega["boost_types"]]}
+            info = fighter.info["mega"]
+            party[-1]["mega"] = info | {"boost_types": [TYPE_NAMES.get(t, t) for t in info["boost_types"]]}
     result = None
     if runs:
         cleared = [r["end_ms"] / 1000 for r in runs if r["defeated"]]
@@ -779,16 +849,24 @@ def _report(reference, foe, limit_s, weather, rejoin_delay_s, scenarios, team, r
             "날씨 보너스는 내 기술과 보스 기술 모두에 같은 규칙(해당 타입 ×1.2)으로 적용합니다.",
             "박스에 그림자로 표시한 개체는 공격 ×1.2, 방어 ×0.833(게임 전투 설정 값)을 적용합니다. 표시하지 않은 개체는 일반 개체로 계산합니다.",
             *shadow_notes,
-            *(_MEGA_ASSUMPTIONS if include_mega else ["메가진화는 넣지 않았습니다. 켜면 박스에서 메가진화할 수 있는 개체 1마리를 메가진화 상태로 함께 비교합니다."]),
+            *([_MEGA_MODE_NOTES[mega], *_MEGA_ASSUMPTIONS] if mega != "off" else [_MEGA_MODE_NOTES["off"]]),
             "친구·파티 파워·다른 트레이너의 메가 보너스는 넣지 않았습니다.",
             f"보스 HP·CP 배율은 {RULESET['version']} 표를 쓰고, 제한 시간 기본값은 앱이 정한 시나리오 값입니다.",
         ],
     }
 
 
+_MEGA_MODE_NOTES = {
+    "off": "메가진화는 넣지 않았습니다. 메가진화를 넣었을 때 얼마나 달라지는지는 결과에 따로 비교합니다.",
+    "evolved": "메가진화: 메가진화해 본 개체(메가 상태로 스캔했거나 메가 레벨이 있거나 직접 표시한 개체)만 그 모습으로도 후보에 넣습니다. "
+               "한 번 메가진화한 개체는 언제든 다시 할 수 있다고 보고, 메가에너지·재사용 대기 시간은 따지지 않습니다.",
+    "all": "메가진화: 메가진화·원시회귀할 수 있는 개체는 아직 메가진화해 보지 않았어도 그 모습으로 후보에 넣습니다. 메가에너지는 충분하다고 가정합니다.",
+}
 _MEGA_ASSUMPTIONS = [
-    "메가진화: 메가진화·원시회귀할 수 있는 개체는 그 모습(종족값·타입)으로도 후보에 넣고, 파티에는 최대 1마리만 넣습니다. 메가에너지는 충분하다고 가정합니다.",
+    "메가진화 개체는 그 모습(종족값·타입)으로 계산하고 파티에는 최대 1마리만 넣습니다.",
     "메가진화한 개체가 싸우는 동안 그 개체의 공격은 같은 타입 ×1.3, 다른 타입 ×1.1입니다(게임 마스터 값). 원시그란돈·원시가이오가·메가레쿠쟈는 게임 마스터에 적힌 세 타입이 ×1.3입니다.",
     "혼자 싸우면 다른 내 포켓몬은 대기 중이라 메가 보너스를 받지 않습니다. 메가 개체 자신의 공격에도 보너스가 붙는다는 점은 커뮤니티 자료 기준입니다.",
-    "메가 레벨이 달라도 메가 보너스(×1.3·×1.1)는 같습니다. 박스에 기록된 '+' 스페셜어택은 저장한 메가 레벨(내 박스 수정에서 입력)의 위력 배율로, 메가 레벨이 없으면 쓸 수 있는 가장 낮은 레벨의 배율로 계산합니다.",
+    "메가 레벨이 달라도 메가 보너스(×1.3·×1.1)는 같습니다. 게임 데이터에 '+' 스페셜어택이 있는 메가는 그 기술을 쓸 수 있다고 보고 계산합니다"
+    "(메가 상태로 스캔해 화면에서 확인하지 않았으면 가정으로 표시, 내 박스 수정에서 끌 수 있음). 위력 배율은 저장한 메가 레벨을 쓰고, "
+    "메가 레벨이 없으면 쓸 수 있는 가장 낮은 레벨의 배율로 계산합니다.",
 ]

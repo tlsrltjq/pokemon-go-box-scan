@@ -69,9 +69,22 @@ def _mega_plus(item: dict, reference: Reference, species: str | None) -> dict:
     for kind, data in options.items():
         if data.get("name") and data["name"].rstrip("+") == text:
             return {"name": data["name"], "move_id": data["move_id"], "temp_evolution": kind,
-                    "reference_power": data["power"], "match": "exact", "reason": MEGA_PLUS_REASON}
+                    "reference_power": data["power"], "match": "exact", "reason": MEGA_PLUS_REASON,
+                    "mega_level": mega_level_from_boost(reference, item.get("power"), item.get("boost"))}
     return {"name": f"{text}+", "move_id": None, "match": "none",
             "reason": MEGA_PLUS_REASON + " · 기준 데이터(게임 마스터)에 아직 없는 기술"}
+
+
+def mega_level_from_boost(reference: Reference, power: int | None, boost: int | None) -> int | None:
+    """The mega level that explains "140+14" on the moves screen: the "+" is the mega level's power
+    bonus (game master tempEvoSpecialAttackBoosts, one multiplier per level). Only a level that alone
+    matches the bonus is returned; levels sharing a multiplier cannot be told apart."""
+    levels = (reference.temp_boosts or {}).get("special_move") or []
+    if not power or not boost:
+        return None
+    found = [level for level, multiplier in enumerate(levels)
+             if level >= 1 and abs(power * (multiplier - 1) - boost) < 1]
+    return found[0] if len(found) == 1 else None
 
 
 def _learnset(reference: Reference, species: str | None, form: str | None) -> dict[str, list[str]]:

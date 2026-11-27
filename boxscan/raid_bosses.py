@@ -340,7 +340,15 @@ def _options(kind: str, raw: dict) -> dict:
         raise raid.RaidError("함께하는 트레이너는 1~20명으로 입력하세요.")
     if kind == "max":
         return {"weather": weather, "trainers": min(trainers, 4)}
-    return {"weather": weather, "trainers": trainers, "include_mega": raw.get("include_mega") is True}
+    return {"weather": weather, "trainers": trainers, "mega": mega_mode(raw)}
+
+
+def mega_mode(raw: dict) -> str:
+    """The mega choice: "off", "evolved" or "all"; the older include_mega=True means "all"."""
+    mode = raw.get("mega") or ("all" if raw.get("include_mega") is True else "off")
+    if mode not in raid.MEGA_MODES:
+        raise raid.RaidError("메가진화 방식을 다시 선택하세요.")
+    return mode
 
 
 def recommend(data_dir: Path, reference: Reference, entries: list[dict], boss: dict, raw_options: dict) -> dict:
@@ -365,7 +373,7 @@ def recommend(data_dir: Path, reference: Reference, entries: list[dict], boss: d
             pass
     if kind == "raid":
         report = raid.recommend(reference, entries, boss["species"], boss["tier"], form=boss["form"],
-                                temp=boss["temp"], weather=options["weather"], include_mega=options["include_mega"],
+                                temp=boss["temp"], weather=options["weather"], mega=options["mega"],
                                 shadow={} if boss["shadow"] else None, trainers=options["trainers"])
     else:
         report = max_battle.recommend(reference, entries, boss["species"], boss["tier"], form=boss["form"],
@@ -393,7 +401,9 @@ def summary(kind: str, report: dict) -> dict:
         item = {k: member.get(k) for k in ("order", "name", "code", "level", "iv", "shadow", "fast", "charged",
                                            "damage")}
         if kind == "raid":
-            item["mega"] = member.get("mega", {}).get("name") if member.get("mega") else None
+            mega = member.get("mega")
+            item["mega"] = mega.get("name") if mega else None
+            item["mega_evolved"] = mega.get("evolved") if mega else None
         else:
             item["max_move"] = (member.get("max_attack") or {}).get("name")
             item["plan"] = member.get("plan")

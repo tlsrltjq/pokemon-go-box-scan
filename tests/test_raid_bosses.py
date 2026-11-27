@@ -218,8 +218,11 @@ class RecommendCacheTests(unittest.TestCase):
         self.assertIsNotNone(shadow["summary"]["shadow"]["comparison"])
         mega = raid_bosses.recommend(self.data_dir, self.data, self.box.list(), self.boss("mega", "WAVE"),
                                      {"include_mega": True})
-        self.assertEqual(mega["options"]["include_mega"], True)
+        self.assertEqual(mega["options"]["mega"], "all")
         self.assertIn("mega_comparison", mega["summary"])
+        evolved = raid_bosses.recommend(self.data_dir, self.data, self.box.list(), self.boss("mega", "WAVE"),
+                                        {"mega": "evolved"})
+        self.assertEqual(evolved["options"]["mega"], "evolved")
         self.add(3, "물몬", "SPLASH_FAST", "WAVE", max_state="dynamax")
         maxed = raid_bosses.recommend(self.data_dir, self.data, self.box.list(), self.boss("tier_3", kind="max_battles"),
                                       {"trainers": 9})

@@ -52,8 +52,10 @@ function memberCard(member) {
     element("p", { class: "muted" }, `레벨 ${member.level} · IV ${formatIv(member.iv)} · ${member.types.join("/")}` +
       (member.shadow ? " · 그림자 보정 공격 ×1.2·방어 ×0.833" : "")),
     member.mega ? element("p", { class: "mega-note" },
-      `${member.mega.name} 상태로 출전 · 싸우는 동안 ${member.mega.boost_types.join("·")} 공격 ×${member.mega.same_type}, ` +
-      `다른 타입 ×${member.mega.different_type}` + (member.mega.plus_move ? ` · ${member.mega.plus_move} 사용 가능` : "")) : null,
+      `${member.mega.name} 상태로 출전 (${!member.mega.evolved ? "아직 메가진화 안 한 개체"
+        : member.mega.level ? `메가 Lv.${member.mega.level}` : "메가진화해 본 개체"}) · ` +
+      `싸우는 동안 ${member.mega.boost_types.join("·")} 공격 ×${member.mega.same_type}, 다른 타입 ×${member.mega.different_type}` +
+      (member.mega.plus_move ? ` · ${member.mega.plus_move} 사용${member.mega.plus_confirmed ? "" : " (가정)"}` : "")) : null,
     element("div", { class: "move" }, element("span", { class: "move-role" }, "노말어택"), element("strong", {}, member.fast)),
     element("div", { class: "move" }, element("span", { class: "move-role" }, "스페셜어택"),
       element("strong", {}, member.charged), element("span", { class: "move-power" }, member.charged_type ?? "")),
@@ -107,19 +109,6 @@ function dodgeLine(result) {
   return element("p", { class: "muted" }, `스페셜어택을 피하는 기준입니다. 다 맞으면서 하면 ${outcomeText(other)}.`);
 }
 
-function megaLine(comparison) {
-  if (!comparison) return null;
-  if (!comparison.candidates) return element("p", { class: "muted" }, "박스에 메가진화·원시회귀할 수 있는 개체가 없어 메가진화 없이 계산했습니다.");
-  if (!comparison.member) return element("p", { class: "muted" }, "메가진화 개체를 넣어도 더 나아지지 않아 메가진화 없이 추천합니다.");
-  if (comparison.with_mega_clear_s && comparison.without_mega_clear_s) {
-    const saved = comparison.without_mega_clear_s - comparison.with_mega_clear_s;
-    return element("p", {}, `${comparison.member}을(를) 넣으면 메가진화 없는 추천보다 평균 ${saved.toFixed(1)}초 빨리 쓰러뜨립니다.`);
-  }
-  const gain = comparison.with_mega - comparison.without_mega;
-  return element("p", {}, `${comparison.member}을(를) 넣으면 메가진화 없는 추천(${Math.round(comparison.without_mega).toLocaleString()})보다 ` +
-    `평균 ${Math.round(gain).toLocaleString()} 더 줍니다.`);
-}
-
 function showResult(result) {
   section.hidden = false;
   const boss = result.boss;
@@ -144,7 +133,7 @@ function showResult(result) {
       element("p", { class: "muted" }, `보스 기술 조합 평균(괄호는 가장 낮은~높은 결과). 유효 전투 시간 ${range(r.battle_s, "초", 1)} · 평균 DPS ${r.dps.avg}.`),
       bossMovesLine(boss.moves),
       dodgeLine(result),
-      megaLine(result.mega_comparison),
+      ...megaLines(result.mega_comparison),
       shadowLine(result.shadow),
       result.shortfall ? element("p", { class: "warn-text" }, result.shortfall) : null,
     ].filter(Boolean));
@@ -202,7 +191,7 @@ form.addEventListener("submit", async event => {
         rejoin_delay_s: form.elements.rejoin.checked ? form.elements.rejoin_delay_s.value : null,
         dodge: form.elements.dodge.value,
         compare_weather: form.elements.compare_weather.checked,
-        include_mega: form.elements.include_mega.checked,
+        mega: form.elements.mega.value,
         trainers: form.elements.trainers.value,
         shadow: form.elements.shadow.checked ? {
           enrage_at: Number(form.elements.enrage_at.value) / 100,
@@ -233,7 +222,7 @@ async function prefill() {
   }
   if (params.get("weather")) form.elements.weather.value = params.get("weather");
   if (params.get("trainers")) form.elements.trainers.value = params.get("trainers");
-  form.elements.include_mega.checked = params.get("include_mega") === "1";
+  form.elements.mega.value = MEGA_MODE_NAMES[params.get("mega")] ? params.get("mega") : "off";
   form.elements.shadow.checked = params.get("shadow") === "1";
   document.querySelector("#shadow-fields").hidden = !form.elements.shadow.checked;
   await loadBoss();

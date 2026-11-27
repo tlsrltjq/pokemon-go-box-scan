@@ -15,6 +15,7 @@ from starlette.staticfiles import StaticFiles
 
 from . import backup, cleanup, export, live, max_battle, raid, raid_bosses, reference, review
 from .forms import display_name
+from . import species as species_names
 from .species import TEMP_NAMES
 from .analysis import LIVE_FILE, RESULT, detail_frame
 from .box import BoxStore, CodeTaken, Conflict
@@ -189,19 +190,23 @@ def create_app(
         dodge = payload.get("dodge") or "auto"
         if dodge not in raid.DODGE_MODES:
             raise HTTPException(422, "회피 방식을 다시 선택하세요.")
-        extra = {"trainers": trainers, "shadow": shadow, "dodge": dodge}
+        try:
+            mega = raid_bosses.mega_mode(payload)
+        except raid.RaidError as error:
+            raise HTTPException(422, str(error)) from None
+        extra = {"trainers": trainers, "shadow": shadow, "dodge": dodge, "mega": mega}
         try:
             result = raid.recommend(
                 data, box.list(), species, text("tier") or "5", form=text("form"), temp=text("temp"),
                 weather=text("weather") or "", time_limit_s=number("time_limit_s"),
                 rejoin_delay_s=number("rejoin_delay_s"), boss_fast=text("boss_fast"),
-                boss_charged=text("boss_charged"), include_mega=payload.get("include_mega") is True, **extra)
+                boss_charged=text("boss_charged"), **extra)
             if payload.get("compare_weather") is True:
                 result["weather_comparison"] = raid.compare_weather(
                     data, box.list(), species, text("tier") or "5", form=text("form"), temp=text("temp"),
                     time_limit_s=number("time_limit_s"), rejoin_delay_s=number("rejoin_delay_s"),
                     boss_fast=text("boss_fast"), boss_charged=text("boss_charged"),
-                    include_mega=payload.get("include_mega") is True, **extra)
+                    **extra)
         except raid.RaidError as error:
             raise HTTPException(422, str(error)) from None
         result["boss"]["temp_name"] = TEMP_NAMES.get(result["boss"]["temp"])
@@ -514,6 +519,7 @@ def create_app(
             data = None
         for entry in entries:
             entry["candy_family"] = data.candy_name(entry.get("species")) if data else None
+            entry["mega"] = species_names.mega_info(data, entry)
         return entries
 
     @app.get("/api/pokemon")
@@ -585,8 +591,12 @@ def create_app(
             values = review.normalize(payload.get("values"), data)
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
-        if "max_moves" not in (payload.get("values") or {}):
+        sent = payload.get("values") or {}
+        if "max_moves" not in sent:
             values["max_moves"] = existing.get("max_moves") or []  # an older client did not send them
+        for key in ("mega_evolved", "mega_move_off"):
+            if key not in sent:
+                values[key] = existing.get(key)
         # A CP the user typed is a manual value; an unchanged CP keeps where it came from.
         changed = (values["cp"], values["max_hp"]) != (existing.get("cp"), existing.get("max_hp"))
         values["cp_source"] = "manual" if changed else existing.get("cp_source")

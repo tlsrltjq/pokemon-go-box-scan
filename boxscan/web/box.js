@@ -61,6 +61,10 @@ function editForm(entry, onDone) {
     element("label", { class: "field wide" }, element("span", {}, "메가 레벨 (메가진화 화면에서 확인)"),
       element("select", { name: "mega_level" }, ...[["", "모름"], ["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"]].map(([value, label]) =>
         element("option", { value, selected: String(entry?.mega_level ?? "") === value ? "" : null }, label)))),
+    entry?.mega ? element("div", { class: "checks" },
+      checkbox("메가진화해 본 개체 (언제든 다시 할 수 있다고 보고 레이드에 넣음)", "mega_evolved", entry.mega.evolved),
+      entry.mega.plus_moves.length ? checkbox(`메가진화 추가 기술 ${entry.mega.plus_moves.join("·")} 안 씀`, "mega_move_off", entry.mega.plus_off)
+        : null) : null,
     element("div", { class: "field wide" }, maxMovesEditor(entry?.max_moves ?? [])),
     field(entry ? "수정 메모 (선택)" : "메모 (선택)", "note", "", { maxlength: "200" }),
     element("p", { class: "muted" }, entry ? "비운 칸은 값을 지웁니다. 레벨과 기술 * 표시는 저장할 때 다시 계산합니다. 이전 값은 이력에 남습니다."
@@ -95,6 +99,8 @@ function editForm(entry, onDone) {
             max_state: form.elements.max_state.value || null,
             max_moves: readMaxMoves(form),
             mega_level: form.elements.mega_level.value || null,
+            ...(form.elements.mega_evolved ? { mega_evolved: form.elements.mega_evolved.checked } : {}),
+            ...(form.elements.mega_move_off ? { mega_move_off: form.elements.mega_move_off.checked } : {}),
             nickname: get("nickname") || null,
           },
         }),
@@ -129,9 +135,16 @@ function stateChips(entry) {
   const chips = [];
   if (entry.max_state) chips.push([formatMaxState(entry.max_state), "max"]);
   if (entry.shadow) chips.push(["그림자", "shadow"]);
+  if (entry.mega) chips.push([megaChip(entry.mega), entry.mega.evolved ? "mega" : "plain"]);
   if (entry.fusion?.length) chips.push([entry.fusion.some(f => f.type === "FUSE") ? "합체" : "모습 변화", "plain"]);
   return chips.length ? element("span", { class: "badges" }, ...chips.map(([text, kind]) => element("span", { class: `badge state ${kind}` }, text)))
     : element("span", { class: "muted" }, "");
+}
+
+// 메가 Lv.2 / 메가진화해 봄 / 메가 가능 (the species can, this one has not yet)
+function megaChip(mega) {
+  if (!mega.evolved) return "메가 가능";
+  return mega.level ? `메가 Lv.${mega.level}` : "메가진화해 봄";
 }
 
 function moveName(move) {
@@ -188,7 +201,10 @@ function detailRow(entry) {
     element("div", { class: "moves" },
       moveLine("노말어택", moves.fast),
       ...(moves.charged ?? []).map((move, i, all) => moveLine(all.length > 1 ? `스페셜어택 ${i + 1}` : "스페셜어택", move))),
-    entry.mega_move ? element("p", {}, element("span", { class: "muted" }, "메가진화 추가 "), entry.mega_move.name) : null,
+    entry.mega ? element("p", {}, element("span", { class: "muted" }, `${entry.mega.kinds.join("·")} `), megaChip(entry.mega),
+      entry.mega.plus_moves.length ? element("span", { class: "muted" }, ` · 추가 기술 ${entry.mega.plus_moves.join("·")} ` +
+        (entry.mega.plus_off ? "(안 씀)" : entry.mega.plus_confirmed ? "(화면에서 확인)" : "(쓸 수 있다고 가정)")) : null)
+      : entry.mega_move ? element("p", {}, element("span", { class: "muted" }, "메가진화 추가 "), entry.mega_move.name) : null,
     entry.max_moves?.length ? element("p", {}, element("span", { class: "muted" }, "맥스기술 "),
       entry.max_moves.map(m => `${m.name} ${m.level ? `레벨 ${m.level}` : m.locked ? "잠김" : ""}`.trim()).join(", ")) : null,
     entry.cp_source === "calculated" ? element("p", { class: "muted" }, "CP·최대 HP는 메가진화 중 기록과 레벨로 계산한 기본 모습 값입니다.") : null,
@@ -342,6 +358,8 @@ const SORTS = {
 const FILTERS = [
   ["max", "다이맥스", entry => Boolean(entry.max_state)],
   ["shadow", "그림자", entry => entry.shadow === true],
+  ["mega", "메가 가능", entry => Boolean(entry.mega)],
+  ["mega_evolved", "메가진화해 봄", entry => entry.mega?.evolved === true],
   ["shiny", "이로치", entry => entry.shiny === true],
   ["lucky", "반짝반짝", entry => entry.lucky === true],
   ["perfect", "IV 100%", entry => Boolean(entry.iv) && ivPercent(entry.iv) === 100],

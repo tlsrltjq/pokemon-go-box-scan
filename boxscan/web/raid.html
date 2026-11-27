@@ -31,13 +31,16 @@
           <option value="dodge">스페셜어택은 피하기</option>
           <option value="tank">다 맞으면서 하기</option></select></label>
         <label class="field"><span>함께하는 트레이너</span><input name="trainers" inputmode="numeric" value="1"></label>
+        <label class="field"><span>메가진화</span><select name="mega">
+          <option value="off">메가 안 씀 (메가를 넣으면 얼마나 빨라지는지 따로 비교)</option>
+          <option value="evolved">메가진화해 본 개체만 1마리</option>
+          <option value="all">메가진화되는 개체 모두에서 1마리</option></select></label>
       </div>
       <p id="boss-moves" class="muted" hidden></p>
       <div class="checks">
         <label class="check"><input type="checkbox" name="rejoin"><span>모두 기절하면 같은 파티로 재입장</span></label>
         <label class="field inline"><span>재입장 지연(초)</span><input name="rejoin_delay_s" inputmode="numeric" value="10"></label>
         <label class="check"><input type="checkbox" name="compare_weather"><span>모든 날씨와 비교</span></label>
-        <label class="check"><input type="checkbox" name="include_mega"><span>메가진화 1마리 포함 (메가에너지가 있다고 가정)</span></label>
         <label class="check"><input type="checkbox" name="shadow"><span>그림자 레이드</span></label>
       </div>
       <div class="fields" id="shadow-fields" hidden>
@@ -46,7 +49,7 @@
         <label class="field"><span>격앙 방어 배율</span><input name="enraged_defense" inputmode="decimal" value="3"></label>
         <label class="field"><span>정화 크리스탈 진정 (격앙 후 초, 비우면 진정 안 함)</span><input name="calm_after_s" inputmode="numeric"></label>
       </div>
-      <p class="muted">보스 기술은 들어가기 전에 모르므로 가능한 조합을 모두 계산합니다. 피하면 보스 스페셜어택 피해의 일부만 받고 그동안 잠깐 공격하지 못합니다. 제한 시간과 재입장 지연은 계산용 시나리오 값입니다. 메가진화를 켜면 박스에서 메가진화·원시회귀할 수 있는 개체를 그 모습으로도 비교해 최대 1마리를 넣습니다. 함께하는 트레이너는 나와 같은 피해를 준다고 보고 보스 HP가 그만큼 빨리 줄어듭니다. 그림자 레이드의 격앙 수치는 공식 수치가 없어 커뮤니티 추정값을 기본으로 둡니다.</p>
+      <p class="muted">보스 기술은 들어가기 전에 모르므로 가능한 조합을 모두 계산합니다. 피하면 보스 스페셜어택 피해의 일부만 받고 그동안 잠깐 공격하지 못합니다. 제한 시간과 재입장 지연은 계산용 시나리오 값입니다. 메가진화는 기본으로 넣지 않고, 메가진화해 본 개체(언제든 다시 할 수 있다고 봄)나 아직 안 해 본 개체를 넣으면 얼마나 빨라지는지 결과에 따로 보여 줍니다. 넣기로 고르면 최대 1마리를 그 모습으로 넣습니다. 함께하는 트레이너는 나와 같은 피해를 준다고 보고 보스 HP가 그만큼 빨리 줄어듭니다. 그림자 레이드의 격앙 수치는 공식 수치가 없어 커뮤니티 추정값을 기본으로 둡니다.</p>
       <datalist id="species-list"></datalist>
       <button>추천 계산</button>
     </form>

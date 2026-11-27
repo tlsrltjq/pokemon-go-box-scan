@@ -354,7 +354,7 @@ class MegaTests(unittest.TestCase):
         self.assertEqual(raid.temp_name("그란돈", "PRIMAL"), "원시그란돈")
 
     def test_boost_multiplies_the_damage_formula(self):
-        mega, _ = raid.attacker(self.data, entry(1, "물몬", charged=("WAVE", "BLADE")), "MEGA")
+        mega, _ = raid.attacker(self.data, entry(1, "물몬", charged=("WAVE", "BLADE"), mega_move_off=True), "MEGA")
         wave, blade = mega.charged
         self.assertEqual((raid.mega_bonus(mega, wave), raid.mega_bonus(mega, blade)), (1.3, 1.1))
         plain, _ = raid.attacker(self.data, entry(1, "물몬"))
@@ -362,38 +362,72 @@ class MegaTests(unittest.TestCase):
         # 0.5 * 100 * 200 / 100 * STAB 1.2 * super effective 1.6 * mega 1.3 = 249.6 -> 249 + 1
         self.assertEqual(raid.damage(self.data, wave, 200, 100, ["WATER"], ["FIRE"], [], 1.3), 250)
         primal = mega_reference({"2": ["GRASS", "WATER"]})  # primal-style boost list beyond its own types
-        boosted, _ = raid.attacker(primal, entry(1, "물몬", charged=("WAVE", "BLADE")), "MEGA")
+        boosted, _ = raid.attacker(primal, entry(1, "물몬", charged=("WAVE", "BLADE"), mega_move_off=True), "MEGA")
         self.assertEqual(raid.mega_bonus(boosted, boosted.charged[1]), 1.3)
 
-    def test_recorded_plus_move_is_added_only_to_the_mega_form(self):
+    def test_plus_move_is_assumed_for_the_mega_and_confirmed_by_a_scan(self):
         recorded = entry(1, "물몬", mega_move={"name": "파도+", "move_id": "VM_WAVE_PLUS"})
         mega, _ = raid.attacker(self.data, recorded, "MEGA")
         self.assertEqual([m.name for m in mega.charged], ["파도", "파도+"])
         self.assertEqual(mega.charged[1].bonus, 1.0)  # lowest mega level that unlocks it
         leveled, _ = raid.attacker(self.data, {**recorded, "mega_level": 4}, "MEGA")
         self.assertEqual(leveled.charged[1].bonus, 1.3)  # the saved mega level's multiplier
-        self.assertEqual(mega.info["mega"]["plus_move"], "파도+")
-        self.assertEqual(len(raid.attacker(self.data, recorded)[0].charged), 1)
-        self.assertEqual(len(raid.attacker(self.data, entry(2, "물몬"), "MEGA")[0].charged), 1)
+        self.assertEqual((mega.info["mega"]["plus_move"], mega.info["mega"]["plus_confirmed"]), ("파도+", True))
+        self.assertTrue(mega.info["mega"]["evolved"])  # a recorded "+" move proves it mega evolved
+        self.assertEqual(len(raid.attacker(self.data, recorded)[0].charged), 1)  # only the mega form has it
+        assumed, _ = raid.attacker(self.data, entry(2, "물몬"), "MEGA")  # not seen on screen: assumed
+        self.assertEqual([m.name for m in assumed.charged], ["파도", "파도+"])
+        self.assertEqual((assumed.info["mega"]["plus_confirmed"], assumed.info["mega"]["evolved"]), (False, False))
+        off, _ = raid.attacker(self.data, entry(2, "물몬", mega_move_off=True), "MEGA")  # the user turned it off
+        self.assertEqual(len(off.charged), 1)
 
     def test_recommend_adds_at_most_one_mega_and_compares_without_it(self):
-        entries = [entry(1, "물몬"), entry(2, "물몬", level=35.0), entry(3, "풀몬", fast="LEAF_FAST", charged=("BLADE",))]
-        result = raid.recommend(self.data, entries, "불꽃몬", "5", include_mega=True)
+        entries = [entry(1, "물몬", mega_level=2), entry(2, "물몬", level=35.0),
+                   entry(3, "풀몬", fast="LEAF_FAST", charged=("BLADE",))]
+        result = raid.recommend(self.data, entries, "불꽃몬", "5", include_mega=True)  # older name for "all"
+        self.assertEqual(result["mega_mode"], "all")
         megas = [p for p in result["party"] if p["mega"]]
         self.assertEqual(len(megas), 1)
         self.assertEqual(megas[0]["name"], "메가물몬")
         self.assertEqual(megas[0]["mega"]["boost_types"], ["물"])
+        self.assertEqual((megas[0]["mega"]["evolved"], megas[0]["mega"]["level"]), (True, 2))
         self.assertEqual(len({p["id"] for p in result["party"]}), len(result["party"]))  # no Pokémon twice
         comparison = result["mega_comparison"]
-        self.assertGreater(comparison["with_mega"], comparison["without_mega"])
-        self.assertEqual((comparison["member"], comparison["candidates"]), ("메가물몬", 2))
+        options = comparison["options"]
+        self.assertGreater(options["all"]["damage"], options["off"]["damage"])
+        self.assertEqual((options["all"]["member"], options["off"]["member"]), ("메가물몬", None))
+        self.assertEqual(options["evolved"], options["all"])  # the best mega has mega evolved before
+        self.assertEqual(comparison["candidates"], {"all": 2, "evolved": 1})
         self.assertEqual(result["search"]["mega_candidates"], 2)
         self.assertEqual(result["engine"], raid.ENGINE_VERSION)
         plain = raid.recommend(self.data, entries, "불꽃몬", "5")
-        self.assertEqual(plain["result"]["damage"]["avg"], comparison["without_mega"])
-        self.assertNotIn("mega_comparison", plain)
+        self.assertEqual(plain["mega_mode"], "off")
+        self.assertFalse(any(p["mega"] for p in plain["party"]))
+        self.assertEqual(plain["result"]["damage"]["avg"], options["off"]["damage"])
+        self.assertEqual(plain["mega_comparison"]["options"]["evolved"]["member"], "메가물몬")
+        self.assertTrue(any("메가진화는 넣지 않았습니다" in a for a in plain["assumptions"]))
         no_mega = raid.recommend(self.data, entries[2:], "불꽃몬", "5", include_mega=True)["mega_comparison"]
-        self.assertEqual((no_mega["candidates"], no_mega["member"]), (0, None))
+        self.assertEqual(no_mega["candidates"], {"all": 0, "evolved": 0})
+        self.assertIsNone(no_mega["options"]["all"]["member"])
+        with self.assertRaises(raid.RaidError):
+            raid.recommend(self.data, entries, "불꽃몬", "5", mega="x")
+
+    def test_evolved_mode_uses_only_megas_that_evolved_before(self):
+        # The stronger 물몬 has never mega evolved; the weaker one has (scanned while mega evolved).
+        entries = [entry(1, "물몬"), entry(2, "물몬", iv=(5, 5, 5), level=30.0,
+                                          temp_observation={"temp_evolution": "MEGA", "cp": 2000}),
+                   entry(3, "풀몬", fast="LEAF_FAST", charged=("BLADE",))]
+        evolved = raid.recommend(self.data, entries, "불꽃몬", "5", mega="evolved")
+        member = next(p for p in evolved["party"] if p["mega"])
+        self.assertEqual((member["id"], member["mega"]["evolved"]), ("id2", True))
+        self.assertTrue(any("메가진화해 본 개체" in a for a in evolved["assumptions"]))
+        options = raid.recommend(self.data, entries, "불꽃몬", "5")["mega_comparison"]["options"]
+        self.assertEqual((options["all"]["evolved"], options["evolved"]["evolved"]), (False, True))
+        self.assertGreater(options["all"]["damage"], options["evolved"]["damage"])
+        self.assertEqual(options["evolved"]["damage"], evolved["result"]["damage"]["avg"])
+        # The user's choice wins over the derived value.
+        unmarked = [{**entries[1], "mega_evolved": False}, entries[2]]
+        self.assertFalse(any(p["mega"] for p in raid.recommend(self.data, unmarked, "불꽃몬", "5", mega="evolved")["party"]))
 
     def test_mega_search_matches_exhaustive_search(self):
         entries = [entry(1, "물몬"), entry(2, "물몬", iv=(5, 5, 5), level=30.0),
@@ -408,8 +442,9 @@ class MegaTests(unittest.TestCase):
             for team in itertools.permutations(fighters, size):
                 if len({f.key for f in team}) < size or sum(1 for f in team if f.info["mega"]) > 1:
                     continue
-                runs = [raid.simulate(self.data, [(f, 0) for f in team], foe, f, c, 180) for f, c in scenarios]
-                best = max(best, sum(r["damage"] for r in runs) / len(runs))
+                for choices in itertools.product(*(range(len(f.charged)) for f in team)):  # the mega's "+" too
+                    runs = [raid.simulate(self.data, list(zip(team, choices)), foe, f, c, 180) for f, c in scenarios]
+                    best = max(best, sum(r["damage"] for r in runs) / len(runs))
         self.assertGreaterEqual(result["result"]["damage"]["avg"], best * 0.95)
         self.assertLessEqual(result["result"]["damage"]["avg"], best + 1e-9)
 
@@ -471,6 +506,11 @@ class RaidApiTests(unittest.TestCase):
             json.dumps(reference_module.to_json(mega_reference())), encoding="utf-8")
         body = self.client.post("/api/raid/recommend", json={"species": "불꽃몬", "tier": "5", "include_mega": True,
                                                              "compare_weather": True}).json()
-        self.assertEqual(body["mega_comparison"]["member"], "메가물몬")
+        self.assertEqual(body["mega_comparison"]["options"]["all"]["member"], "메가물몬")
+        self.assertEqual(body["mega_mode"], "all")
         self.assertEqual(body["party"][0]["mega"]["name"], "메가진화")
+        evolved = self.client.post("/api/raid/recommend", json={"species": "불꽃몬", "tier": "5", "mega": "evolved"}).json()
+        self.assertEqual(evolved["mega_mode"], "evolved")
+        self.assertFalse(any(p["mega"] for p in evolved["party"]))  # nothing in this box mega evolved before
+        self.assertEqual(self.client.post("/api/raid/recommend", json={"species": "불꽃몬", "mega": "x"}).status_code, 422)
         self.assertIn("메가물몬", body["weather_comparison"][0]["party"])

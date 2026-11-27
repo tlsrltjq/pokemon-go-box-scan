@@ -87,7 +87,7 @@ function moveRow(label, move) {
 function megaPlusRow(move) {
   const boost = move.boost ? ` +${move.boost}` : "";
   const notes = [`${move.observations}장 중 ${move.votes}장`];
-  if (move.boost) notes.push(`+${move.boost}은 메가진화 보너스(메가 레벨)`);
+  if (move.boost) notes.push(`+${move.boost}은 메가진화 보너스` + (move.mega_level ? ` → 메가 레벨 ${move.mega_level}` : "(메가 레벨)"));
   if (move.reference_power != null && move.power != null && move.reference_power !== move.power) {
     notes.push(`기준 데이터 위력 ${move.reference_power}와 다름`);
   }
@@ -144,6 +144,7 @@ function candidateValues(individual) {
     temp_evolution: individual.state?.temp_evolution ?? null,
     max_moves: individual.max_moves ?? [],
     mega_move: individual.moves?.mega_plus ? (individual.moves.mega_plus.name ?? `${individual.moves.mega_plus.value}+`) : null,
+    mega_level: individual.moves?.mega_plus?.mega_level ?? null,
     nickname: individual.nickname?.value ?? "",
   };
 }
@@ -202,6 +203,7 @@ function readForm(formNode) {
     temp_evolution: formNode.dataset.temp || null,
     max_moves: formNode.elements.max_name_0 ? readMaxMoves(formNode) : JSON.parse(formNode.dataset.maxMoves || "[]"),
     mega_move: formNode.dataset.megaMove || null,
+    mega_level: formNode.dataset.megaLevel || null,
     nickname: get("nickname") || null,
   };
 }
@@ -374,7 +376,8 @@ function candidateRow(individual, index) {
       maxEditor,
       individual.code_match ? element("span", { class: individual.code_match.status === "match" ? "muted" : "warn-text" },
         CODE_NOTES[individual.code_match.status](individual.code_match)) : null,
-      values.mega_move ? element("span", { class: "muted" }, `메가진화 추가 ${values.mega_move} 함께 저장`) : null,
+      values.mega_move ? element("span", { class: "muted" }, `메가진화 추가 ${values.mega_move}` +
+        (values.mega_level ? `·메가 레벨 ${values.mega_level}` : "") + " 함께 저장") : null,
       individual.resources?.candy != null || individual.resources?.xl != null
         ? element("span", { class: "muted", title: "저장할 때 이 계열의 사탕 기록도 갱신합니다" },
           formatCandy(individual.resources.family, individual.resources)) : null,
@@ -384,6 +387,7 @@ function candidateRow(individual, index) {
   if (values.temp_evolution) formNode.dataset.temp = values.temp_evolution;
   formNode.dataset.maxMoves = JSON.stringify(values.max_moves);
   if (values.mega_move) formNode.dataset.megaMove = values.mega_move;
+  if (values.mega_level) formNode.dataset.megaLevel = values.mega_level;
   const existing = new Map();
   let acknowledge = false;
 

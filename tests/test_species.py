@@ -43,12 +43,39 @@ class SpeciesNameTests(unittest.TestCase):
         self.assertEqual(species.fusion_options(data, "큐레무"), [
             {"type": "FUSE", "component": "제크로무", "target": "Black", "target_name": "블랙큐레무"}])
 
+    def test_mega_eligibility_and_whether_it_mega_evolved_before(self):
+        data = synthetic_reference()
+        self.assertEqual(species.mega_kinds(data, "테스트몬5"), ["MEGA"])
+        self.assertEqual(species.mega_kinds(data, "테스트몬40"), [])
+        self.assertIsNone(species.mega_info(data, {"species": "테스트몬40"}))
+        self.assertIsNone(species.mega_info(data, {"species": "테스트몬5", "shadow": True}))  # shadows cannot
+        self.assertIsNone(species.mega_info(None, {"species": "테스트몬5"}))
+        fresh = species.mega_info(data, {"species": "테스트몬5"})
+        self.assertEqual((fresh["kinds"], fresh["evolved"], fresh["plus_moves"], fresh["plus_confirmed"], fresh["plus_off"]),
+                         (["메가진화"], False, ["기술12번+"], False, False))
+        for proof in ({"temp_observation": {"cp": 1}}, {"mega_level": 1}, {"mega_move": {"move_id": "X"}},
+                      {"mega_evolved": True}):
+            with self.subTest(proof=proof):
+                self.assertTrue(species.mega_evolved(proof))
+        self.assertFalse(species.mega_evolved({"mega_level": 2, "mega_evolved": False}))  # the user's choice wins
+        self.assertFalse(species.mega_evolved({"mega_level": 0}))
+        seen = species.mega_info(data, {"species": "테스트몬5", "mega_level": 3, "mega_move_off": True,
+                                        "mega_move": {"move_id": "VM_MOVE_TEMP_EVOLUTION_MEGA_V0005_POKEMON_MON5"}})
+        self.assertEqual((seen["evolved"], seen["level"], seen["plus_confirmed"], seen["plus_off"]), (True, 3, True, True))
+
     def test_mega_plus_move_matches_species_data_or_stays_as_read(self):
         data = synthetic_reference()
         moves = {"fast": None, "charged": [], "mega_plus": {"value": "기술12번", "votes": 1, "observations": 1, "power": 140}}
         annotate(moves, data, "테스트몬5")
         plus = moves["mega_plus"]
         self.assertEqual((plus["name"], plus["temp_evolution"], plus["reference_power"]), ("기술12번+", "MEGA", 140.0))
+        self.assertIsNone(plus["mega_level"])  # no "+N" bonus read
+        boosted = {"fast": None, "charged": [], "mega_plus": {"value": "기술12번", "votes": 1, "observations": 1,
+                                                              "power": 140, "boost": 14}}
+        annotate(boosted, data, "테스트몬5")
+        self.assertEqual(boosted["mega_plus"]["mega_level"], 1)  # 140 x (1.1 - 1) = 14: the level with x1.1
+        from boxscan.moves import mega_level_from_boost
+        self.assertIsNone(mega_level_from_boost(data, 140, 7))  # no level gives +7
         unknown = {"fast": None, "charged": [], "mega_plus": {"value": "새기술", "votes": 1, "observations": 1, "power": 140}}
         annotate(unknown, data, "테스트몬5")
         self.assertEqual((unknown["mega_plus"]["name"], unknown["mega_plus"]["match"]), ("새기술+", "none"))

@@ -207,6 +207,17 @@ class ReviewTests(unittest.TestCase):
         unresolved = review.normalize({**raw, "cp": 11}, self.data)
         self.assertIsNone(unresolved["cp"])  # never store a mega CP as the regular CP
         self.assertEqual(unresolved["temp_observation"]["cp"], 11)
+        self.assertTrue(values["mega_evolved"])  # scanned while mega evolved: it has mega evolved before
+
+    def test_mega_evolved_comes_from_a_mega_level_or_the_user(self):
+        base = {"species": "테스트몬5", "cp": 100}
+        self.assertIsNone(review.normalize(base, self.data)["mega_evolved"])  # not known, not False
+        self.assertTrue(review.normalize({**base, "mega_level": "2"}, self.data)["mega_evolved"])
+        self.assertFalse(review.normalize({**base, "mega_level": 2, "mega_evolved": False}, self.data)["mega_evolved"])
+        self.assertTrue(review.normalize({**base, "mega_move_off": True}, self.data)["mega_move_off"])
+        for bad in ({"mega_evolved": "yes"}, {"mega_move_off": 1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                review.normalize({**base, **bad}, self.data)
 
     def test_max_state_and_moves_are_validated(self):
         values = review.normalize({"cp": 100, "max_state": "gigantamax",
@@ -357,6 +368,21 @@ class ApprovalApiTests(unittest.TestCase):
             headers={"Content-Type": "application/x-www-form-urlencoded"}).status_code, 415)
         self.assertEqual(self.approve(0, {"values": {"cp": 100}}, Origin="http://evil.test").status_code, 403)
         self.assertEqual(self.approve(0, {"values": {"cp": 100}, "target": "nope"}).status_code, 422)
+
+    def test_edit_keeps_mega_choices_unless_sent(self):
+        entry = self.approve(0, {"values": {"species": "하나몬", "cp": 100}}).json()
+
+        def patch(values, revision):
+            return self.client.patch(f"/api/pokemon/{entry['id']}", json={"expected_revision": revision, "values": values})
+
+        marked = patch({"species": "하나몬", "cp": 100, "mega_evolved": True, "mega_move_off": True}, entry["revision"]).json()
+        self.assertEqual((marked["mega_evolved"], marked["mega_move_off"]), (True, True))
+        kept = patch({"species": "하나몬", "cp": 101}, marked["revision"]).json()  # an older client sends neither
+        self.assertEqual((kept["mega_evolved"], kept["mega_move_off"]), (True, True))
+        cleared = patch({"species": "하나몬", "cp": 101, "mega_evolved": False}, kept["revision"]).json()
+        self.assertEqual((cleared["mega_evolved"], cleared["mega_move_off"]), (False, True))
+        self.assertEqual(patch({"species": "하나몬", "mega_evolved": "yes"}, cleared["revision"]).status_code, 422)
+        self.assertIsNone(self.client.get("/api/pokemon").json()["pokemon"][0]["mega"])  # no reference data here
 
     def test_list_and_delete(self):
         entry = self.approve(0, {"values": {"species": "하나몬", "cp": 100}}).json()

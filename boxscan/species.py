@@ -54,3 +54,36 @@ def fusion_options(reference: Reference | None, species: str | None) -> list[dic
          "target_name": fused.get(change["target"])}
         for change in reference.form_changes.get(pokemon_id, [])
     ]
+
+
+def mega_kinds(reference: Reference | None, species: str | None) -> list[str]:
+    """The mega / primal forms the species can take (MEGA, MEGA_X, MEGA_Y, PRIMAL), from the game master."""
+    if reference is None or not species or not reference.temp_stats:
+        return []
+    return list(reference.temp_stats.get(reference.korean_names.get(species.strip()), {}))
+
+
+def mega_evolved(entry: dict) -> bool:
+    """Whether this individual has mega evolved before. The app treats it as able to mega evolve again
+    at any time (no energy, cooldown or timer tracking). A value the user set wins; otherwise a scan
+    while mega evolved, a mega level or a recorded "+" move counts as proof."""
+    flag = entry.get("mega_evolved")
+    if isinstance(flag, bool):
+        return flag
+    level = entry.get("mega_level")
+    return bool(entry.get("temp_observation") or entry.get("mega_move")
+                or (isinstance(level, int) and level >= 1))
+
+
+def mega_info(reference: Reference | None, entry: dict) -> dict | None:
+    """What the box page shows about mega evolution, or None when the species cannot mega evolve."""
+    kinds = mega_kinds(reference, entry.get("species"))
+    if not kinds or entry.get("shadow") is True:
+        return None
+    pokemon_id = reference.korean_names.get(entry["species"].strip())
+    plus = [move.get("name") or move["move_id"] for kind in kinds
+            if (move := ((reference.mega_moves or {}).get(pokemon_id) or {}).get(kind))]
+    return {"kinds": [TEMP_NAMES.get(kind, kind) for kind in kinds], "evolved": mega_evolved(entry),
+            "level": entry.get("mega_level"), "plus_moves": plus,
+            "plus_confirmed": bool((entry.get("mega_move") or {}).get("move_id")),
+            "plus_off": entry.get("mega_move_off") is True}

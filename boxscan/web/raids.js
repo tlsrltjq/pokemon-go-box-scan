@@ -56,7 +56,7 @@ function detailHref(boss) {
   const options = readOptions();
   if (options.weather) params.set("weather", options.weather);
   if (options.trainers && options.trainers !== "1") params.set("trainers", options.trainers);
-  if (options.include_mega) params.set("include_mega", "1");
+  if (options.mega !== "off") params.set("mega", options.mega);
   return `/raid?${params}`;
 }
 
@@ -113,23 +113,11 @@ function showRecommendation(boss, result) {
     element("ol", { class: "party-list" }, ...s.party.map(m => element("li", {},
       element("strong", {}, m.name), m.code ? ` ${m.code}` : "",
       element("span", { class: "muted" }, ` · Lv ${m.level} · ${m.fast} / ${m.charged ?? "스페셜어택 안 씀"}` +
-        (m.mega ? ` · ${m.mega}` : "") + (m.max_move ? ` · ${m.max_move} · ${m.plan}` : "") +
+        (m.mega ? ` · ${m.mega}${m.mega_evolved ? "" : " (아직 메가진화 안 함)"}` : "") + (m.max_move ? ` · ${m.max_move} · ${m.plan}` : "") +
         (m.damage.max > 0 ? ` · 피해 ${Math.round(m.damage.avg).toLocaleString()}` : " · 나오기 전에 끝남"))))),
   ];
-  const mega = s.mega_comparison;
-  const megaSaved = mega && mega.with_mega_clear_s && mega.without_mega_clear_s
-    ? mega.without_mega_clear_s - mega.with_mega_clear_s : null;
-  if (mega && mega.member && megaSaved != null) {
-    lines.push(element("p", { class: megaSaved > 0.5 ? "mega-note" : "muted" }, megaSaved > 0.5
-      ? `${mega.member} 포함: 메가 없는 추천보다 평균 ${megaSaved.toFixed(1)}초 빨리 처치합니다.`
-      : `${mega.member}을(를) 넣어도 처치 시간이 거의 같습니다.`));
-  } else if (mega && mega.member && Math.round(mega.with_mega - mega.without_mega) > 0) {
-    lines.push(element("p", { class: "mega-note" }, `${mega.member} 포함: 메가 없는 추천보다 ${Math.round(mega.with_mega - mega.without_mega).toLocaleString()} 더 줍니다.`));
-  } else if (mega && mega.member) {
-    lines.push(element("p", { class: "muted" }, `${mega.member}을(를) 넣었지만 메가진화 없이도 같은 피해입니다.`));
-  } else if (mega) {
-    lines.push(element("p", { class: "muted" }, mega.candidates ? "메가진화를 넣어도 피해가 늘지 않습니다." : "박스에 메가진화할 수 있는 개체가 없습니다."));
-  }
+  // An older saved result has the earlier comparison shape; it is shown without the mega lines.
+  if (s.mega_comparison?.options) lines.push(...megaLines(s.mega_comparison));
   if (s.shadow) {
     const when = s.shadow.enraged_s == null ? "이 피해로는 격앙하지 않습니다" : `평균 ${s.shadow.enraged_s}초에 격앙`;
     const other = s.shadow.comparison ? ` · 바로 진정하면 ${Math.round(s.shadow.comparison.damage).toLocaleString()}` : "";
@@ -158,7 +146,7 @@ function showGroups() {
 
 function readOptions() {
   return { weather: form.elements.weather.value, trainers: form.elements.trainers.value.trim() || "1",
-           include_mega: form.elements.include_mega.checked };
+           mega: form.elements.mega.value };
 }
 
 async function recommendAll() {

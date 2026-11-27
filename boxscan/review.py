@@ -94,6 +94,8 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
     mega_move_name = _text(raw.get("mega_move"), "메가진화 추가 스페셜어택")
     nickname = _text(raw.get("nickname"), "게임 별명")
     mega_level = _integer(raw.get("mega_level"), "메가 레벨", 0, 4)
+    mega_evolved = _flag(raw.get("mega_evolved"), "메가진화 경험")
+    mega_move_off = _flag(raw.get("mega_move_off"), "메가진화 추가 스페셜어택 끄기")
     temp = raw.get("temp_evolution") or None
     if temp is not None and temp not in species_names.TEMP_NAMES:
         raise ValueError("메가진화 값이 올바르지 않습니다.")
@@ -130,6 +132,10 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
         else:
             cp, max_hp, cp_source = None, None, None
     form = resolved["form"] or estimated.get("form")
+    # Once mega evolved, the app assumes it can mega evolve again at any time. A scan while mega
+    # evolved or a mega level proves it; otherwise only the user's choice sets it.
+    if mega_evolved is None and (temp or (mega_level or 0) >= 1):
+        mega_evolved = True
     return {
         "species": species,
         "dex": pokemon_id,
@@ -137,6 +143,8 @@ def normalize(raw: dict, reference: Reference | None) -> dict:
         "form_name": display_name(pokemon_id, form),
         "nickname": nickname,
         "mega_level": mega_level,
+        "mega_evolved": mega_evolved,
+        "mega_move_off": mega_move_off,
         "cp_source": cp_source,
         "temp_observation": temp_observation,
         "max_state": max_state,

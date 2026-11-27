@@ -156,3 +156,80 @@ function comparisonTable(before, after) {
       element("th", { scope: "col" }, "새 값"))),
     element("tbody", {}, ...rows));
 }
+
+// 메가독침붕을 / 메가리자몽Y를: 을 or 를 for the name's last syllable (a final consonant or not).
+function objectParticle(name) {
+  const code = name.charCodeAt(name.length - 1) - 0xac00;
+  const consonant = code >= 0 && code < 11172 ? code % 28 !== 0 : /[LMNR0136789]$/i.test(name);
+  return consonant ? "을" : "를";
+}
+
+const MEGA_MODE_NAMES = { off: "메가 안 씀", evolved: "메가진화해 본 개체만", all: "메가진화되는 개체 모두" };
+
+// "메가물몬(03 · 메가 Lv.2)을", "메가물몬(메가진화해 봄)을", "메가물몬(아직 메가진화 안 함)을"
+function megaWho(info) {
+  const status = !info.evolved ? "아직 메가진화 안 함" : info.level ? `메가 Lv.${info.level}` : "메가진화해 봄";
+  return `${info.member}(${info.code ? `${info.code} · ` : ""}${status})${objectParticle(info.member)}`;
+}
+
+// How much better outcome a is than b: more boss movesets cleared, else a faster clear, else more damage.
+function megaGain(a, b) {
+  if (!a || !b) return null;
+  if (a.defeated_scenarios !== b.defeated_scenarios) {
+    return { clears: a.defeated_scenarios - b.defeated_scenarios, clear_s: a.clear_s };
+  }
+  if (a.clear_s != null && b.clear_s != null) return { seconds: b.clear_s - a.clear_s };
+  return { damage: a.damage - b.damage };
+}
+
+function megaBetter(gain) {
+  if (!gain) return false;
+  if (gain.clears) return gain.clears > 0;
+  return gain.seconds != null ? gain.seconds > 0.5 : gain.damage >= 1;
+}
+
+function megaGainText(gain) {
+  if (gain.clears) {
+    return `처치하는 보스 기술 조합이 ${gain.clears}가지 늘어납니다` + (gain.clear_s != null ? ` (평균 ${gain.clear_s.toFixed(1)}초에 처치)` : "");
+  }
+  if (gain.seconds != null) return `평균 ${gain.seconds.toFixed(1)}초 빨리 처치합니다`;
+  return `평균 ${Math.round(gain.damage).toLocaleString()} 더 줍니다`;
+}
+
+// Lines for a raid result's mega_comparison: what the mega-evolved (or not yet evolved) Pokémon would change.
+function megaLines(comparison) {
+  if (!comparison) return [];
+  const { off, evolved, all } = comparison.options;
+  const note = text => element("p", { class: "mega-note" }, text);
+  const muted = text => element("p", { class: "muted" }, text);
+  if (!comparison.candidates.all) return [muted("박스에 메가진화·원시회귀할 수 있는 개체가 없습니다.")];
+  const lines = [];
+  const chosen = comparison.options[comparison.mode];
+  if (comparison.mode === "off") {
+    const gain = evolved?.member ? megaGain(evolved, off) : null;
+    if (megaBetter(gain)) lines.push(note(`${megaWho(evolved)} 넣으면 ${megaGainText(gain)}.`));
+    else if (comparison.candidates.evolved) lines.push(muted("메가진화해 본 개체를 넣어도 처치 결과가 거의 같습니다."));
+  } else if (chosen?.member) {
+    const gain = megaGain(chosen, off);
+    lines.push(megaBetter(gain) ? note(`${megaWho(chosen)} 넣어서 메가 없이 할 때보다 ${megaGainText(gain)}.`)
+      : muted(`${megaWho(chosen)} 넣어도 메가 없이 할 때와 거의 같습니다.`));
+  } else {
+    lines.push(muted(comparison.mode === "evolved" && !comparison.candidates.evolved
+      ? "메가진화해 본 개체가 없어 메가 없이 계산했습니다. 내 박스의 수정에서 메가진화해 본 개체를 표시할 수 있습니다."
+      : "메가진화 개체를 넣어도 나아지지 않아 메가 없이 추천합니다."));
+  }
+  if (comparison.mode !== "all" && all?.member && !all.evolved) {
+    const base = evolved?.member ? evolved : off;
+    const gain = megaGain(all, base);
+    if (megaBetter(gain)) {
+      lines.push(note(`${megaWho(all)} 메가진화해서 넣으면 ` +
+        `${evolved?.member ? "메가진화해 본 개체를 쓸 때보다 " : ""}${megaGainText(gain)}.`));
+    }
+  }
+  const shown = chosen?.member ? chosen : null;
+  if (shown?.plus_move && !shown.plus_confirmed) {
+    lines.push(muted(`${shown.plus_move}${shown.plus_move.endsWith("+") ? "는" : objectParticle(shown.plus_move) === "을" ? "은" : "는"} ` +
+      "메가 상태로 스캔해 확인하지 않아, 게임 데이터대로 쓸 수 있다고 가정했습니다."));
+  }
+  return lines;
+}

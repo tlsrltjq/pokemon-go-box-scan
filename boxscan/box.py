@@ -91,8 +91,11 @@ def code_number(value: str | None) -> int | None:
 
 # Fields the box page edits directly. They are replaced as a whole, so the user can clear a wrong
 # value; other fields (mega record, max moves, approval history) stay as they are.
-EDITABLE = ("species", "dex", "form", "form_name", "nickname", "mega_level", "shiny", "lucky", "background", "shadow", "max_state", "max_moves",
+EDITABLE = ("species", "dex", "form", "form_name", "nickname", "mega_level", "mega_evolved", "mega_move_off", "shiny", "lucky", "background", "shadow", "max_state", "max_moves",
             "cp", "max_hp", "cp_source", "iv", "level", "moves", "fusion")
+
+
+SENT_ONLY = ("max_moves", "mega_evolved", "mega_move_off")
 
 
 class Conflict(Exception):
@@ -374,8 +377,9 @@ class BoxStore:
             if row["revision"] != expected_revision:
                 raise Conflict("다른 곳에서 먼저 갱신된 개체입니다. 최신 값을 다시 확인하세요.")
             before = json.loads(row["data"])
-            # 맥스기술 are replaced only when sent (the edit form sends them; other callers keep them).
-            after = {**before, **{key: values.get(key) for key in EDITABLE if key != "max_moves" or key in values}}
+            # 맥스기술 and the mega choices are replaced only when sent (the edit form sends them; other
+            # callers keep them).
+            after = {**before, **{key: values.get(key) for key in EDITABLE if key not in SENT_ONLY or key in values}}
             revision = row["revision"] + 1
             db.execute("UPDATE pokemon SET revision = ?, data = ?, updated_at = ? WHERE id = ?",
                        (revision, json.dumps(after, ensure_ascii=False), stamp, pokemon_id))
