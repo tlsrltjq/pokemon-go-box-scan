@@ -257,14 +257,54 @@ class BoxStore:
     def approval(self, scan_id: str, individual: int) -> dict | None:
         with self._read() as db:
             row = db.execute(
-                f"SELECT a.revision AS approved_revision, x.* FROM approvals a JOIN ({SELECT}) x "
-                "ON x.id = a.pokemon_id WHERE a.scan_id = ? AND a.individual = ?",
+                f"SELECT a.revision AS approved_revision, r.change AS approved_change, r.source AS approved_source, "
+                f"x.* FROM approvals a JOIN ({SELECT}) x ON x.id = a.pokemon_id "
+                "LEFT JOIN revisions r ON r.pokemon_id = a.pokemon_id AND r.revision = a.revision "
+                "WHERE a.scan_id = ? AND a.individual = ?",
                 (scan_id, individual),
             ).fetchone()
         if row is None:
             return None
+        source = json.loads(row["approved_source"]) if row["approved_source"] else {}
         return {"pokemon_id": row["id"], "code": code(row["code_number"]), "species": json.loads(row["data"]).get("species"),
-                "revision": row["approved_revision"], "deleted": row["deleted_at"] is not None}
+                "revision": row["approved_revision"], "deleted": row["deleted_at"] is not None,
+                "change": row["approved_change"], "auto": source.get("kind") == "auto_save",
+                # Undo is offered while nothing changed the entry after this save.
+                "undoable": row["deleted_at"] is None and row["revision"] == row["approved_revision"]}
+
+    def undo_approval(self, scan_id: str, individual: int) -> dict:
+        """Take back one save of a scan candidate while the entry is unchanged since: a new entry is
+        removed (its number stays reserved), an update gets its earlier values back. The candidate
+        can then be saved again. History keeps both steps."""
+        stamp = now()
+        with self._write() as db:
+            approval = db.execute("SELECT * FROM approvals WHERE scan_id = ? AND individual = ?",
+                                  (scan_id, individual)).fetchone()
+            if approval is None:
+                raise Conflict("저장 기록이 없는 후보입니다.")
+            row = db.execute(f"{SELECT} WHERE p.id = ?", (approval["pokemon_id"],)).fetchone()
+            if row is None or row["deleted_at"] is not None or row["revision"] != approval["revision"]:
+                raise Conflict("저장한 뒤에 바뀌었거나 제거된 개체라 되돌리지 않습니다. 내 박스에서 고치세요.")
+            saved = db.execute("SELECT * FROM revisions WHERE pokemon_id = ? AND revision = ?",
+                               (row["id"], approval["revision"])).fetchone()
+            revision = row["revision"] + 1
+            source = json.dumps({"kind": "undo_approval", "scan_id": scan_id, "individual": individual},
+                                ensure_ascii=False)
+            if saved["change"] == "created":
+                db.execute("UPDATE pokemon SET revision = ?, deleted_at = ?, updated_at = ? WHERE id = ?",
+                           (revision, stamp, stamp, row["id"]))
+                db.execute("INSERT INTO revisions VALUES (?, ?, 'deleted', ?, NULL, ?, ?)",
+                           (row["id"], revision, row["data"], source, stamp))
+                result = "removed"
+            else:
+                db.execute("UPDATE pokemon SET revision = ?, data = ?, updated_at = ? WHERE id = ?",
+                           (revision, saved["before"], stamp, row["id"]))
+                self._give_code(db, row["id"], json.loads(saved["before"]).get("species"))
+                db.execute("INSERT INTO revisions VALUES (?, ?, 'updated', ?, ?, ?, ?)",
+                           (row["id"], revision, row["data"], saved["before"], source, stamp))
+                result = "restored"
+            db.execute("DELETE FROM approvals WHERE scan_id = ? AND individual = ?", (scan_id, individual))
+            return {"pokemon_id": row["id"], "result": result}
 
     def add(self, values: dict, note: str | None = None) -> dict:
         """A new entry typed in by hand (no scan). It gets the next number of its species."""

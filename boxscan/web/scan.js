@@ -9,6 +9,8 @@ const gallery = document.querySelector("#frames");
 const analysisSection = document.querySelector("#analysis-section");
 const analysisStatus = document.querySelector("#analysis-status");
 const cards = document.querySelector("#individuals");
+const autoBar = document.querySelector("#auto-save-bar");
+let onlyChecks = false;  // "확인 필요만 보기"
 const STATS = IV_KEYS;
 let currentScan = null;
 
@@ -317,14 +319,44 @@ function savedRow(individual, index, duplicate = false) {
       element("div", { class: "cell c-moves-text" }, element("span", { class: "cell-label" }, "기술"), movesText(individual.moves)),
       element("div", { class: "cell c-result" },
         element("span", { class: approval.deleted ? "badge" : "badge neutral" },
-          `${approval.species ?? ""} ${approval.code ?? ""}` + (approval.deleted ? " · 제거됨" : " 저장됨")),
+          `${approval.species ?? ""} ${approval.code ?? ""}` + (approval.deleted ? " · 제거됨" : approval.auto ? " 자동 저장" : " 저장됨")),
         element("a", { href: `/box#${approval.pokemon_id}` }, "박스에서 보기"))),
     element("div", { class: "cand-sub" },
       duplicate ? element("span", { class: "muted" }, "이미 저장한 후보입니다.") : null,
+      approval.undoable ? undoButton(index, approval) : null,
       approval.deleted ? null : element("span", { class: "muted" },
         `별명을 ${approval.species ?? ""}${approval.code ?? ""}(으)로 바꿔 두면 다음 스캔 때 자동으로 고릅니다.`),
       detailToggle(panel)),
     panel);
+}
+
+// Take back a save while the entry is unchanged: a new entry is removed, an update gets its old values.
+function undoButton(index, approval) {
+  const button = element("button", { type: "button", class: "secondary" }, approval.change === "updated" ? "갱신 되돌리기" : "저장 취소");
+  button.addEventListener("click", async () => {
+    const what = approval.change === "updated" ? `${approval.species ?? ""} ${approval.code ?? ""}을(를) 이 저장 전 값으로 되돌릴까요?`
+      : `${approval.species ?? ""} ${approval.code ?? ""}을(를) 박스에서 빼고 다시 확인할까요? 관리 번호는 다시 쓰지 않습니다.`;
+    if (!confirm(what)) return;
+    button.disabled = true;
+    try {
+      await jsonResponse(await fetch(`/api/scans/${encodeURIComponent(currentScan)}/individuals/${index}/approval`, { method: "DELETE" }));
+      await monitor(currentScan);
+    } catch (error) {
+      alert(error.message);
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
+// The automatic-save rule's verdict for a candidate that is not saved yet.
+function autoNote(auto) {
+  if (!auto) return null;
+  if (auto.status === "ready") {
+    return element("span", { class: "badge neutral" }, auto.action === "update"
+      ? `규칙 통과 · ${auto.target?.species ?? ""} ${auto.target?.code ?? ""} 갱신` : "규칙 통과 · 새 개체");
+  }
+  return element("span", { class: "warn-text" }, `확인 필요: ${auto.reasons.join(" · ")}`);
 }
 
 function candidateRow(individual, index) {
@@ -382,6 +414,7 @@ function candidateRow(individual, index) {
         ? element("span", { class: "muted", title: "저장할 때 이 계열의 사탕 기록도 갱신합니다" },
           formatCandy(individual.resources.family, individual.resources)) : null,
       values.shadow_evidence.length ? element("span", { class: "muted" }, `그림자 단서: ${values.shadow_evidence.join(", ")}`) : null,
+      autoNote(individual.auto),
       detailToggle(panel)),
     diff, message);
   if (values.temp_evolution) formNode.dataset.temp = values.temp_evolution;
@@ -468,7 +501,8 @@ function candidateRow(individual, index) {
             acknowledge,
           }),
         }));
-      individual.approval = { pokemon_id: saved.id, code: saved.code, species: saved.species, deleted: false };
+      individual.approval = { pokemon_id: saved.id, code: saved.code, species: saved.species, deleted: false, auto: false,
+        change: entry ? "updated" : "created", undoable: !saved.duplicate };
       row.replaceWith(savedRow(individual, index, saved.duplicate));
     } catch (error) {
       if (error.payload?.warnings) {
@@ -497,7 +531,68 @@ function candidateHead() {
 
 let renderedCards = [];  // [key, node]: unchanged cards keep their node (and any typing) between polls
 
-function showAnalysis(analysis) {
+// Summary of the automatic-save rules for a finished scan, the one-press save, the setting and a filter.
+function showAutoSave(analysis, info) {
+  if (!info || analysis.status !== "done" || !analysis.individuals.length) {
+    autoBar.replaceChildren();
+    return;
+  }
+  const open = analysis.individuals.filter(item => !item.approval);
+  const ready = open.filter(item => item.auto?.status === "ready");
+  const checks = open.filter(item => item.auto?.status === "check");
+  const saved = analysis.individuals.filter(item => item.approval && !item.approval.deleted);
+  const automatic = saved.filter(item => item.approval.auto).length;
+  const updates = ready.filter(item => item.auto.action === "update").length;
+  const save = element("button", { type: "button", disabled: ready.length && info.reference ? null : "" },
+    `규칙을 통과한 ${ready.length}마리 저장`);
+  const message = element("span", { class: "muted", role: "status" });
+  const toggle = checkbox("분석이 끝나면 규칙을 통과한 후보를 자동으로 저장", "auto_save", info.enabled);
+  const filter = checkbox(`확인 필요만 보기 (${checks.length})`, "only_checks", onlyChecks);
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    try {
+      const result = await jsonResponse(await fetch(`/api/scans/${encodeURIComponent(currentScan)}/auto-save`, { method: "POST" }));
+      message.textContent = `${result.saved.length}마리 저장, 확인 필요 ${result.check.length}마리`;
+      await monitor(currentScan);
+    } catch (error) {
+      message.textContent = error.message;
+      save.disabled = false;
+    }
+  });
+  toggle.querySelector("input").addEventListener("change", async event => {
+    try {
+      await jsonResponse(await fetch("/api/settings", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_save: event.target.checked }),
+      }));
+      message.textContent = event.target.checked ? "다음 분석부터 규칙을 통과한 후보를 자동으로 저장합니다." : "자동 저장을 껐습니다.";
+    } catch (error) {
+      event.target.checked = !event.target.checked;
+      message.textContent = error.message;
+    }
+  });
+  filter.querySelector("input").addEventListener("change", event => {
+    onlyChecks = event.target.checked;
+    applyFilter(analysis);
+  });
+  autoBar.replaceChildren(element("div", { class: "auto-save" },
+    element("p", {}, element("strong", {}, `통과 ${ready.length}마리`), ` (새 개체 ${ready.length - updates} · 갱신 ${updates}) · `,
+      element("strong", {}, `확인 필요 ${checks.length}마리`), ` · 저장됨 ${saved.length}마리` + (automatic ? ` (자동 ${automatic})` : "")),
+    element("p", { class: "muted" }, `자동 저장 규칙 ${info.rule}: 종·CP·최대 HP·IV로 레벨이 하나로 정해지고, 배울 수 있는 기술이며, 여러 장의 판독이 일치하고, ` +
+      "별명 번호의 개체와 값이 맞거나(갱신) 박스에 같은 종·IV 개체가 없을 때(새 개체) 통과합니다. 저장한 개체는 바뀌기 전까지 되돌릴 수 있습니다."),
+    info.reference ? null : element("p", { class: "warn-text" }, "기준 데이터가 없어 레벨을 확인할 수 없으므로 저장하지 않습니다. Mac에서 reference update를 실행하세요."),
+    element("div", { class: "actions" }, save, message),
+    element("div", { class: "checks" }, toggle, filter)));
+}
+
+function applyFilter(analysis) {
+  renderedCards.forEach(([, node], i) => {
+    const item = analysis.individuals[i];
+    node.hidden = onlyChecks && !(item && !item.approval && item.auto?.status === "check");
+  });
+}
+
+function showAnalysis(analysis, autoSave = null) {
   analysisSection.hidden = false;
   const messages = {
     none: "이 스캔은 아직 분석하지 않았습니다.",
@@ -506,6 +601,7 @@ function showAnalysis(analysis) {
     failed: analysis.error,
     skipped: analysis.error,
   };
+  showAutoSave(analysis, autoSave);
   if (!["done", "live"].includes(analysis.status)) {
     analysisStatus.textContent = messages[analysis.status] ?? "";
     cards.replaceChildren();
@@ -529,6 +625,7 @@ function showAnalysis(analysis) {
     cards.replaceChildren(candidateHead(), ...next.map(([, node]) => node));
   }
   renderedCards = next;
+  applyFilter(analysis);
 }
 
 async function monitor(id) {
@@ -548,7 +645,7 @@ async function monitor(id) {
         : `1초마다 추출한 ${scan.frames.length}장` + (scan.notice ? ` · ${scan.notice}` : "");
       if (gallery.lastElementChild?.querySelector("a")?.getAttribute("href") !== shown.at(-1)
           || gallery.childElementCount !== shown.length) showFrames(shown);
-      showAnalysis(scan.analysis);
+      showAnalysis(scan.analysis, scan.auto_save);
       showLive(scan.live);
       if (!["queued", "running", "live"].includes(scan.analysis.status)) {
         loadScans();

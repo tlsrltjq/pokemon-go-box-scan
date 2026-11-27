@@ -13,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
-from . import backup, cleanup, export, live, max_battle, raid, raid_bosses, reference, review
+from . import autosave, backup, cleanup, export, live, max_battle, raid, raid_bosses, reference, review
 from .forms import display_name
 from . import species as species_names
 from .species import TEMP_NAMES
@@ -428,7 +428,55 @@ def create_app(
         for index, individual in enumerate(job["analysis"]["individuals"]):
             individual["approval"] = box.approval(str(scan_id), index)
             individual["code_match"] = _code_match(individual)
+        job["auto_save"] = None
+        if job["analysis"]["status"] == "done" and job["analysis"]["individuals"]:
+            # Which candidates the automatic-save rules would save, and why the others need a look.
+            try:
+                data = reference.load(store.root)
+            except (OSError, ValueError, KeyError):
+                data = None
+            result = json.loads((store.root / str(scan_id) / RESULT).read_text(encoding="utf-8"))
+            items, _ = autosave.plan(str(scan_id), result["individuals"], box, data)
+            for item, individual in zip(items, job["analysis"]["individuals"]):
+                individual["auto"] = None if item["status"] == "saved" else {
+                    k: item.get(k) for k in ("status", "reasons", "action", "target")}
+            job["auto_save"] = {"enabled": autosave.enabled(store.root), "rule": autosave.RULE_VERSION,
+                                "reference": data is not None}
         return job
+
+    @app.get("/api/settings")
+    def settings_read():
+        return {"auto_save": autosave.enabled(store.root)}
+
+    @app.put("/api/settings")
+    async def settings_write(request: Request):
+        payload = await _json_body(request)
+        value = payload.get("auto_save")
+        if not isinstance(value, bool):
+            raise HTTPException(422, "자동 저장 설정 값이 올바르지 않습니다.")
+        autosave.set_enabled(store.root, value)
+        return {"auto_save": value}
+
+    @app.post("/api/scans/{scan_id}/auto-save")
+    def scan_auto_save(scan_id: UUID):
+        """Save every candidate of the scan that passes the rules (the user pressed the button)."""
+        try:
+            data = reference.load(store.root)
+        except (OSError, ValueError, KeyError):
+            data = None
+        if data is None:
+            raise HTTPException(409, "기준 데이터가 없어 레벨을 확인할 수 없습니다. Mac에서 reference update를 실행하세요.")
+        try:
+            return autosave.run(store, box, str(scan_id), data)
+        except FileNotFoundError as error:
+            raise HTTPException(404, str(error)) from None
+
+    @app.delete("/api/scans/{scan_id}/individuals/{index}/approval")
+    def approval_undo(scan_id: UUID, index: int):
+        try:
+            return box.undo_approval(str(scan_id), index)
+        except Conflict as error:
+            raise HTTPException(409, str(error)) from None
 
     def _code_match(individual: dict) -> dict | None:
         """Spec 6.3: the management code from the nickname, counted within the species read on screen,
@@ -488,28 +536,14 @@ def create_app(
                 return JSONResponse({"detail": "기존 개체와 다른 점이 있습니다.", "warnings": found},
                                     status_code=409)
         candidate = result["individuals"][index]
-        source = {
-            "scan_id": str(scan_id),
-            "individual": index,
-            "filename": job["filename"],
-            "frames": candidate["frames"],
-            "recognizer": result.get("recognizer"),
-            "analysis_created_at": result.get("created_at"),
-            "candidate": {key: (candidate.get(key) or {}).get("value")
-                          for key in ("species", "cp", "max_hp")},
-        }
+        source = autosave.source(job, result, index)
         try:
             entry = box.approve(str(scan_id), index, values, source, target,
                                 payload.get("expected_revision"))
         except Conflict as error:
             raise HTTPException(409, str(error)) from None
-        resources = dict(candidate.get("resources") or {})
-        if resources and not entry.get("duplicate"):
-            if resources.get("family") and values.get("species") and data:
-                # Saved with a corrected species: the candy belongs to that species' family.
-                expected = data.candy_name(values["species"])
-                resources["family"] = resources["family"] if resources["family"] == expected else expected
-            box.record_resources(resources, {"scan_id": str(scan_id), "individual": index})
+        if not entry.get("duplicate"):
+            autosave.record_resources(box, candidate, values, data, str(scan_id), index)
         return entry
 
     def _with_family(entries: list[dict]) -> list[dict]:

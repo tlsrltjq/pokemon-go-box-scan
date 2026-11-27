@@ -340,3 +340,5 @@ main.wide { max-width: 96rem; }
 .party-list { margin: .4rem 0 0; padding-left: 1.3rem; font-size: .92rem; }
 .party-list li { margin: .15rem 0; }
 .boss-card .badges { margin-top: 0; justify-content: flex-end; }
+.auto-save { border: 1px solid var(--line, #d8d8d8); border-radius: .6rem; padding: .6rem .8rem; margin: .5rem 0 1rem; }
+.auto-save p { margin: .2rem 0; }

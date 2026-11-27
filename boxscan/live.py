@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from . import analysis, ivbars, ocr
+from . import analysis, autosave, ivbars, ocr
 from .store import JobStore
 
 FPS = 10
@@ -143,6 +143,7 @@ class Session:
                 self.store.set_analysis(self.scan_id, "failed", self.error)
             else:
                 self.store.set_analysis(self.scan_id, "done")
+                autosave.after_analysis(self.store, self.scan_id)
         except Exception as error:  # keep the scan readable and say what happened
             self.error = f"실시간 분석 중 오류가 발생했습니다: {error}"
             self.store.set_analysis(self.scan_id, "failed", self.error)

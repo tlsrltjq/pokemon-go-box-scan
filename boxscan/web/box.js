@@ -23,7 +23,8 @@ function revisionItem(revision) {
   const origin = manual ? (source.note ? ` · 메모: ${source.note}` : "")
     : source?.filename ? ` · ${source.filename} 프레임 ${source.frames[0]}–${source.frames.at(-1)}` : "";
   const label = codeChange ? `관리 번호 ${source.from ?? "-"} → ${source.to}${source.swapped ? " (맞바꿈)" : ""}`
-    : manual ? "직접 수정" : CHANGES[revision.change];
+    : manual ? "직접 수정" : source?.kind === "undo_approval" ? `저장 되돌리기 · ${CHANGES[revision.change]}`
+    : source?.kind === "auto_save" ? `자동 저장 · ${CHANGES[revision.change]}` : CHANGES[revision.change];
   const item = element("li", {},
     element("p", {}, element("strong", {}, `${revision.revision}번째 기록 · ${label}`),
       ` · ${new Date(revision.created_at).toLocaleString("ko-KR")}${origin}`));

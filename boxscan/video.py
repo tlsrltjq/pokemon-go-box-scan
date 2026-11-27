@@ -84,3 +84,6 @@ def record_analysis(store: JobStore, scan_id: str, analyzer: Analyzer | None) ->
         store.set_analysis(scan_id, "failed", "분석 중 오류가 발생했습니다. 워커 로그를 확인하세요.")
     else:
         store.set_analysis(scan_id, "done")
+        from . import autosave  # here: autosave needs analysis, which imports this module
+
+        autosave.after_analysis(store, scan_id)
